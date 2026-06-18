@@ -67,10 +67,8 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 Propagation::Stop
             }
             Key::b => {
-                if let Some(sb) = st.borrow().sidebar.as_ref() {
-                    let visible = sb.root.is_visible();
-                    sb.root.set_visible(!visible);
-                }
+                let btn = st.borrow().sidebar_btn.clone();
+                btn.set_active(!btn.is_active());
                 Propagation::Stop
             }
             Key::f => {

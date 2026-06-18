@@ -11,7 +11,7 @@ Built in Rust with GTK4 + VTE.
 - Pick **1–16 panes** (a picker on launch, or `tessera 4`); balanced auto-grid.
 - Each pane is your `$SHELL` (with an optional auto-run startup command).
 - **File sidebar** (left): click a folder to `cd` the focused pane into it; click a
-  file to insert its path. `..` goes up. Toggle with `Alt+b`.
+  file to insert its path. `..` goes up. Toggle with the **☰** titlebar button or `Alt+b`.
 - **Drag-and-drop** a file/image onto the grid → its path is inserted into the
   focused pane (handy for passing an image to a CLI agent).
 - **Zoom** the focused pane to fullscreen and back.
@@ -62,7 +62,7 @@ Optional `~/.config/tessera/config.toml` — every field has a default, so it wo
 with no config at all:
 
 ```toml
-font            = "JetBrains Mono"
+font            = "monospace"   # generic = your system mono; or any installed font name
 font_size       = 11
 gap             = 8
 startup_command = ""        # e.g. "claude" to auto-launch in every pane

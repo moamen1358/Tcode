@@ -5,6 +5,7 @@ use gtk4::gdk::{DragAction, FileList};
 use gtk4::prelude::*;
 use gtk4::{
     gio, glib, Application, ApplicationWindow, Box as GtkBox, DropTarget, HeaderBar, Orientation,
+    ToggleButton,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ pub struct State {
     pub cfg: Config,
     pub grid: Option<Grid>,
     pub sidebar: Option<Sidebar>,
+    pub sidebar_btn: ToggleButton,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -41,6 +43,16 @@ pub fn build(app: &Application, preset: Option<usize>) {
     // be closed or restored. Press Alt+f for an immersive fullscreen (no header).
     let header = HeaderBar::new();
     header.add_css_class("tessera-titlebar");
+
+    // Clickable sidebar toggle (also bound to Alt+b), VS Code-style — the
+    // Adwaita "show sidebar" icon (a panel with a highlighted left bar).
+    let sidebar_btn = ToggleButton::new();
+    sidebar_btn.set_icon_name("sidebar-show-symbolic");
+    sidebar_btn.set_active(true);
+    sidebar_btn.set_tooltip_text(Some("Toggle file panel (Alt+B)"));
+    sidebar_btn.add_css_class("flat");
+    header.pack_start(&sidebar_btn);
+
     window.set_titlebar(Some(&header));
 
     let state: Shared = Rc::new(RefCell::new(State {
@@ -48,7 +60,18 @@ pub fn build(app: &Application, preset: Option<usize>) {
         cfg,
         grid: None,
         sidebar: None,
+        sidebar_btn: sidebar_btn.clone(),
     }));
+
+    // Flip the current sidebar's visibility whenever the button toggles.
+    {
+        let st = state.clone();
+        sidebar_btn.connect_toggled(move |btn| {
+            if let Some(sb) = st.borrow().sidebar.as_ref() {
+                sb.root.set_visible(btn.is_active());
+            }
+        });
+    }
 
     keys::install(&window, &state);
 
@@ -71,6 +94,8 @@ pub fn show_grid(state: &Shared, n: usize) {
     let grid = Grid::new(n, &cfg);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let sidebar = Sidebar::new(&cwd, state);
+    // Respect the current toggle state for the freshly built sidebar.
+    sidebar.root.set_visible(state.borrow().sidebar_btn.is_active());
 
     install_image_drop(&grid.root, state);
     grid.root.set_hexpand(true);
