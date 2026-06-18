@@ -6,7 +6,7 @@ use gtk4::gdk::RGBA;
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
-use gtk4::{gio, Overlay};
+use gtk4::{gio, Box as GtkBox, Orientation, Overlay};
 use tessera_core::config::Config;
 use vte4::prelude::*;
 use vte4::{PtyFlags, Terminal};
@@ -38,6 +38,14 @@ impl Pane {
         let root = Overlay::new();
         root.add_css_class("pane");
         root.set_child(Some(&terminal));
+
+        // Focus ring: an overlay child drawn on top of the terminal. Because it's
+        // an overlay it adds no layout space and never reflows the terminal; CSS
+        // turns its border cyan only when the pane is active.
+        let ring = GtkBox::new(Orientation::Horizontal, 0);
+        ring.add_css_class("focus-ring");
+        ring.set_can_target(false); // clicks pass through to the terminal
+        root.add_overlay(&ring);
 
         let pane = Pane { id, root, terminal };
         pane.spawn(cfg);

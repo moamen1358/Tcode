@@ -20,7 +20,8 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
     let css = format!(
         ".grid-root {{ background-color: {bg}; }}\n\
          .pane {{ background-color: {bg}; }}\n\
-         .pane.active-pane {{ box-shadow: inset 0 0 0 1px {accent}; }}\n\
+         .focus-ring {{ border: 1px solid transparent; }}\n\
+         .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
