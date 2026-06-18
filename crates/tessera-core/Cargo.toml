@@ -1,0 +1,8 @@
+[package]
+name = "tessera-core"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

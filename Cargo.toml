@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/tessera-core", "crates/tessera"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"

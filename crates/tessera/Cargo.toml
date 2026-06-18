@@ -1,0 +1,16 @@
+[package]
+name = "tessera"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "tessera"
+path = "src/main.rs"
+
+[dependencies]
+tessera-core = { path = "../tessera-core" }
+# Versions verified against system GTK 4.14.5 / VTE 0.76.0 (verify-gtk4-vte4-api workflow).
+# The crate version does NOT set the min system GTK — the highest enabled feature does.
+# Cap at v4_14 / v0_76; never enable v4_16+, v0_78+, or vte4's gtk_v4_18.
+gtk4 = { version = "0.11", features = ["v4_14"] }
+vte4 = { version = "0.10", features = ["v0_76"] }
