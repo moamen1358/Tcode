@@ -33,6 +33,7 @@ struct GridInner {
     next_id: u64,
     self_weak: Weak<RefCell<GridInner>>,
     resize_timer: Rc<Cell<Option<glib::SourceId>>>,
+    resizing: Rc<Cell<bool>>,
 }
 
 /// Build a right-nested Paned chain over `items`. Returns the root widget and the
@@ -108,6 +109,7 @@ impl GridInner {
 
     fn rebuild(&mut self) {
         for p in &self.panes {
+            p.detach_ring(); // avoid blank-GL-surface reparent of an overlay child
             p.root.unparent();
         }
         while let Some(child) = self.container.first_child() {
@@ -121,12 +123,11 @@ impl GridInner {
             self.focus = self.panes.len() - 1;
         }
 
-        if self.zoomed {
-            let f = self.focus;
-            self.panes[f].root.set_hexpand(true);
-            self.panes[f].root.set_vexpand(true);
-            self.container.append(&self.panes[f].root);
-        } else {
+        // The full grid tree is always built; zoom just hides the non-focused
+        // panes (a hidden GtkPaned child collapses, so the focused pane fills the
+        // space). This avoids re-parenting a pane, which paints the VTE terminal
+        // blank on the GL renderer.
+        {
             let (tree, paneds) = build_tree(&self.panes);
             tree.set_hexpand(true);
             tree.set_vexpand(true);
@@ -134,25 +135,37 @@ impl GridInner {
             self.paneds = paneds;
             self.set_positions();
 
-            // Dragging a divider reflows the terminals; with a wrapping prompt
-            // that can leave stale prompt fragments. After the drag settles, send
-            // a clean redraw (Ctrl+L) to each terminal.
+            // Dragging a divider makes VTE re-wrap live; with scrollback it pulls
+            // blank/stale lines above the prompt as a pane grows (the prompt jumps
+            // to the bottom). Drop scrollback to 0 for the duration of the drag so
+            // there's nothing to pull, then restore it once the drag settles.
             let weak = self.self_weak.clone();
             let timer = self.resize_timer.clone();
+            let resizing = self.resizing.clone();
             for (paned, _, _) in &self.paneds {
                 let weak = weak.clone();
                 let timer = timer.clone();
+                let resizing = resizing.clone();
                 paned.connect_position_notify(move |_| {
                     if let Some(id) = timer.take() {
                         id.remove();
                     }
+                    if !resizing.replace(true) {
+                        if let Some(inner) = weak.upgrade() {
+                            for p in &inner.borrow().panes {
+                                p.set_resizing(true);
+                            }
+                        }
+                    }
                     let weak2 = weak.clone();
                     let timer2 = timer.clone();
+                    let resizing2 = resizing.clone();
                     let id = glib::timeout_add_local_once(Duration::from_millis(150), move || {
                         timer2.set(None);
+                        resizing2.set(false);
                         if let Some(inner) = weak2.upgrade() {
                             for p in &inner.borrow().panes {
-                                p.feed_text("\u{000c}"); // Ctrl+L
+                                p.set_resizing(false);
                             }
                         }
                     });
@@ -160,7 +173,46 @@ impl GridInner {
                 });
             }
         }
+        for p in &self.panes {
+            p.attach_ring();
+        }
+        self.apply_zoom();
         self.refresh_active();
+    }
+
+    /// Zoom by hiding the sibling at every level along the focused pane's path to
+    /// the root, so each ancestor Paned collapses around it and the focused pane
+    /// fills the grid. Un-zoom restores everything. No re-parenting involved.
+    fn apply_zoom(&self) {
+        for p in &self.panes {
+            p.root.set_visible(true);
+        }
+        for (paned, _, _) in &self.paneds {
+            paned.set_visible(true);
+        }
+        if !self.zoomed {
+            return;
+        }
+        let Some(focused) = self.panes.get(self.focus) else {
+            return;
+        };
+        let mut current: gtk4::Widget = focused.root.clone().upcast();
+        while let Some(parent) = current.parent() {
+            let Some(paned) = parent.downcast_ref::<Paned>() else {
+                break; // reached the container (a GtkBox), not a Paned
+            };
+            if let Some(start) = paned.start_child() {
+                if start != current {
+                    start.set_visible(false);
+                }
+            }
+            if let Some(end) = paned.end_child() {
+                if end != current {
+                    end.set_visible(false);
+                }
+            }
+            current = parent;
+        }
     }
 
     fn move_focus(&mut self, dir: Dir) {
@@ -212,6 +264,7 @@ impl Grid {
             next_id: 0,
             self_weak: Weak::new(),
             resize_timer: Rc::new(Cell::new(None)),
+            resizing: Rc::new(Cell::new(false)),
         }));
         inner.borrow_mut().self_weak = Rc::downgrade(&inner);
 
@@ -276,12 +329,28 @@ impl Grid {
     }
 
     pub fn toggle_zoom(&self) {
-        let mut g = self.inner.borrow_mut();
-        if g.panes.is_empty() {
-            return;
+        {
+            let mut g = self.inner.borrow_mut();
+            if g.panes.is_empty() {
+                return;
+            }
+            // The focused pane grows on zoom; drop scrollback so VTE doesn't pull
+            // blank lines above the prompt (restored once the grow settles).
+            for p in &g.panes {
+                p.set_resizing(true);
+            }
+            g.zoomed = !g.zoomed;
+            g.apply_zoom();
+            if let Some(p) = g.panes.get(g.focus) {
+                p.grab_focus();
+            }
         }
-        g.zoomed = !g.zoomed;
-        g.rebuild();
+        let inner = self.inner.clone();
+        glib::timeout_add_local_once(Duration::from_millis(150), move || {
+            for p in &inner.borrow().panes {
+                p.set_resizing(false);
+            }
+        });
     }
 
     pub fn feed_focused(&self, text: &str) {
@@ -302,4 +371,5 @@ impl Grid {
     pub fn relayout_positions(&self) {
         self.inner.borrow().set_positions();
     }
+
 }
