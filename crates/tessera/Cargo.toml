@@ -14,3 +14,6 @@ tessera-core = { path = "../tessera-core" }
 # Cap at v4_14 / v0_76; never enable v4_16+, v0_78+, or vte4's gtk_v4_18.
 gtk4 = { version = "0.11", features = ["v4_14"] }
 vte4 = { version = "0.10", features = ["v0_76"] }
+# GtkSourceView (neovim-style editor: line numbers + syntax highlighting).
+# Depends on gtk4 ^0.11; needs system libgtksourceview-5-dev (>= 5.0).
+sourceview5 = "0.11"

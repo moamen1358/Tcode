@@ -20,12 +20,17 @@ pub struct Theme {
     pub background: String,
     pub foreground: String,
     pub accent: String,
+    /// Sidebar / tab-bar / titlebar background (a shade off `background`).
+    pub surface: String,
+    /// Separator / divider / border color.
+    pub border: String,
     pub palette: Vec<String>,
 }
 
+// Tokyo Night.
 const DEFAULT_PALETTE: [&str; 16] = [
-    "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
-    "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+    "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+    "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
 ];
 
 impl Default for Config {
@@ -43,9 +48,11 @@ impl Default for Config {
 impl Default for Theme {
     fn default() -> Self {
         Theme {
-            background: "#1e1e2e".into(),
-            foreground: "#cdd6f4".into(),
-            accent: "#89b4fa".into(),
+            background: "#1a1b26".into(),
+            foreground: "#c0caf5".into(),
+            accent: "#7aa2f7".into(),
+            surface: "#16161e".into(),
+            border: "#2f3549".into(),
             palette: DEFAULT_PALETTE.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -120,6 +127,6 @@ mod tests {
     fn partial_theme_merges() {
         let c = Config::from_str_or_default("[theme]\naccent = \"#ff0000\"");
         assert_eq!(c.theme.accent, "#ff0000");
-        assert_eq!(c.theme.background, "#1e1e2e");
+        assert_eq!(c.theme.background, "#1a1b26");
     }
 }

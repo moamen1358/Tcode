@@ -6,7 +6,7 @@ FROM ubuntu:24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential pkg-config curl ca-certificates \
-        libgtk-4-dev libvte-2.91-gtk4-dev \
+        libgtk-4-dev libvte-2.91-gtk4-dev libgtksourceview-5-dev \
     && rm -rf /var/lib/apt/lists/*
 # Rust toolchain (matches docs/BUILD_LOG.md). MSRV for gtk4 0.11 is 1.83.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -22,7 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Runtime libs only: GTK4 + VTE4 runtime, a font so the terminal renders text,
 # and Mesa for GL (GTK4's renderer). A shell is already present (/bin/bash, /bin/sh).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgtk-4-1 libvte-2.91-gtk4-0 \
+        libgtk-4-1 libvte-2.91-gtk4-0 libgtksourceview-5-0 librsvg2-common \
         fonts-jetbrains-mono fonts-dejavu-core \
         libgl1-mesa-dri libegl1 libgles2 \
     && rm -rf /var/lib/apt/lists/*

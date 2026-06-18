@@ -1,5 +1,7 @@
 mod app;
+mod editor;
 mod grid;
+mod icons;
 mod keys;
 mod pane;
 mod picker;
@@ -7,7 +9,7 @@ mod sidebar;
 mod theme;
 
 use gtk4::prelude::*;
-use gtk4::{glib, Application};
+use gtk4::{gio, glib, Application};
 
 const APP_ID: &str = "dev.tessera.Tessera";
 
@@ -19,7 +21,12 @@ fn main() -> glib::ExitCode {
         .and_then(|s| s.parse().ok())
         .filter(|n| (1..=16).contains(n));
 
-    let app = Application::builder().application_id(APP_ID).build();
+    // NON_UNIQUE: each launch is its own independent window (no single-instance
+    // handoff to an already-running Tessera).
+    let app = Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
     app.connect_activate(move |app| app::build(app, preset));
     app.run_with_args(&["tessera"])
 }

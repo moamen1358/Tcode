@@ -1,30 +1,87 @@
-//! The tiled grid of panes — a *dynamic* model that can add panes (the `+`
-//! button / `Alt+n`) and remove them when their shell exits, re-tiling the
-//! survivors with `tessera_core::grid::layout`. State lives behind an
-//! `Rc<RefCell<GridInner>>` so widget callbacks (focus, child-exit) can mutate
-//! it; callbacks hold a `Weak` to avoid keeping the grid alive after a re-grid.
+//! The terminal grid — a *resizable* layout built from standard `GtkPaned`
+//! splits (drag any border to resize). Panes are arranged in the balanced shape
+//! from `tessera_core::grid::layout`, realized as nested Paned chains. Adding a
+//! pane (`+` / `Alt+n`) or a shell exiting rebuilds the split tree.
+//!
+//! State lives behind `Rc<RefCell<GridInner>>` so widget callbacks can mutate it;
+//! callbacks hold a `Weak` to avoid leaks across re-grid.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
+use std::time::Duration;
 
+use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{ApplicationWindow, Box as GtkBox, EventControllerFocus, Orientation};
-use vte4::prelude::*; // TerminalExt: connect_child_exited
+use gtk4::{ApplicationWindow, Box as GtkBox, EventControllerFocus, Orientation, Paned};
 use tessera_core::config::Config;
 use tessera_core::grid::{coords, flat_index, layout, neighbor, Dir};
+use vte4::prelude::*; // TerminalExt: connect_child_exited
 
 use crate::pane::Pane;
 
+/// A Paned, whether it splits horizontally, and the divisor for an equal split.
+type PanedInfo = (Paned, bool, usize);
+
 struct GridInner {
-    root: GtkBox,
-    rows: Vec<GtkBox>,
+    container: GtkBox,
     panes: Vec<Pane>,
+    paneds: Vec<PanedInfo>,
     focus: usize,
     zoomed: bool,
-    gap: i32,
     cfg: Config,
     window: ApplicationWindow,
     next_id: u64,
+    self_weak: Weak<RefCell<GridInner>>,
+    resize_timer: Rc<Cell<Option<glib::SourceId>>>,
+}
+
+/// Build a right-nested Paned chain over `items`. Returns the root widget and the
+/// created Paneds tagged with orientation + the equal-split divisor.
+fn chain(orient: Orientation, items: &[gtk4::Widget], divisor: usize) -> (gtk4::Widget, Vec<PanedInfo>) {
+    if items.len() == 1 {
+        return (items[0].clone(), Vec::new());
+    }
+    let is_h = orient == Orientation::Horizontal;
+    let mut paneds = Vec::new();
+    let mut acc = items[items.len() - 1].clone();
+    for item in items[..items.len() - 1].iter().rev() {
+        let p = Paned::new(orient);
+        // Thin handle (a line, not a wide gap) between terminals.
+        p.set_wide_handle(false);
+        p.set_resize_start_child(true);
+        p.set_resize_end_child(true);
+        p.set_shrink_start_child(false);
+        p.set_shrink_end_child(false);
+        p.set_start_child(Some(item));
+        p.set_end_child(Some(&acc));
+        paneds.push((p.clone(), is_h, divisor));
+        acc = p.upcast();
+    }
+    (acc, paneds)
+}
+
+/// Build the full split tree (rows of horizontal chains, stacked vertically).
+fn build_tree(panes: &[Pane]) -> (gtk4::Widget, Vec<PanedInfo>) {
+    let widths = layout(panes.len());
+    let rows = widths.len();
+    let mut all = Vec::new();
+    let mut row_widgets = Vec::new();
+    let mut idx = 0;
+    for &w in &widths {
+        let items: Vec<gtk4::Widget> = (0..w)
+            .map(|_| {
+                let r = panes[idx].root.clone().upcast::<gtk4::Widget>();
+                idx += 1;
+                r
+            })
+            .collect();
+        let (row_w, mut row_paneds) = chain(Orientation::Horizontal, &items, w);
+        all.append(&mut row_paneds);
+        row_widgets.push(row_w);
+    }
+    let (root, mut v_paneds) = chain(Orientation::Vertical, &row_widgets, rows);
+    all.append(&mut v_paneds);
+    (root, all)
 }
 
 impl GridInner {
@@ -37,18 +94,26 @@ impl GridInner {
         }
     }
 
-    /// Rebuild the row boxes for the current pane count, re-parenting the
-    /// existing (live) pane widgets. Resets any zoom.
-    fn relayout(&mut self) {
-        self.zoomed = false;
+    /// Set each Paned to an equal split for its chain (only once sized).
+    fn set_positions(&self) {
+        let w = self.container.width();
+        let h = self.container.height();
+        for (paned, is_h, div) in &self.paneds {
+            let dim = if *is_h { w } else { h };
+            if dim > 1 && *div > 1 {
+                paned.set_position((dim / *div as i32).max(1));
+            }
+        }
+    }
+
+    fn rebuild(&mut self) {
         for p in &self.panes {
             p.root.unparent();
         }
-        while let Some(child) = self.root.first_child() {
-            self.root.remove(&child);
+        while let Some(child) = self.container.first_child() {
+            self.container.remove(&child);
         }
-        self.rows.clear();
-
+        self.paneds.clear();
         if self.panes.is_empty() {
             return;
         }
@@ -56,24 +121,44 @@ impl GridInner {
             self.focus = self.panes.len() - 1;
         }
 
-        let widths = layout(self.panes.len());
-        let mut idx = 0;
-        for &w in &widths {
-            let row = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .homogeneous(true)
-                .spacing(self.gap)
-                .build();
-            for _ in 0..w {
-                if let Some(pane) = self.panes.get(idx) {
-                    pane.root.set_hexpand(true);
-                    pane.root.set_vexpand(true);
-                    row.append(&pane.root);
-                    idx += 1;
-                }
+        if self.zoomed {
+            let f = self.focus;
+            self.panes[f].root.set_hexpand(true);
+            self.panes[f].root.set_vexpand(true);
+            self.container.append(&self.panes[f].root);
+        } else {
+            let (tree, paneds) = build_tree(&self.panes);
+            tree.set_hexpand(true);
+            tree.set_vexpand(true);
+            self.container.append(&tree);
+            self.paneds = paneds;
+            self.set_positions();
+
+            // Dragging a divider reflows the terminals; with a wrapping prompt
+            // that can leave stale prompt fragments. After the drag settles, send
+            // a clean redraw (Ctrl+L) to each terminal.
+            let weak = self.self_weak.clone();
+            let timer = self.resize_timer.clone();
+            for (paned, _, _) in &self.paneds {
+                let weak = weak.clone();
+                let timer = timer.clone();
+                paned.connect_position_notify(move |_| {
+                    if let Some(id) = timer.take() {
+                        id.remove();
+                    }
+                    let weak2 = weak.clone();
+                    let timer2 = timer.clone();
+                    let id = glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                        timer2.set(None);
+                        if let Some(inner) = weak2.upgrade() {
+                            for p in &inner.borrow().panes {
+                                p.feed_text("\u{000c}"); // Ctrl+L
+                            }
+                        }
+                    });
+                    timer.set(Some(id));
+                });
             }
-            self.root.append(&row);
-            self.rows.push(row);
         }
         self.refresh_active();
     }
@@ -89,39 +174,20 @@ impl GridInner {
         self.refresh_active();
     }
 
-    fn toggle_zoom(&mut self) {
-        if self.panes.is_empty() {
-            return;
-        }
-        let z = !self.zoomed;
-        self.zoomed = z;
-        let widths = layout(self.panes.len());
-        let (fr, _) = coords(&widths, self.focus);
-        for (r, row) in self.rows.iter().enumerate() {
-            row.set_visible(!z || r == fr);
-        }
-        for (i, p) in self.panes.iter().enumerate() {
-            p.root.set_visible(!z || i == self.focus);
-        }
-        if let Some(p) = self.panes.get(self.focus) {
-            p.grab_focus();
-        }
-    }
-
     fn remove_by_id(&mut self, id: u64) {
         if let Some(pos) = self.panes.iter().position(|p| p.id == id) {
             self.panes[pos].root.unparent();
-            self.panes.remove(pos); // drops the Pane -> terminal + PTY torn down
+            self.panes.remove(pos);
             if self.focus > pos {
                 self.focus -= 1;
             }
         }
         if self.panes.is_empty() {
-            // Exited the last terminal -> nothing left to show; close the app.
             self.window.close();
             return;
         }
-        self.relayout();
+        self.zoomed = false;
+        self.rebuild();
     }
 }
 
@@ -132,40 +198,35 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(n: usize, cfg: &Config, window: &ApplicationWindow) -> Grid {
-        let gap = cfg.gap as i32;
-        let root = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .homogeneous(true)
-            .spacing(gap)
-            .build();
-        root.add_css_class("grid-root");
-        root.set_margin_top(gap);
-        root.set_margin_bottom(gap);
-        root.set_margin_start(gap);
-        root.set_margin_end(gap);
+        let container = GtkBox::new(Orientation::Vertical, 0);
+        container.add_css_class("grid-root");
 
         let inner = Rc::new(RefCell::new(GridInner {
-            root: root.clone(),
-            rows: Vec::new(),
+            container: container.clone(),
             panes: Vec::new(),
+            paneds: Vec::new(),
             focus: 0,
             zoomed: false,
-            gap,
             cfg: cfg.clone(),
             window: window.clone(),
             next_id: 0,
+            self_weak: Weak::new(),
+            resize_timer: Rc::new(Cell::new(None)),
         }));
+        inner.borrow_mut().self_weak = Rc::downgrade(&inner);
 
-        let grid = Grid { root, inner };
+        let grid = Grid {
+            root: container,
+            inner,
+        };
         for _ in 0..n.clamp(1, 16) {
             let pane = grid.make_pane();
             grid.inner.borrow_mut().panes.push(pane);
         }
-        grid.inner.borrow_mut().relayout();
+        grid.inner.borrow_mut().rebuild();
         grid
     }
 
-    /// Create a pane and wire its focus + exit callbacks to the shared state.
     fn make_pane(&self) -> Pane {
         let (id, cfg) = {
             let mut g = self.inner.borrow_mut();
@@ -175,8 +236,6 @@ impl Grid {
         };
         let pane = Pane::new(&cfg, id);
 
-        // Focus (click or keyboard) -> highlight. try_borrow_mut so our own
-        // grab_focus (which can re-emit `enter`) doesn't double-borrow + panic.
         let controller = EventControllerFocus::new();
         let weak = Rc::downgrade(&self.inner);
         controller.connect_enter(move |_| {
@@ -193,7 +252,6 @@ impl Grid {
         });
         pane.terminal.add_controller(controller);
 
-        // Child exited -> remove this pane and re-tile the rest.
         let weak2 = Rc::downgrade(&self.inner);
         pane.terminal.connect_child_exited(move |_t, _status| {
             if let Some(inner) = weak2.upgrade() {
@@ -204,13 +262,13 @@ impl Grid {
         pane
     }
 
-    /// Add a new terminal pane and focus it.
     pub fn add_pane(&self) {
         let pane = self.make_pane();
         let mut g = self.inner.borrow_mut();
         g.panes.push(pane);
         g.focus = g.panes.len() - 1;
-        g.relayout();
+        g.zoomed = false;
+        g.rebuild();
     }
 
     pub fn move_focus(&self, dir: Dir) {
@@ -218,10 +276,14 @@ impl Grid {
     }
 
     pub fn toggle_zoom(&self) {
-        self.inner.borrow_mut().toggle_zoom();
+        let mut g = self.inner.borrow_mut();
+        if g.panes.is_empty() {
+            return;
+        }
+        g.zoomed = !g.zoomed;
+        g.rebuild();
     }
 
-    /// Type text into the currently focused pane (used by the sidebar + drop).
     pub fn feed_focused(&self, text: &str) {
         let g = self.inner.borrow();
         if let Some(p) = g.panes.get(g.focus) {
@@ -229,11 +291,15 @@ impl Grid {
         }
     }
 
-    /// Grab keyboard focus on the focused pane (used after the window maps).
     pub fn grab_focused(&self) {
         let g = self.inner.borrow();
         if let Some(p) = g.panes.get(g.focus) {
             p.grab_focus();
         }
+    }
+
+    /// Apply equal split positions once the container has a real size (after map).
+    pub fn relayout_positions(&self) {
+        self.inner.borrow().set_positions();
     }
 }

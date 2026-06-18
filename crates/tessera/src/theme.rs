@@ -3,6 +3,7 @@
 
 use gtk4::gdk::{Display, RGBA};
 use gtk4::{CssProvider, STYLE_PROVIDER_PRIORITY_APPLICATION};
+use tessera_core::config::Theme;
 
 /// Parse a `#rrggbb` string into an RGBA, falling back to opaque black.
 pub fn rgba(hex: &str) -> RGBA {
@@ -10,21 +11,33 @@ pub fn rgba(hex: &str) -> RGBA {
 }
 
 /// Install the application-wide stylesheet for the current display.
-pub fn install_css(accent: &str, bg: &str) {
+pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
+    let bg = &theme.background;
+    let fg = &theme.foreground;
+    let accent = &theme.accent;
+    let surface = &theme.surface;
+    let border = &theme.border;
     let css = format!(
         ".grid-root {{ background-color: {bg}; }}\n\
-         .pane {{ border-radius: 8px; border: 2px solid transparent; background-color: {bg}; }}\n\
-         .pane.active-pane {{ border: 2px solid {accent}; }}\n\
-         .exited {{ color: #f38ba8; background-color: rgba(30,30,46,0.88); \
-                    padding: 6px 12px; border-radius: 6px; }}\n\
+         .pane {{ background-color: {bg}; }}\n\
+         .pane.active-pane {{ box-shadow: inset 0 0 0 1px {accent}; }}\n\
+         paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
-         .sidebar {{ background-color: #181825; border-right: 1px solid #313244; }}\n\
-         .sidebar-header {{ padding: 8px 10px; color: #a6adc8; font-weight: bold; }}\n\
-         .row-dir {{ color: {accent}; padding: 3px 10px; }}\n\
-         .row-file {{ color: #cdd6f4; padding: 3px 10px; }}\n\
-         .tessera-titlebar {{ min-height: 28px; background-color: #181825; \
-                              box-shadow: none; border: none; color: #cdd6f4; }}"
+         .sidebar {{ background-color: {bg}; border-right: 1px solid {border}; }}\n\
+         .sidebar-header {{ padding: 8px 10px; color: {fg}; font-weight: bold; }}\n\
+         .sidebar label {{ color: {fg}; }}\n\
+         .sidebar row {{ padding: 1px 4px; border-radius: 4px; }}\n\
+         .sidebar row:hover {{ background-color: alpha({fg}, 0.06); }}\n\
+         .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
+         .tessera-titlebar {{ min-height: 28px; background-color: {surface}; \
+                              box-shadow: none; border: none; color: {fg}; }}\n\
+         .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
+         .editor header {{ min-height: 0; background-color: {surface}; }}\n\
+         .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
+         .editor header tab button {{ min-height: 0; min-width: 0; padding: 2px; }}\n\
+         .editor-view {{ font-family: \"{font}\", monospace; font-size: {font_size}pt; }}\n\
+         .editor-view, .editor-view text {{ background-color: {bg}; color: {fg}; }}"
     );
     let provider = CssProvider::new();
     provider.load_from_string(&css);
