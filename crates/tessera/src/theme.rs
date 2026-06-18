@@ -24,16 +24,18 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
-         .sidebar {{ background-color: {bg}; border-right: 1px solid {border}; }}\n\
+         .sidebar {{ background-color: {bg}; border-right: 1px solid {border}; \
+                     font-family: \"Noto Sans\", sans-serif; font-size: 12px; }}\n\
          .sidebar-header {{ padding: 8px 10px; color: {fg}; font-weight: bold; }}\n\
          .sidebar label {{ color: {fg}; }}\n\
-         .sidebar row {{ padding: 0 4px; min-height: 24px; border-radius: 4px; }}\n\
-         .sidebar row:hover {{ background-color: alpha({fg}, 0.06); }}\n\
+         .sidebar row {{ padding: 0 4px; min-height: 22px; border-radius: 4px; }}\n\
+         .sidebar row:hover {{ background-color: transparent; }}\n\
+         .sidebar .hovered {{ background-color: alpha({fg}, 0.08); border-radius: 4px; }}\n\
          .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
          .sidebar .indent-guide {{ border-left: 1px solid alpha({fg}, 0.32); }}\n\
-         .sidebar .open {{ background-color: alpha(#000000, 0.60); border-radius: 4px; }}\n\
-         .tessera-titlebar {{ min-height: 28px; background-color: {surface}; \
+         .tessera-titlebar {{ min-height: 24px; background-color: {bg}; \
                               box-shadow: none; border: none; color: {fg}; }}\n\
+         .tessera-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
          .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
