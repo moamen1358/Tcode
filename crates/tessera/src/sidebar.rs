@@ -7,8 +7,8 @@ use std::path::Path;
 use gtk4::prelude::*;
 use gtk4::gio;
 use gtk4::{
-    Align, Box as GtkBox, CustomSorter, DirectoryList, EventControllerMotion, Image, Label,
-    ListItem, ListView, NoSelection, Ordering, Orientation, PolicyType, ScrolledWindow,
+    Align, Box as GtkBox, CustomSorter, DirectoryList, EventControllerMotion, GestureClick, Image,
+    Label, ListItem, ListView, NoSelection, Ordering, Orientation, PolicyType, ScrolledWindow,
     SignalListItemFactory, SortListModel, TreeExpander, TreeListModel, TreeListRow,
 };
 
@@ -85,6 +85,18 @@ impl Sidebar {
         let root = GtkBox::new(Orientation::Vertical, 0);
         root.add_css_class("sidebar");
         root.set_width_request(120);
+
+        // Clicking anywhere in the sidebar — including empty space below the
+        // files — pulls keyboard focus off the terminal so its focus ring clears.
+        root.set_focusable(true);
+        let click = GestureClick::new();
+        let root_weak = root.downgrade();
+        click.connect_pressed(move |_, _, _, _| {
+            if let Some(r) = root_weak.upgrade() {
+                r.grab_focus();
+            }
+        });
+        root.add_controller(click);
 
         // The launch directory itself is the tree root; everything else nests
         // under it (like VS Code's workspace folder).

@@ -303,6 +303,18 @@ impl Grid {
                 }
             }
         });
+        // Drop the focus ring when the terminal loses focus (e.g. clicking the
+        // sidebar or opening a file in the editor) so it isn't left highlighted.
+        let weak_leave = Rc::downgrade(&self.inner);
+        controller.connect_leave(move |_| {
+            if let Some(inner) = weak_leave.upgrade() {
+                if let Ok(g) = inner.try_borrow() {
+                    if let Some(p) = g.panes.iter().find(|p| p.id == id) {
+                        p.set_active(false);
+                    }
+                }
+            }
+        });
         pane.terminal.add_controller(controller);
 
         let weak2 = Rc::downgrade(&self.inner);
