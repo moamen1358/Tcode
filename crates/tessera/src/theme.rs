@@ -42,7 +42,8 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
          .editor header tab button {{ min-height: 0; min-width: 0; padding: 2px; }}\n\
          .editor-view {{ font-family: \"{font}\", monospace; font-size: {font_size}pt; }}\n\
-         .editor-view, .editor-view text {{ background-color: {bg}; color: {fg}; }}"
+         .editor-view, .editor-view text {{ background-color: {bg}; color: {fg}; }}\n\
+         .editor-view gutter {{ background-color: {bg}; }}"
     );
     let provider = CssProvider::new();
     provider.load_from_string(&css);

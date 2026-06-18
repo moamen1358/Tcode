@@ -172,6 +172,11 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.editor = Some(editor);
     }
 
+    // Optionally open a file at startup (TESSERA_OPEN=path) — preview/testing aid.
+    if let Some(path) = std::env::var_os("TESSERA_OPEN") {
+        open_file(state, std::path::Path::new(&path));
+    }
+
     // Grab keyboard focus once the window is mapped (COSMIC drops a focus
     // grabbed before present()).
     let st = state.clone();

@@ -112,6 +112,7 @@ impl Editor {
         let view = View::with_buffer(&buffer);
         view.set_show_line_numbers(true);
         view.set_highlight_current_line(true);
+        view.set_left_margin(14); // gap between the line-number gutter and the text
         view.add_css_class("editor-view"); // font via CSS (theme)
         let scroller = ScrolledWindow::builder()
             .hscrollbar_policy(PolicyType::Automatic)
