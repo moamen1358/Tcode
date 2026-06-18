@@ -43,7 +43,14 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .editor header tab button {{ min-height: 0; min-width: 0; padding: 2px; }}\n\
          .editor-view {{ font-family: \"{font}\", monospace; font-size: {font_size}pt; }}\n\
          .editor-view, .editor-view text {{ background-color: {bg}; color: {fg}; }}\n\
-         .editor-view gutter {{ background-color: {bg}; }}"
+         .editor-view gutter {{ background-color: {bg}; }}\n\
+         .image-view {{ background-color: {surface}; }}\n\
+         .doc-view {{ background-color: {surface}; }}\n\
+         .doc-page {{ background-color: white; box-shadow: 0 1px 8px rgba(0,0,0,0.55); }}\n\
+         .fallback-card {{ padding: 28px; }}\n\
+         .fallback-title {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
+         .fallback-meta {{ color: alpha({fg}, 0.55); }}\n\
+         .fallback-open {{ margin-top: 10px; }}"
     );
     let provider = CssProvider::new();
     provider.load_from_string(&css);

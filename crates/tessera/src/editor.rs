@@ -1,7 +1,8 @@
-//! A tabbed, neovim-style file editor that opens beside the terminals (the
-//! center `Paned`'s end child). Built on GtkSourceView: line numbers,
-//! current-line highlight, and syntax highlighting (language guessed from the
-//! filename). Open many files as tabs; `Ctrl+S` saves the active tab, `Esc` or a
+//! Tabbed universal file viewer beside the terminals (the center `Paned`'s end
+//! child). Each opened file becomes a tab whose content is chosen by file type:
+//! text/code uses GtkSourceView (editable, `Ctrl+S` saves); images use
+//! GtkPicture; PDFs and office documents are rendered to page images (see
+//! `preview`); anything else gets an info card with "Open externally". `Esc` or a
 //! tab's `×` closes it; closing the last tab hides the panel.
 
 use std::cell::RefCell;
@@ -12,16 +13,56 @@ use gtk4::gdk::{Key, ModifierType};
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, EventControllerKey, Label, Notebook, Orientation, Paned, PolicyType,
-    PropagationPhase, ScrolledWindow,
+    Align, Box as GtkBox, Button, ContentFit, EventControllerKey, Label, Notebook, Orientation,
+    Paned, Picture, PolicyType, PropagationPhase, ScrolledWindow, Widget,
 };
 use sourceview5::prelude::*;
 use sourceview5::{Buffer, LanguageManager, StyleSchemeManager, View};
 
+use crate::preview;
+
+/// What kind of viewer a file maps to (by extension).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Kind {
+    Text,
+    Image,
+    Pdf,
+    Office,
+    Other,
+}
+
+/// Pick a viewer kind from the file name/extension.
+pub fn kind_of(path: &Path) -> Kind {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg" | "tif" | "tiff"
+        | "xpm" | "pnm" | "tga" | "icns" => Kind::Image,
+        "pdf" => Kind::Pdf,
+        // Office formats (rendered via soffice -> pdf -> images). CSV is left as
+        // text since users typically edit it.
+        "doc" | "docx" | "odt" | "rtf" | "ppt" | "pptx" | "odp" | "xls" | "xlsx" | "ods" => {
+            Kind::Office
+        }
+        // Media / archives / binaries get the info card (no inline preview).
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "flv" | "mp3" | "wav" | "flac"
+        | "ogg" | "m4a" | "aac" | "opus" | "zip" | "tar" | "gz" | "xz" | "zst" | "bz2"
+        | "7z" | "rar" | "exe" | "bin" | "so" | "o" | "a" | "dll" | "dylib" | "wasm"
+        | "ttf" | "otf" | "woff" | "woff2" => Kind::Other,
+        // Unknown/extensionless default to text, downgraded to the info card if
+        // the bytes aren't valid UTF-8.
+        _ => Kind::Text,
+    }
+}
+
 struct OpenFile {
     path: PathBuf,
-    buffer: Buffer,
-    child: ScrolledWindow,
+    /// `Some` only for editable text tabs (so `Ctrl+S` knows what it can save).
+    buffer: Option<Buffer>,
+    /// The tab's content widget (its identity in the notebook).
+    child: Widget,
 }
 
 type OpenFiles = Rc<RefCell<Vec<OpenFile>>>;
@@ -40,7 +81,7 @@ impl Editor {
 
         let open: OpenFiles = Rc::new(RefCell::new(Vec::new()));
 
-        // Ctrl+S saves the current tab; Esc closes it (editor subtree only).
+        // Ctrl+S saves the current text tab; Esc closes the current tab.
         {
             let nb = notebook.clone();
             let open_c = open.clone();
@@ -93,33 +134,7 @@ impl Editor {
             return;
         }
 
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => format!("[tessera] cannot open {}: {e}", path.display()),
-        };
-
-        let buffer = Buffer::new(None);
-        // Syntax highlighting: guess the language from the filename.
-        if let Some(lang) = LanguageManager::default().guess_language(path.to_str(), None) {
-            buffer.set_language(Some(&lang));
-        }
-        // Dark style scheme for the syntax colors.
-        if let Some(scheme) = StyleSchemeManager::default().scheme("Adwaita-dark") {
-            buffer.set_style_scheme(Some(&scheme));
-        }
-        buffer.set_text(&content);
-
-        let view = View::with_buffer(&buffer);
-        view.set_show_line_numbers(true);
-        view.set_highlight_current_line(true);
-        view.set_left_margin(14); // gap between the line-number gutter and the text
-        view.add_css_class("editor-view"); // font via CSS (theme)
-        let scroller = ScrolledWindow::builder()
-            .hscrollbar_policy(PolicyType::Automatic)
-            .vexpand(true)
-            .hexpand(true)
-            .child(&view)
-            .build();
+        let (child, buffer) = build_viewer(path);
 
         let name = path
             .file_name()
@@ -133,24 +148,24 @@ impl Editor {
         tab.append(&label);
         tab.append(&close);
 
-        let page = self.root.append_page(&scroller, Some(&tab));
+        let page = self.root.append_page(&child, Some(&tab));
         self.root.set_current_page(Some(page));
         self.open.borrow_mut().push(OpenFile {
             path: path.to_path_buf(),
             buffer,
-            child: scroller.clone(),
+            child: child.clone(),
         });
 
         {
             let nb = self.root.clone();
             let open_c = self.open.clone();
             let paned_c = self.paned.clone();
-            let child = scroller.clone();
+            let child = child.clone();
             close.connect_clicked(move |_| close_tab(&nb, &open_c, &paned_c, &child));
         }
 
         self.reveal();
-        view.grab_focus();
+        child.grab_focus();
     }
 
     fn reveal(&self) {
@@ -163,24 +178,144 @@ impl Editor {
     }
 }
 
+/// Build the tab content for `path` based on its kind. Returns the widget and,
+/// for editable text, its source buffer.
+fn build_viewer(path: &Path) -> (Widget, Option<Buffer>) {
+    match kind_of(path) {
+        Kind::Text => match text_viewer(path) {
+            Some((w, b)) => (w, Some(b)),
+            None => (fallback_viewer(path), None), // binary masquerading as text
+        },
+        Kind::Image => (image_viewer(path), None),
+        Kind::Pdf | Kind::Office => (preview::document_viewer(path), None),
+        Kind::Other => (fallback_viewer(path), None),
+    }
+}
+
+/// Editable source view with line numbers + syntax highlighting. Returns `None`
+/// if the file isn't valid UTF-8 (binary) so the caller can show the info card.
+fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.contains(&0) {
+        return None; // NUL byte -> binary
+    }
+    let content = String::from_utf8(bytes).ok()?;
+
+    let buffer = Buffer::new(None);
+    if let Some(lang) = LanguageManager::default().guess_language(path.to_str(), None) {
+        buffer.set_language(Some(&lang));
+    }
+    if let Some(scheme) = StyleSchemeManager::default().scheme("Adwaita-dark") {
+        buffer.set_style_scheme(Some(&scheme));
+    }
+    buffer.set_text(&content);
+
+    let view = View::with_buffer(&buffer);
+    view.set_show_line_numbers(true);
+    view.set_highlight_current_line(true);
+    view.set_left_margin(14);
+    view.add_css_class("editor-view");
+    let scroller = ScrolledWindow::builder()
+        .hscrollbar_policy(PolicyType::Automatic)
+        .vexpand(true)
+        .hexpand(true)
+        .child(&view)
+        .build();
+    Some((scroller.upcast(), buffer))
+}
+
+/// Fit-to-view image, scrollable for very large pictures.
+fn image_viewer(path: &Path) -> Widget {
+    let pic = Picture::for_filename(path);
+    pic.set_content_fit(ContentFit::Contain);
+    pic.set_can_shrink(true);
+    pic.set_vexpand(true);
+    pic.set_hexpand(true);
+    pic.add_css_class("image-view");
+    let scroller = ScrolledWindow::builder()
+        .hscrollbar_policy(PolicyType::Automatic)
+        .vscrollbar_policy(PolicyType::Automatic)
+        .vexpand(true)
+        .hexpand(true)
+        .child(&pic)
+        .build();
+    scroller.upcast()
+}
+
+/// Info card for files we can't preview inline (video, audio, archives, …).
+fn fallback_viewer(path: &Path) -> Widget {
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let size = std::fs::metadata(path)
+        .map(|m| human_size(m.len()))
+        .unwrap_or_else(|_| "?".into());
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_uppercase())
+        .unwrap_or_else(|| "FILE".into());
+
+    let card = GtkBox::new(Orientation::Vertical, 10);
+    card.set_halign(Align::Center);
+    card.set_valign(Align::Center);
+    card.add_css_class("fallback-card");
+
+    let title = Label::new(Some(&name));
+    title.add_css_class("fallback-title");
+    let meta = Label::new(Some(&format!("{ext} · {size}")));
+    meta.add_css_class("fallback-meta");
+    let no_preview = Label::new(Some("No inline preview for this file type"));
+    no_preview.add_css_class("fallback-meta");
+
+    let open = Button::with_label("Open externally");
+    open.add_css_class("fallback-open");
+    let p = path.to_path_buf();
+    open.connect_clicked(move |_| {
+        let _ = std::process::Command::new("xdg-open").arg(&p).spawn();
+    });
+
+    card.append(&title);
+    card.append(&meta);
+    card.append(&no_preview);
+    card.append(&open);
+    card.upcast()
+}
+
+fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
 fn save_current(nb: &Notebook, open: &OpenFiles) {
     let Some(cur) = nb.current_page() else { return };
     let files = open.borrow();
     if let Some(of) = files.iter().find(|of| nb.page_num(&of.child) == Some(cur)) {
-        let b = &of.buffer;
-        let text = b.text(&b.start_iter(), &b.end_iter(), false);
-        if let Err(e) = std::fs::write(&of.path, text.as_str()) {
-            eprintln!("tessera: save failed for {}: {e}", of.path.display());
+        if let Some(b) = &of.buffer {
+            let text = b.text(&b.start_iter(), &b.end_iter(), false);
+            if let Err(e) = std::fs::write(&of.path, text.as_str()) {
+                eprintln!("tessera: save failed for {}: {e}", of.path.display());
+            }
         }
     }
 }
 
-fn close_tab(nb: &Notebook, open: &OpenFiles, paned: &Paned, child: &ScrolledWindow) {
+fn close_tab(nb: &Notebook, open: &OpenFiles, paned: &Paned, child: &Widget) {
     if let Some(p) = nb.page_num(child) {
         nb.remove_page(Some(p));
     }
     open.borrow_mut().retain(|of| &of.child != child);
     if open.borrow().is_empty() {
-        paned.set_end_child(None::<&gtk4::Widget>);
+        paned.set_end_child(None::<&Widget>);
     }
 }

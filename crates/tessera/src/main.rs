@@ -5,6 +5,7 @@ mod icons;
 mod keys;
 mod pane;
 mod picker;
+mod preview;
 mod sidebar;
 mod theme;
 
