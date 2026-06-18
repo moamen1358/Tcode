@@ -1,88 +1,116 @@
-//! Render PDFs and office documents to page-image files and present them as a
-//! scrollable column of pictures. Office docs are converted to PDF with
-//! `soffice --headless`, then every PDF is rasterised with `pdftoppm`. Rendered
-//! pages are cached under `~/.cache/tessera/preview/<key>/` keyed by the file's
-//! path + mtime + size, so re-opening is instant.
-//!
-//! NOTE: rendering currently runs synchronously when a document tab is opened.
-//! That is fine for PDFs (fast) but `soffice` can take a few seconds; an async
-//! version is planned.
+//! Background rendering of PDFs and office documents to page-image files. Office
+//! docs are first converted to PDF with `soffice --headless`, then every PDF is
+//! rasterised with `pdftoppm`. Rendered pages are cached under
+//! `~/.cache/tessera/preview/<key>/` (key = path + mtime + size), so re-opening
+//! is instant. Rendering runs on a worker thread; pages are delivered to the GTK
+//! main thread over an `async-channel` (see `editor::build_pages`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use gtk4::prelude::*;
-use gtk4::{
-    Align, Box as GtkBox, ContentFit, Label, Orientation, Picture, PolicyType, ScrolledWindow,
-    Widget,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const OFFICE_EXTS: &[&str] = &[
-    "doc", "docx", "odt", "rtf", "ppt", "pptx", "odp", "xls", "xlsx", "ods", "csv",
+    "doc", "docx", "odt", "rtf", "ppt", "pptx", "odp", "xls", "xlsx", "ods",
 ];
 
-/// A scrollable column of rendered pages for a PDF or office document.
-pub fn document_viewer(path: &Path) -> Widget {
-    let column = GtkBox::new(Orientation::Vertical, 14);
-    column.set_halign(Align::Center);
-    column.set_margin_top(12);
-    column.set_margin_bottom(12);
-    column.add_css_class("doc-view");
+/// Worker → UI messages.
+pub enum Msg {
+    /// Total page count is known.
+    Pages(usize),
+    /// One rendered page image, delivered in order.
+    Page(PathBuf),
+    /// Rendering finished successfully.
+    Done,
+    /// Rendering failed (human-readable reason).
+    Error(String),
+}
 
-    let scroller = ScrolledWindow::builder()
-        .hscrollbar_policy(PolicyType::Automatic)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .vexpand(true)
-        .hexpand(true)
-        .child(&column)
-        .build();
-
-    match render_pages(path) {
-        Ok(pages) if !pages.is_empty() => {
-            for page in pages {
-                let pic = Picture::for_filename(&page);
-                pic.set_can_shrink(true);
-                pic.set_content_fit(ContentFit::Contain);
-                pic.set_size_request(820, -1);
-                pic.add_css_class("doc-page");
-                column.append(&pic);
-            }
+/// Render `path` on a background thread; results arrive on `tx`. Setting
+/// `cancel` (e.g. when the tab is closed) stops delivery early.
+pub fn start_render(path: PathBuf, tx: async_channel::Sender<Msg>, cancel: Arc<AtomicBool>) {
+    std::thread::spawn(move || match render(&path, &tx, &cancel) {
+        Ok(()) => {
+            let _ = tx.send_blocking(Msg::Done);
         }
-        Ok(_) => column.append(&centered("No pages to display")),
-        Err(e) => column.append(&centered(&format!("Could not render preview:\n{e}"))),
-    }
-    scroller.upcast()
+        Err(e) => {
+            let _ = tx.send_blocking(Msg::Error(e));
+        }
+    });
 }
 
-fn centered(text: &str) -> Label {
-    let l = Label::new(Some(text));
-    l.set_halign(Align::Center);
-    l.set_valign(Align::Center);
-    l.set_vexpand(true);
-    l.add_css_class("fallback-meta");
-    l
-}
-
-fn render_pages(path: &Path) -> Result<Vec<PathBuf>, String> {
+fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> Result<(), String> {
     let cache = cache_dir(path)?;
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
-    let cached = collect_pages(&cache);
-    if !cached.is_empty() {
-        return Ok(cached);
+
+    let mut pages = collect_pages(&cache);
+    if pages.is_empty() {
+        let pdf = if is_office(path) {
+            office_to_pdf(path, &cache)?
+        } else {
+            path.to_path_buf()
+        };
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        rasterize(&pdf, &cache)?;
+        pages = collect_pages(&cache);
     }
-    let pdf = if is_office(path) {
-        office_to_pdf(path, &cache)?
-    } else {
-        path.to_path_buf()
-    };
-    pdftoppm(&pdf, &cache)?;
-    Ok(collect_pages(&cache))
+    if pages.is_empty() {
+        return Err("no pages were produced".into());
+    }
+
+    let _ = tx.send_blocking(Msg::Pages(pages.len()));
+    for p in pages {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let _ = tx.send_blocking(Msg::Page(p));
+    }
+    Ok(())
 }
 
 fn is_office(path: &Path) -> bool {
     path.extension()
         .map(|e| OFFICE_EXTS.contains(&e.to_string_lossy().to_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+/// Convert an office document to PDF in `cache`. A per-file LibreOffice profile
+/// (removed afterwards) lets this run even while the user's own LibreOffice is
+/// open and lets two conversions run without fighting over a lock.
+fn office_to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
+    let profile = cache.join("soffice-profile");
+    let status = Command::new("soffice")
+        .args(["--headless", "--norestore", "--invisible", "--nologo"])
+        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .args(["--convert-to", "pdf", "--outdir"])
+        .arg(cache)
+        .arg(path)
+        .status()
+        .map_err(|e| format!("soffice not available: {e}"))?;
+    let _ = std::fs::remove_dir_all(&profile);
+    if !status.success() {
+        return Err("document conversion failed".into());
+    }
+    let stem = path.file_stem().map(PathBuf::from).unwrap_or_default();
+    let pdf = cache.join(stem.with_extension("pdf"));
+    pdf.exists()
+        .then_some(pdf)
+        .ok_or_else(|| "converted PDF not found".into())
+}
+
+fn rasterize(pdf: &Path, cache: &Path) -> Result<(), String> {
+    let status = Command::new("pdftoppm")
+        .args(["-png", "-r", "150"])
+        .arg(pdf)
+        .arg(cache.join("page"))
+        .status()
+        .map_err(|e| format!("pdftoppm not available: {e}"))?;
+    if !status.success() {
+        return Err("pdftoppm failed".into());
+    }
+    Ok(())
 }
 
 fn cache_dir(path: &Path) -> Result<PathBuf, String> {
@@ -113,43 +141,6 @@ fn fnv1a(s: &str) -> String {
     format!("{h:016x}")
 }
 
-fn office_to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
-    let profile = cache.join("soffice-profile");
-    let status = Command::new("soffice")
-        .arg("--headless")
-        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
-        .arg("--convert-to")
-        .arg("pdf")
-        .arg("--outdir")
-        .arg(cache)
-        .arg(path)
-        .status()
-        .map_err(|e| format!("soffice not available: {e}"))?;
-    if !status.success() {
-        return Err("document conversion failed".into());
-    }
-    let stem = path.file_stem().map(PathBuf::from).unwrap_or_default();
-    let pdf = cache.join(stem.with_extension("pdf"));
-    pdf.exists()
-        .then_some(pdf)
-        .ok_or_else(|| "converted PDF not found".into())
-}
-
-fn pdftoppm(pdf: &Path, cache: &Path) -> Result<(), String> {
-    let status = Command::new("pdftoppm")
-        .arg("-png")
-        .arg("-r")
-        .arg("150")
-        .arg(pdf)
-        .arg(cache.join("page"))
-        .status()
-        .map_err(|e| format!("pdftoppm not available: {e}"))?;
-    if !status.success() {
-        return Err("pdftoppm failed".into());
-    }
-    Ok(())
-}
-
 fn collect_pages(cache: &Path) -> Vec<PathBuf> {
     let mut pages: Vec<PathBuf> = std::fs::read_dir(cache)
         .into_iter()
@@ -165,6 +156,7 @@ fn collect_pages(cache: &Path) -> Vec<PathBuf> {
                 .unwrap_or(false)
         })
         .collect();
+    // pdftoppm zero-pads page numbers, but sort numerically to be safe.
     pages.sort_by_key(|p| page_number(p));
     pages
 }
