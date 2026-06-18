@@ -7,6 +7,7 @@ use std::path::Path;
 use gtk4::pango::EllipsizeMode;
 use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::glib;
 use gtk4::{
     Align, Box as GtkBox, CustomSorter, DirectoryList, Image, Label, ListItem, ListView, Ordering,
     Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, SortListModel, SingleSelection,
@@ -89,7 +90,9 @@ impl Sidebar {
 
         // Lazy tree: each directory yields a child DirectoryList; files are leaves.
         let root_file = gio::File::for_path(start);
-        let tree = TreeListModel::new(sorted_dir(&root_file), false, false, |obj| {
+        // TESSERA_AUTOEXPAND=1 expands every folder (visual-testing aid).
+        let autoexpand = std::env::var_os("TESSERA_AUTOEXPAND").is_some();
+        let tree = TreeListModel::new(sorted_dir(&root_file), false, autoexpand, |obj| {
             let info = obj.downcast_ref::<gio::FileInfo>()?;
             if info.file_type() == gio::FileType::Directory {
                 let dir = file_of(info)?;
@@ -103,13 +106,22 @@ impl Sidebar {
         let factory = SignalListItemFactory::new();
         factory.connect_setup(|_f, obj| {
             let item = obj.downcast_ref::<ListItem>().expect("ListItem");
-            let row = GtkBox::new(Orientation::Horizontal, 6);
+            // Row layout: [indent guides] [icon + label]. We hide the disclosure
+            // triangle and draw our own indent guide lines, so set the expander to
+            // neither show an arrow nor indent (we handle indentation ourselves).
+            let indent = GtkBox::new(Orientation::Horizontal, 0);
+            let content = GtkBox::new(Orientation::Horizontal, 6);
             let image = Image::new();
             image.set_pixel_size(16);
             let label = Label::builder().halign(Align::Start).build();
-            row.append(&image);
-            row.append(&label);
+            content.append(&image);
+            content.append(&label);
+            let row = GtkBox::new(Orientation::Horizontal, 0);
+            row.append(&indent);
+            row.append(&content);
             let expander = TreeExpander::new();
+            expander.set_hide_expander(true);
+            expander.set_indent_for_depth(false);
             expander.set_child(Some(&row));
             item.set_child(Some(&expander));
         });
@@ -125,20 +137,70 @@ impl Sidebar {
             let Some(row) = expander.child().and_downcast::<GtkBox>() else {
                 return;
             };
-            let Some(image) = row.first_child().and_downcast::<Image>() else {
+            let Some(indent) = row.first_child().and_downcast::<GtkBox>() else {
                 return;
             };
-            let Some(label) = row.last_child().and_downcast::<Label>() else {
+            let Some(content) = row.last_child().and_downcast::<GtkBox>() else {
                 return;
             };
-            expander.set_list_row(Some(&treerow)); // disclosure triangle + indentation
+            let Some(image) = content.first_child().and_downcast::<Image>() else {
+                return;
+            };
+            let Some(label) = content.last_child().and_downcast::<Label>() else {
+                return;
+            };
+            expander.set_list_row(Some(&treerow));
+
+            // One vertical guide line per ancestor level (drawn left of the row).
+            while let Some(child) = indent.first_child() {
+                indent.remove(&child);
+            }
+            for _ in 0..treerow.depth() {
+                let cell = GtkBox::new(Orientation::Horizontal, 0);
+                cell.set_size_request(16, -1);
+                cell.add_css_class("indent-guide");
+                indent.append(&cell);
+            }
+
             if let Some(info) = treerow.item().and_downcast::<gio::FileInfo>() {
                 label.set_label(&info.display_name());
-                // Colored per-type icon from the bundled set (Zed-style).
+                // Colored per-type icon from the bundled Material set.
                 let is_dir = info.file_type() == gio::FileType::Directory;
                 let name = info.name();
                 let path = crate::icons::icon_path(&icons_dir, &name.to_string_lossy(), is_dir);
                 image.set_from_file(Some(&path));
+
+                // No arrow: an expanded folder gets a darker background instead.
+                // Track the row's expanded state and toggle the `.open` class.
+                if is_dir {
+                    let exp = expander.clone();
+                    let apply = move |r: &TreeListRow| {
+                        if r.is_expanded() {
+                            exp.add_css_class("open");
+                        } else {
+                            exp.remove_css_class("open");
+                        }
+                    };
+                    apply(&treerow);
+                    let id = treerow.connect_expanded_notify(move |r| apply(r));
+                    unsafe {
+                        item.set_data("open-handler", (treerow.clone(), id));
+                    }
+                } else {
+                    expander.remove_css_class("open");
+                }
+            }
+        });
+        // Drop the per-row expanded-state handler when a row widget is recycled.
+        factory.connect_unbind(|_f, obj| {
+            let item = obj.downcast_ref::<ListItem>().expect("ListItem");
+            if let Some((row, id)) =
+                unsafe { item.steal_data::<(TreeListRow, glib::SignalHandlerId)>("open-handler") }
+            {
+                row.disconnect(id);
+            }
+            if let Some(expander) = item.child().and_downcast::<TreeExpander>() {
+                expander.remove_css_class("open");
             }
         });
 
