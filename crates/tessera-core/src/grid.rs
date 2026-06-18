@@ -63,6 +63,21 @@ pub fn flat_index(widths: &[usize], row: usize, col: usize) -> usize {
     widths[..row].iter().sum::<usize>() + col
 }
 
+/// Inverse of [`flat_index`]: the `(row, col)` of the pane at flat index `idx`,
+/// given row `widths`. Clamps to the last cell if `idx` is out of range.
+pub fn coords(widths: &[usize], idx: usize) -> (usize, usize) {
+    let mut remaining = idx;
+    for (r, &w) in widths.iter().enumerate() {
+        if remaining < w {
+            return (r, remaining);
+        }
+        remaining -= w;
+    }
+    let r = widths.len().saturating_sub(1);
+    let c = widths.get(r).copied().unwrap_or(0).saturating_sub(1);
+    (r, c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +135,17 @@ mod tests {
         assert_eq!(flat_index(&w, 0, 0), 0);
         assert_eq!(flat_index(&w, 0, 1), 1);
         assert_eq!(flat_index(&w, 1, 0), 2);
+    }
+
+    #[test]
+    fn coords_inverts_flat_index() {
+        for w in [vec![1], vec![2], vec![3, 2], vec![3, 3, 3], vec![3, 3, 2]] {
+            let total: usize = w.iter().sum();
+            for idx in 0..total {
+                let (r, c) = coords(&w, idx);
+                assert_eq!(flat_index(&w, r, c), idx, "widths={w:?} idx={idx}");
+            }
+        }
     }
 
     #[test]

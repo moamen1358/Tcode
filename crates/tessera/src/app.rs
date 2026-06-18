@@ -4,8 +4,8 @@
 use gtk4::gdk::{DragAction, FileList};
 use gtk4::prelude::*;
 use gtk4::{
-    gio, glib, Application, ApplicationWindow, Box as GtkBox, DropTarget, HeaderBar, Orientation,
-    ToggleButton,
+    gio, glib, Application, ApplicationWindow, Box as GtkBox, Button, DropTarget, HeaderBar,
+    Orientation, ToggleButton,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -73,6 +73,20 @@ pub fn build(app: &Application, preset: Option<usize>) {
         });
     }
 
+    // "+" button next to the sidebar toggle: add a new terminal pane (also Alt+n).
+    let add_btn = Button::from_icon_name("list-add-symbolic");
+    add_btn.set_tooltip_text(Some("New terminal (Alt+N)"));
+    add_btn.add_css_class("flat");
+    header.pack_start(&add_btn);
+    {
+        let st = state.clone();
+        add_btn.connect_clicked(move |_| {
+            if let Some(g) = st.borrow().grid.as_ref() {
+                g.add_pane();
+            }
+        });
+    }
+
     keys::install(&window, &state);
 
     match preset {
@@ -89,9 +103,12 @@ pub fn show_picker(state: &Shared) {
 }
 
 pub fn show_grid(state: &Shared, n: usize) {
-    // Clone the config so we don't hold a borrow while Pane::new spawns PTYs.
-    let cfg = state.borrow().cfg.clone();
-    let grid = Grid::new(n, &cfg);
+    // Clone config + window so we don't hold a borrow while Pane::new spawns PTYs.
+    let (cfg, window) = {
+        let s = state.borrow();
+        (s.cfg.clone(), s.window.clone())
+    };
+    let grid = Grid::new(n, &cfg, &window);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let sidebar = Sidebar::new(&cwd, state);
     // Respect the current toggle state for the freshly built sidebar.
@@ -104,19 +121,22 @@ pub fn show_grid(state: &Shared, n: usize) {
     let content = GtkBox::new(Orientation::Horizontal, 0);
     content.append(&sidebar.root);
     content.append(&grid.root);
+    window.set_child(Some(&content));
 
-    state.borrow().window.set_child(Some(&content));
+    {
+        let mut s = state.borrow_mut();
+        s.grid = Some(grid);
+        s.sidebar = Some(sidebar);
+    }
 
-    // Grab keyboard focus once the window is actually mapped — grabbing before
-    // present() doesn't stick on some Wayland compositors (incl. COSMIC).
-    let term = grid.focused_pane().terminal.clone();
+    // Grab keyboard focus once the window is mapped (COSMIC drops a focus
+    // grabbed before present()).
+    let st = state.clone();
     gtk4::glib::idle_add_local_once(move || {
-        term.grab_focus();
+        if let Some(g) = st.borrow().grid.as_ref() {
+            g.grab_focused();
+        }
     });
-
-    let mut s = state.borrow_mut();
-    s.grid = Some(grid);
-    s.sidebar = Some(sidebar);
 }
 
 /// Drag-and-drop image (or any file) → insert its path into the focused pane.
@@ -148,7 +168,7 @@ fn install_image_drop(widget: &impl IsA<gtk4::Widget>, state: &Shared) {
             .collect::<Vec<_>>()
             .join(" ");
         if let Some(g) = st.borrow().grid.as_ref() {
-            g.focused_pane().feed_text(&joined);
+            g.feed_focused(&joined);
         }
         true
     });

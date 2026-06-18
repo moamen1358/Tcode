@@ -1,14 +1,12 @@
-//! A single terminal pane: a VTE terminal wrapped in an Overlay (so we can show
-//! an "[exited]" message), spawning the user's shell over a PTY.
-
-use std::cell::Cell;
-use std::rc::Rc;
+//! A single terminal pane: a VTE terminal in a styled container, spawning the
+//! user's shell over a PTY. Lifecycle (focus tracking, exit-removal) is wired by
+//! the grid, which owns the panes — each pane carries a stable `id` for that.
 
 use gtk4::gdk::RGBA;
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
-use gtk4::{gio, Align, Label, Overlay};
+use gtk4::{gio, Overlay};
 use tessera_core::config::Config;
 use vte4::prelude::*;
 use vte4::{PtyFlags, Terminal};
@@ -16,15 +14,15 @@ use vte4::{PtyFlags, Terminal};
 use crate::theme::rgba;
 
 pub struct Pane {
+    /// Stable identity, assigned by the grid (survives re-tiling/reordering).
+    pub id: u64,
     /// Styled root that goes into the grid (carries the `.pane` CSS class).
     pub root: Overlay,
     pub terminal: Terminal,
-    /// Set when the child exits; gates `respawn` and is reset on `spawn`.
-    exited: Rc<Cell<bool>>,
 }
 
 impl Pane {
-    pub fn new(cfg: &Config) -> Pane {
+    pub fn new(cfg: &Config, id: u64) -> Pane {
         let terminal = Terminal::new();
 
         // Cell colors come from the VTE API, not CSS.
@@ -41,37 +39,13 @@ impl Pane {
         root.add_css_class("pane");
         root.set_child(Some(&terminal));
 
-        let exited = Rc::new(Cell::new(false));
-
-        // Connect child-exited ONCE (not per spawn) so restarts don't stack handlers.
-        // Capture the overlay WEAKLY (plus the exited flag) so the terminal's signal
-        // closure doesn't pin Overlay -> Terminal -> PTY and leak the child shell on
-        // every re-grid.
-        let overlay_weak = root.downgrade();
-        let exited_c = exited.clone();
-        terminal.connect_child_exited(move |_t, _status| {
-            exited_c.set(true);
-            if let Some(overlay) = overlay_weak.upgrade() {
-                let label = Label::new(Some("[exited — Alt+r to restart]"));
-                label.add_css_class("exited");
-                label.set_halign(Align::Center);
-                label.set_valign(Align::Center);
-                overlay.add_overlay(&label);
-            }
-        });
-
-        let pane = Pane {
-            root,
-            terminal,
-            exited,
-        };
+        let pane = Pane { id, root, terminal };
         pane.spawn(cfg);
         pane
     }
 
     /// Spawn the shell (+ optional startup command) over a PTY.
     fn spawn(&self, cfg: &Config) {
-        self.exited.set(false);
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let cwd = std::env::current_dir()
             .ok()
@@ -101,22 +75,6 @@ impl Pane {
                 }
             },
         );
-    }
-
-    /// Remove any "[exited]" overlay labels and spawn a fresh shell.
-    /// No-op while the pane's shell is still running (Alt+r only restarts exited panes).
-    pub fn respawn(&self, cfg: &Config) {
-        if !self.exited.get() {
-            return;
-        }
-        let mut child = self.root.first_child();
-        while let Some(w) = child {
-            child = w.next_sibling();
-            if let Ok(label) = w.downcast::<Label>() {
-                self.root.remove_overlay(&label);
-            }
-        }
-        self.spawn(cfg);
     }
 
     pub fn grab_focus(&self) {

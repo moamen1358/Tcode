@@ -110,7 +110,7 @@ impl Sidebar {
 
 fn feed_focused(state: &Shared, text: &str) {
     if let Some(g) = state.borrow().grid.as_ref() {
-        g.focused_pane().feed_text(text);
+        g.feed_focused(text);
     }
 }
 

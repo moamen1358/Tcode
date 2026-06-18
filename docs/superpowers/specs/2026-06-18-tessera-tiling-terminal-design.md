@@ -54,7 +54,7 @@ scratch — that's what makes it both **fast at runtime** and **fast to ship**.
 |----------------|---------------------------------------------------|
 | `Alt+h/j/k/l`  | Move focus left / down / up / right between panes |
 | `Alt+z`        | Toggle zoom: focused pane fills window / back to grid |
-| `Alt+r`        | Restart the focused pane (re-spawn shell/startup cmd) |
+| `Alt+n`        | New terminal (add a pane); the titlebar `+` button does the same |
 | `Alt+1`..`Alt+9` | Rebuild the grid with that many panes           |
 | `Alt+f`        | Toggle fullscreen (immersive, no titlebar)        |
 | `Alt+q`        | Quit                                              |
@@ -169,8 +169,8 @@ defaulting is unit-tested in `tessera-core`.
 
 ## 11. Error handling
 
-- **Shell/command exits:** pane shows dim `[exited — Alt+r to restart]`; `Alt+r` re-spawns.
-  No auto-respawn loop (a failing command won't thrash).
+- **Shell/command exits:** the pane is removed and the surviving panes re-tile.
+  Exiting the last pane closes the app.
 - **Bad startup command:** runs through the shell, so the shell prints the normal error;
   the pane stays usable.
 - **Malformed config:** log a warning to stderr, fall back to defaults, keep running.

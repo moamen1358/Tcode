@@ -9,9 +9,11 @@ Built in Rust with GTK4 + VTE.
 - Minimal dark, GPU-composited GUI: a thin titlebar (minimize / maximize / close), and
   `Alt+f` for immersive fullscreen with no header at all.
 - Pick **1–16 panes** (a picker on launch, or `tessera 4`); balanced auto-grid.
+- **Add / remove panes live**: the **`+`** button (or `Alt+n`) adds a terminal; when a
+  shell exits, its pane disappears and the rest re-tile (exit the last → the app closes).
 - Each pane is your `$SHELL` (with an optional auto-run startup command).
 - **File sidebar** (left): click a folder to `cd` the focused pane into it; click a
-  file to insert its path. `..` goes up. Toggle with the **☰** titlebar button or `Alt+b`.
+  file to insert its path. `..` goes up. Toggle with the **sidebar button** in the titlebar or `Alt+b`.
 - **Drag-and-drop** a file/image onto the grid → its path is inserted into the
   focused pane (handy for passing an image to a CLI agent).
 - **Zoom** the focused pane to fullscreen and back.
@@ -23,7 +25,7 @@ Built in Rust with GTK4 + VTE.
 |----------------|-------------------------------------|
 | `Alt+h/j/k/l`  | Move focus between panes            |
 | `Alt+z`        | Zoom the focused pane / restore     |
-| `Alt+r`        | Restart the focused pane            |
+| `Alt+n`        | New terminal (add a pane)           |
 | `Alt+b`        | Toggle the file sidebar             |
 | `Alt+f`        | Toggle fullscreen (no titlebar)     |
 | `Alt+1`..`Alt+9` | Rebuild the grid with N panes     |

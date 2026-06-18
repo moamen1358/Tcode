@@ -1,40 +1,138 @@
-//! The tiled grid of panes: nested homogeneous boxes built from
-//! `tessera_core::grid::layout`, with focus tracking (keyboard + click) and a
-//! zoom toggle. Focus lives in a shared `Cell` so an `EventControllerFocus` on
-//! each terminal keeps the active-pane highlight in sync however focus changed.
+//! The tiled grid of panes — a *dynamic* model that can add panes (the `+`
+//! button / `Alt+n`) and remove them when their shell exits, re-tiling the
+//! survivors with `tessera_core::grid::layout`. State lives behind an
+//! `Rc<RefCell<GridInner>>` so widget callbacks (focus, child-exit) can mutate
+//! it; callbacks hold a `Weak` to avoid keeping the grid alive after a re-grid.
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, EventControllerFocus, Orientation};
+use gtk4::{ApplicationWindow, Box as GtkBox, EventControllerFocus, Orientation};
+use vte4::prelude::*; // TerminalExt: connect_child_exited
 use tessera_core::config::Config;
-use tessera_core::grid::{flat_index, layout, neighbor, Dir};
+use tessera_core::grid::{coords, flat_index, layout, neighbor, Dir};
 
 use crate::pane::Pane;
 
-pub struct Grid {
-    pub root: GtkBox,
-    panes: Rc<Vec<Pane>>,
+struct GridInner {
+    root: GtkBox,
     rows: Vec<GtkBox>,
-    widths: Rc<Vec<usize>>,
-    focus: Rc<Cell<(usize, usize)>>,
-    zoomed: Cell<bool>,
+    panes: Vec<Pane>,
+    focus: usize,
+    zoomed: bool,
+    gap: i32,
+    cfg: Config,
+    window: ApplicationWindow,
+    next_id: u64,
 }
 
-/// Apply the `.active-pane` highlight to the focused pane only.
-fn set_active(panes: &[Pane], widths: &[usize], focus: (usize, usize)) {
-    let active = flat_index(widths, focus.0, focus.1);
-    for (i, p) in panes.iter().enumerate() {
-        p.set_active(i == active);
+impl GridInner {
+    fn refresh_active(&self) {
+        for (i, p) in self.panes.iter().enumerate() {
+            p.set_active(i == self.focus);
+        }
+        if let Some(p) = self.panes.get(self.focus) {
+            p.grab_focus();
+        }
+    }
+
+    /// Rebuild the row boxes for the current pane count, re-parenting the
+    /// existing (live) pane widgets. Resets any zoom.
+    fn relayout(&mut self) {
+        self.zoomed = false;
+        for p in &self.panes {
+            p.root.unparent();
+        }
+        while let Some(child) = self.root.first_child() {
+            self.root.remove(&child);
+        }
+        self.rows.clear();
+
+        if self.panes.is_empty() {
+            return;
+        }
+        if self.focus >= self.panes.len() {
+            self.focus = self.panes.len() - 1;
+        }
+
+        let widths = layout(self.panes.len());
+        let mut idx = 0;
+        for &w in &widths {
+            let row = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .homogeneous(true)
+                .spacing(self.gap)
+                .build();
+            for _ in 0..w {
+                if let Some(pane) = self.panes.get(idx) {
+                    pane.root.set_hexpand(true);
+                    pane.root.set_vexpand(true);
+                    row.append(&pane.root);
+                    idx += 1;
+                }
+            }
+            self.root.append(&row);
+            self.rows.push(row);
+        }
+        self.refresh_active();
+    }
+
+    fn move_focus(&mut self, dir: Dir) {
+        if self.zoomed || self.panes.is_empty() {
+            return;
+        }
+        let widths = layout(self.panes.len());
+        let (r, c) = coords(&widths, self.focus);
+        let (nr, nc) = neighbor(&widths, r, c, dir);
+        self.focus = flat_index(&widths, nr, nc).min(self.panes.len() - 1);
+        self.refresh_active();
+    }
+
+    fn toggle_zoom(&mut self) {
+        if self.panes.is_empty() {
+            return;
+        }
+        let z = !self.zoomed;
+        self.zoomed = z;
+        let widths = layout(self.panes.len());
+        let (fr, _) = coords(&widths, self.focus);
+        for (r, row) in self.rows.iter().enumerate() {
+            row.set_visible(!z || r == fr);
+        }
+        for (i, p) in self.panes.iter().enumerate() {
+            p.root.set_visible(!z || i == self.focus);
+        }
+        if let Some(p) = self.panes.get(self.focus) {
+            p.grab_focus();
+        }
+    }
+
+    fn remove_by_id(&mut self, id: u64) {
+        if let Some(pos) = self.panes.iter().position(|p| p.id == id) {
+            self.panes[pos].root.unparent();
+            self.panes.remove(pos); // drops the Pane -> terminal + PTY torn down
+            if self.focus > pos {
+                self.focus -= 1;
+            }
+        }
+        if self.panes.is_empty() {
+            // Exited the last terminal -> nothing left to show; close the app.
+            self.window.close();
+            return;
+        }
+        self.relayout();
     }
 }
 
-impl Grid {
-    pub fn new(n: usize, cfg: &Config) -> Grid {
-        let widths = Rc::new(layout(n.clamp(1, 16)));
-        let gap = cfg.gap as i32;
+pub struct Grid {
+    pub root: GtkBox,
+    inner: Rc<RefCell<GridInner>>,
+}
 
+impl Grid {
+    pub fn new(n: usize, cfg: &Config, window: &ApplicationWindow) -> Grid {
+        let gap = cfg.gap as i32;
         let root = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .homogeneous(true)
@@ -46,96 +144,96 @@ impl Grid {
         root.set_margin_start(gap);
         root.set_margin_end(gap);
 
-        let mut panes_vec = Vec::new();
-        let mut rows = Vec::new();
-        for &w in widths.iter() {
-            let row = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .homogeneous(true)
-                .spacing(gap)
-                .build();
-            for _ in 0..w {
-                let pane = Pane::new(cfg);
-                pane.root.set_hexpand(true);
-                pane.root.set_vexpand(true);
-                row.append(&pane.root);
-                panes_vec.push(pane);
-            }
-            root.append(&row);
-            rows.push(row);
+        let inner = Rc::new(RefCell::new(GridInner {
+            root: root.clone(),
+            rows: Vec::new(),
+            panes: Vec::new(),
+            focus: 0,
+            zoomed: false,
+            gap,
+            cfg: cfg.clone(),
+            window: window.clone(),
+            next_id: 0,
+        }));
+
+        let grid = Grid { root, inner };
+        for _ in 0..n.clamp(1, 16) {
+            let pane = grid.make_pane();
+            grid.inner.borrow_mut().panes.push(pane);
         }
-
-        let panes = Rc::new(panes_vec);
-        let focus = Rc::new(Cell::new((0usize, 0usize)));
-
-        // When a terminal gains focus (by click or keyboard), mark it active.
-        for (r, &w) in widths.iter().enumerate() {
-            for c in 0..w {
-                let i = flat_index(&widths, r, c);
-                let controller = EventControllerFocus::new();
-                // Weak ref breaks the terminal -> controller -> closure -> panes
-                // cycle, so old grids (and their child shells) free on re-grid.
-                let panes_weak = Rc::downgrade(&panes);
-                let widths_c = widths.clone();
-                let focus_c = focus.clone();
-                controller.connect_enter(move |_| {
-                    if let Some(panes) = panes_weak.upgrade() {
-                        focus_c.set((r, c));
-                        set_active(&panes, &widths_c, (r, c));
-                    }
-                });
-                panes[i].terminal.add_controller(controller);
-            }
-        }
-
-        set_active(&panes, &widths, (0, 0));
-
-        Grid {
-            root,
-            panes,
-            rows,
-            widths,
-            focus,
-            zoomed: Cell::new(false),
-        }
+        grid.inner.borrow_mut().relayout();
+        grid
     }
 
-    pub fn focused_pane(&self) -> &Pane {
-        let (r, c) = self.focus.get();
-        &self.panes[flat_index(&self.widths, r, c)]
+    /// Create a pane and wire its focus + exit callbacks to the shared state.
+    fn make_pane(&self) -> Pane {
+        let (id, cfg) = {
+            let mut g = self.inner.borrow_mut();
+            let id = g.next_id;
+            g.next_id += 1;
+            (id, g.cfg.clone())
+        };
+        let pane = Pane::new(&cfg, id);
+
+        // Focus (click or keyboard) -> highlight. try_borrow_mut so our own
+        // grab_focus (which can re-emit `enter`) doesn't double-borrow + panic.
+        let controller = EventControllerFocus::new();
+        let weak = Rc::downgrade(&self.inner);
+        controller.connect_enter(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                if let Ok(mut g) = inner.try_borrow_mut() {
+                    if let Some(pos) = g.panes.iter().position(|p| p.id == id) {
+                        g.focus = pos;
+                        for (i, p) in g.panes.iter().enumerate() {
+                            p.set_active(i == pos);
+                        }
+                    }
+                }
+            }
+        });
+        pane.terminal.add_controller(controller);
+
+        // Child exited -> remove this pane and re-tile the rest.
+        let weak2 = Rc::downgrade(&self.inner);
+        pane.terminal.connect_child_exited(move |_t, _status| {
+            if let Some(inner) = weak2.upgrade() {
+                inner.borrow_mut().remove_by_id(id);
+            }
+        });
+
+        pane
+    }
+
+    /// Add a new terminal pane and focus it.
+    pub fn add_pane(&self) {
+        let pane = self.make_pane();
+        let mut g = self.inner.borrow_mut();
+        g.panes.push(pane);
+        g.focus = g.panes.len() - 1;
+        g.relayout();
     }
 
     pub fn move_focus(&self, dir: Dir) {
-        if self.zoomed.get() {
-            return;
-        }
-        let (r, c) = self.focus.get();
-        let nf = neighbor(&self.widths, r, c, dir);
-        self.focus.set(nf);
-        let idx = flat_index(&self.widths, nf.0, nf.1);
-        self.panes[idx].grab_focus(); // focus-enter handler updates the highlight
+        self.inner.borrow_mut().move_focus(dir);
     }
 
-    /// Hide every pane except the focused one (hidden box children take zero
-    /// space, so the focused pane fills the window). Toggle to restore.
     pub fn toggle_zoom(&self) {
-        let z = !self.zoomed.get();
-        self.zoomed.set(z);
-        let (fr, fc) = self.focus.get();
-        for (r, row) in self.rows.iter().enumerate() {
-            row.set_visible(!z || r == fr);
-        }
-        let mut idx = 0;
-        for (r, &w) in self.widths.iter().enumerate() {
-            for c in 0..w {
-                self.panes[idx].root.set_visible(!z || (r == fr && c == fc));
-                idx += 1;
-            }
-        }
-        self.focused_pane().grab_focus();
+        self.inner.borrow_mut().toggle_zoom();
     }
 
-    pub fn restart_focused(&self, cfg: &Config) {
-        self.focused_pane().respawn(cfg);
+    /// Type text into the currently focused pane (used by the sidebar + drop).
+    pub fn feed_focused(&self, text: &str) {
+        let g = self.inner.borrow();
+        if let Some(p) = g.panes.get(g.focus) {
+            p.feed_text(text);
+        }
+    }
+
+    /// Grab keyboard focus on the focused pane (used after the window maps).
+    pub fn grab_focused(&self) {
+        let g = self.inner.borrow();
+        if let Some(p) = g.panes.get(g.focus) {
+            p.grab_focus();
+        }
     }
 }

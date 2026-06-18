@@ -59,10 +59,9 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 }
                 Propagation::Stop
             }
-            Key::r => {
-                let s = st.borrow();
-                if let Some(g) = s.grid.as_ref() {
-                    g.restart_focused(&s.cfg);
+            Key::n => {
+                if let Some(g) = st.borrow().grid.as_ref() {
+                    g.add_pane();
                 }
                 Propagation::Stop
             }
