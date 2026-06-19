@@ -487,12 +487,25 @@ fn build_session(state: &Shared, session: Session) {
 
     show_grid(state, panes); // builds content, adds + shows the stack page `id`
 
-    for f in files.iter().filter_map(|f| restored_session_file(&root, f)) {
-        open_file(state, &f);
+    // Open the still-valid saved files, tracking where the saved active tab lands
+    // once missing / out-of-root files are dropped. `active` indexes the original
+    // saved list, so applying it verbatim to the filtered (possibly shorter)
+    // notebook would select the wrong tab — or a non-existent page (a silent no-op
+    // that leaves the wrong tab active).
+    let mut opened = 0u32;
+    let mut active_page: Option<u32> = None;
+    for (i, f) in files.iter().enumerate() {
+        if let Some(f) = restored_session_file(&root, f) {
+            open_file(state, &f);
+            if Some(i) == active {
+                active_page = Some(opened);
+            }
+            opened += 1;
+        }
     }
-    if let Some(idx) = active {
+    if let Some(page) = active_page {
         if let Some(editor) = state.borrow().editor.as_ref() {
-            editor.root.set_current_page(Some(idx as u32));
+            editor.root.set_current_page(Some(page));
         }
     }
     // Remember the live content so its shells keep running while hidden.
@@ -567,8 +580,16 @@ fn reveal_session(state: &Shared, session: Session) {
         p.set_visible(shots_active);
     }
     reparent_clipboard(state);
-    apply_view(state); // re-apply current font/scale (non-destructive) to this grid
+    // Re-apply the current font/scale straight to this grid's terminals. A reveal
+    // changes neither theme, font nor scale, so the stylesheet is identical to the
+    // one already installed — skip apply_view's full CSS rebuild + reparse, which
+    // re-styles every widget in the window and is a visible hitch on every switch.
+    let (font, size, scale) = {
+        let s = state.borrow();
+        (s.cfg.font.clone(), s.cfg.font_size, s.cfg.scale)
+    };
     if let Some(g) = state.borrow().grid.as_ref() {
+        g.apply_font(&font, size, scale);
         g.grab_focused();
     }
     clear_picker_page(state);
