@@ -3,6 +3,7 @@
 //! dir on startup, so history survives restarts). Clicking a thumbnail re-opens
 //! it in the annotation canvas.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -63,7 +64,7 @@ pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel
         list,
         on_pick,
     });
-    panel.load_existing();
+    panel.load_existing_deferred();
     panel
 }
 
@@ -85,11 +86,15 @@ impl Panel {
         self.list.append(&btn);
     }
 
-    /// Load every saved shot-*.png from the cache dir, oldest first.
-    fn load_existing(&self) {
+    /// Scan the cache dir for saved shot-*.png paths, sorted oldest first.
+    ///
+    /// This is the cheap part of loading history: a directory scan plus a sort
+    /// by mtime. It deliberately does NOT decode any thumbnails — that work is
+    /// done later, incrementally, by `load_existing_deferred`.
+    fn scan_shots() -> Vec<PathBuf> {
         let dir = shots_dir();
         let Ok(entries) = std::fs::read_dir(&dir) else {
-            return;
+            return Vec::new();
         };
         let mut shots: Vec<(std::time::SystemTime, PathBuf)> = entries
             .flatten()
@@ -108,8 +113,36 @@ impl Panel {
             })
             .collect();
         shots.sort_by_key(|(t, _)| *t);
-        for (_, p) in shots {
-            self.add_saved(p);
+        shots.into_iter().map(|(_, p)| p).collect()
+    }
+
+    /// Load every saved shot-*.png from the cache dir, oldest first, without
+    /// blocking window startup.
+    ///
+    /// The directory scan runs now (it is cheap), but the expensive part —
+    /// decoding a thumbnail Pixbuf per file in `add_saved` — is spread across
+    /// idle ticks so the window can present immediately. Each tick decodes a
+    /// small batch and appends it, preserving the oldest-first sort order.
+    fn load_existing_deferred(self: &Rc<Self>) {
+        let shots = Self::scan_shots();
+        if shots.is_empty() {
+            return;
         }
+
+        // Number of thumbnails decoded per idle tick. Small enough that no
+        // single tick stalls the main loop noticeably.
+        const BATCH: usize = 3;
+
+        let panel = self.clone();
+        let remaining = Rc::new(RefCell::new(shots.into_iter()));
+        glib::idle_add_local(move || {
+            for _ in 0..BATCH {
+                match remaining.borrow_mut().next() {
+                    Some(p) => panel.add_saved(p),
+                    None => return glib::ControlFlow::Break,
+                }
+            }
+            glib::ControlFlow::Continue
+        });
     }
 }

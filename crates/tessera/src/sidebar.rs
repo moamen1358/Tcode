@@ -30,7 +30,7 @@ pub struct Sidebar {
 
 fn directory_list_for(dir: &gio::File) -> DirectoryList {
     DirectoryList::new(
-        Some("standard::name,standard::display-name,standard::type,standard::icon"),
+        Some("standard::name,standard::display-name,standard::type,standard::icon,standard::file"),
         Some(dir),
     )
 }
@@ -135,7 +135,9 @@ impl Sidebar {
 
         let factory = SignalListItemFactory::new();
         factory.connect_setup(|_f, obj| {
-            let item = obj.downcast_ref::<ListItem>().expect("ListItem");
+            let Some(item) = obj.downcast_ref::<ListItem>() else {
+                return;
+            };
             // Row layout: [indent guides] [icon + label]. We hide the disclosure
             // triangle and draw our own indent guide lines, so set the expander to
             // neither show an arrow nor indent (we handle indentation ourselves).
@@ -176,7 +178,9 @@ impl Sidebar {
         });
         let icons_dir = crate::icons::ensure();
         factory.connect_bind(move |_f, obj| {
-            let item = obj.downcast_ref::<ListItem>().expect("ListItem");
+            let Some(item) = obj.downcast_ref::<ListItem>() else {
+                return;
+            };
             let Some(treerow) = item.item().and_downcast::<TreeListRow>() else {
                 return;
             };
@@ -236,6 +240,8 @@ impl Sidebar {
                 row.set_expanded(!row.is_expanded());
             } else if let Some(path) = file_of(&info).and_then(|f| f.path()) {
                 open_file(&st, &path);
+            } else {
+                eprintln!("tessera: could not resolve path for sidebar item");
             }
         });
 

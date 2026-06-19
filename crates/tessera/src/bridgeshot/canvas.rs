@@ -63,11 +63,16 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
         draw_hint(cr, w, h);
         return;
     };
-    let pb = s.docs[doc_idx].pixbuf.clone();
+    let Some(doc) = s.docs.get(doc_idx) else {
+        draw_hint(cr, w, h);
+        return;
+    };
+    let pb = doc.pixbuf.clone();
 
-    let iw = pb.width() as f64;
-    let ih = pb.height() as f64;
+    let iw = pb.width().max(1) as f64;
+    let ih = pb.height().max(1) as f64;
     let scale = (w as f64 / iw).min(h as f64 / ih).min(4.0);
+    let scale = if scale.abs() < 1e-6 { 1.0 } else { scale };
     s.scale = scale;
     s.off_x = (w as f64 - iw * scale) / 2.0;
     s.off_y = (h as f64 - ih * scale) / 2.0;
@@ -78,7 +83,9 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
     cr.set_source_pixbuf(&pb, 0.0, 0.0);
     let _ = cr.paint();
 
-    paint_annotations(cr, &s.docs[doc_idx].annos, scale);
+    if let Some(doc) = s.docs.get(doc_idx) {
+        paint_annotations(cr, &doc.annos, scale);
+    }
 
     // In-progress preview in the current color.
     if let Some(drag) = &s.drag {

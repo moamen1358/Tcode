@@ -235,6 +235,8 @@ impl GridInner {
             if self.focus > pos {
                 self.focus -= 1;
             }
+            // Clamp in case focus pointed at/past the removed pane (now out of range).
+            self.focus = self.focus.min(self.panes.len().saturating_sub(1));
         }
         if self.panes.is_empty() {
             self.window.close();
@@ -323,7 +325,9 @@ impl Grid {
         let weak2 = Rc::downgrade(&self.inner);
         pane.terminal.connect_child_exited(move |_t, _status| {
             if let Some(inner) = weak2.upgrade() {
-                inner.borrow_mut().remove_by_id(id);
+                if let Ok(mut g) = inner.try_borrow_mut() {
+                    g.remove_by_id(id);
+                }
             }
         });
 

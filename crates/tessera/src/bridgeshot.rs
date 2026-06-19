@@ -89,13 +89,15 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         Rc::new(move || {
             main.set_visible(false);
             let (main, show_annot) = (main.clone(), show_annot.clone());
+            let w_weak = main.downgrade();
             glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
-                let restore = main.clone();
                 capture::capture_screen(&main, move |pb| {
                     if let Some(pb) = pb {
                         show_annot(pb);
                     }
-                    restore.present();
+                    if let Some(w) = w_weak.upgrade() {
+                        w.present();
+                    }
                 });
             });
         })

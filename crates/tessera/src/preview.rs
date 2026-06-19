@@ -50,7 +50,7 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
         } else {
             path.to_path_buf()
         };
-        if cancel.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Acquire) {
             return Ok(());
         }
         rasterize(&pdf, &cache)?;
@@ -60,12 +60,16 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
         return Err("no pages were produced".into());
     }
 
-    let _ = tx.send_blocking(Msg::Pages(pages.len()));
+    if tx.send_blocking(Msg::Pages(pages.len())).is_err() {
+        return Ok(());
+    }
     for p in pages {
-        if cancel.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Acquire) {
             return Ok(());
         }
-        let _ = tx.send_blocking(Msg::Page(p));
+        if tx.send_blocking(Msg::Page(p)).is_err() {
+            return Ok(());
+        }
     }
     Ok(())
 }
@@ -89,9 +93,14 @@ fn office_to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
         .arg(path)
         .status()
         .map_err(|e| format!("soffice not available: {e}"))?;
-    let _ = std::fs::remove_dir_all(&profile);
     if !status.success() {
+        if let Err(e) = std::fs::remove_dir_all(&profile) {
+            eprintln!("tessera: profile cleanup failed: {e}");
+        }
         return Err("document conversion failed".into());
+    }
+    if let Err(e) = std::fs::remove_dir_all(&profile) {
+        eprintln!("tessera: profile cleanup failed: {e}");
     }
     let stem = path.file_stem().map(PathBuf::from).unwrap_or_default();
     let pdf = cache.join(stem.with_extension("pdf"));
@@ -164,7 +173,16 @@ fn collect_pages(cache: &Path) -> Vec<PathBuf> {
 fn page_number(p: &Path) -> u32 {
     p.file_stem()
         .and_then(|s| s.to_str())
-        .and_then(|s| s.rsplit('-').next())
-        .and_then(|n| n.parse().ok())
+        .map(|s| {
+            let d: String = s
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            d.parse::<u32>().unwrap_or(0)
+        })
         .unwrap_or(0)
 }
