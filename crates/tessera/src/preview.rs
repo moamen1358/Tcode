@@ -55,17 +55,20 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
     };
     if pages.is_empty() {
         let pdf = if is_office(path) {
-            office_to_pdf(path, &cache)?
+            match office_to_pdf(path, &cache, cancel)? {
+                Some(p) => p,
+                None => return Ok(()), // tab closed mid-conversion
+            }
         } else {
             path.to_path_buf()
         };
-        if cancel.load(Ordering::Acquire) {
-            return Ok(());
+        if !rasterize(&pdf, &cache, cancel)? {
+            return Ok(()); // cancelled
         }
-        rasterize(&pdf, &cache)?;
         pages = collect_pages(&cache);
         if !pages.is_empty() {
             let _ = std::fs::write(&done, b""); // cache is now complete
+            prune_cache(&cache); // keep the regenerable preview cache bounded
         }
     }
     if pages.is_empty() {
@@ -86,57 +89,116 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
     Ok(())
 }
 
-fn is_office(path: &Path) -> bool {
+pub fn is_office(path: &Path) -> bool {
     path.extension()
         .map(|e| OFFICE_EXTS.contains(&e.to_string_lossy().to_lowercase().as_str()))
         .unwrap_or(false)
 }
 
+/// Run `cmd` to completion, killing it if `cancel` flips (so closing a tab
+/// mid-render doesn't leave soffice/pdftoppm running). Returns `None` if it was
+/// cancelled before finishing.
+fn run_cancellable(
+    mut cmd: Command,
+    cancel: &AtomicBool,
+) -> Result<Option<std::process::ExitStatus>, String> {
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => return Ok(Some(status)),
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+}
+
 /// Convert an office document to PDF in `cache`. A per-file LibreOffice profile
 /// (removed afterwards) lets this run even while the user's own LibreOffice is
-/// open and lets two conversions run without fighting over a lock.
-fn office_to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
+/// open and lets two conversions run without fighting over a lock. Returns `None`
+/// if cancelled mid-conversion.
+fn office_to_pdf(
+    path: &Path,
+    cache: &Path,
+    cancel: &AtomicBool,
+) -> Result<Option<PathBuf>, String> {
     let profile = cache.join("soffice-profile");
-    let status = Command::new("soffice")
-        .args(["--headless", "--norestore", "--invisible", "--nologo"])
-        .arg(format!(
-            "-env:UserInstallation=file://{}",
-            profile.display()
-        ))
+    let mut cmd = Command::new("soffice");
+    cmd.args(["--headless", "--norestore", "--invisible", "--nologo"])
+        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
         .args(["--convert-to", "pdf", "--outdir"])
         .arg(cache)
-        .arg(path)
-        .status()
-        .map_err(|e| format!("soffice not available: {e}"))?;
-    if !status.success() {
+        .arg(path);
+    let status = run_cancellable(cmd, cancel).map_err(|e| format!("soffice not available: {e}"))?;
+    if profile.exists() {
         if let Err(e) = std::fs::remove_dir_all(&profile) {
             eprintln!("tessera: profile cleanup failed: {e}");
         }
-        return Err("document conversion failed".into());
     }
-    if let Err(e) = std::fs::remove_dir_all(&profile) {
-        eprintln!("tessera: profile cleanup failed: {e}");
+    let Some(status) = status else {
+        return Ok(None); // cancelled
+    };
+    if !status.success() {
+        return Err("document conversion failed".into());
     }
     let stem = path.file_stem().map(PathBuf::from).unwrap_or_default();
     let pdf = cache.join(stem.with_extension("pdf"));
     pdf.exists()
         .then_some(pdf)
+        .map(Some)
         .ok_or_else(|| "converted PDF not found".into())
 }
 
-fn rasterize(pdf: &Path, cache: &Path) -> Result<(), String> {
+/// Rasterize a PDF to `page-N.png` in `cache`. Returns `false` if cancelled.
+fn rasterize(pdf: &Path, cache: &Path, cancel: &AtomicBool) -> Result<bool, String> {
     // 200 DPI keeps pages crisp when zoomed in (150 visibly pixelates) while
     // staying light enough to cache and load quickly.
-    let status = Command::new("pdftoppm")
-        .args(["-png", "-r", "200"])
+    let mut cmd = Command::new("pdftoppm");
+    cmd.args(["-png", "-r", "200"])
         .arg(pdf)
-        .arg(cache.join("page"))
-        .status()
-        .map_err(|e| format!("pdftoppm not available: {e}"))?;
+        .arg(cache.join("page"));
+    let status =
+        run_cancellable(cmd, cancel).map_err(|e| format!("pdftoppm not available: {e}"))?;
+    let Some(status) = status else {
+        return Ok(false); // cancelled
+    };
     if !status.success() {
         return Err("pdftoppm failed".into());
     }
-    Ok(())
+    Ok(true)
+}
+
+/// Keep the preview cache bounded: delete all but the most recently modified
+/// cache directories under `.../preview` (the page images are regenerable).
+fn prune_cache(current: &Path) {
+    const KEEP: usize = 20;
+    let Some(base) = current.parent() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .map(|p| {
+            let t = std::fs::metadata(&p)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            (t, p)
+        })
+        .collect();
+    if dirs.len() <= KEEP {
+        return;
+    }
+    dirs.sort_by_key(|(t, _)| *t); // oldest first
+    for (_, p) in dirs.iter().take(dirs.len() - KEEP) {
+        let _ = std::fs::remove_dir_all(p);
+    }
 }
 
 fn cache_dir(path: &Path) -> Result<PathBuf, String> {

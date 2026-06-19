@@ -45,6 +45,11 @@ enum Kind {
 }
 
 fn kind_of(path: &Path) -> Kind {
+    // Office formats are owned by the preview pipeline (soffice -> pdf -> images);
+    // reuse its single extension list so the two can't drift.
+    if preview::is_office(path) {
+        return Kind::Office;
+    }
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -56,10 +61,6 @@ fn kind_of(path: &Path) -> Kind {
         // Tabular text → rendered as a real table (falls back to text if it
         // doesn't parse as a grid).
         "csv" | "tsv" | "tab" => Kind::Csv,
-        // Office formats (rendered via soffice -> pdf -> images).
-        "doc" | "docx" | "odt" | "rtf" | "ppt" | "pptx" | "odp" | "xls" | "xlsx" | "ods" => {
-            Kind::Office
-        }
         // Audio + video play inline via GtkVideo (GStreamer backend).
         "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "flv" | "m4v" | "mpg" | "mpeg" | "ogv"
         | "mp3" | "wav" | "flac" | "ogg" | "oga" | "m4a" | "aac" | "opus" | "wma" | "mid" => {

@@ -103,7 +103,7 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
                 let Some(start) = buffer.iter_at_line(line) else {
                     continue;
                 };
-                let mut end = start.clone();
+                let mut end = start;
                 end.forward_to_line_end(); // stops before the line terminator
                 let content = buffer.text(&start, &end, false).to_string();
                 for (col, (s, e)) in field_ranges(&content, delim).into_iter().enumerate() {
