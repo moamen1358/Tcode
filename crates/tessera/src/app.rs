@@ -220,25 +220,29 @@ pub fn show_session_picker(state: &Shared) {
     state.borrow().window.set_child(Some(&widget));
 }
 
-/// Prompt for a folder, then create + open a new saved session rooted there.
+/// Show the "new session" screen: choose a folder + terminal count, then create
+/// and open it. Cancelling returns to the previous session (or the picker).
 fn new_session(state: &Shared) {
+    capture_current(state);
     let window = state.borrow().window.clone();
-    let dialog = gtk4::FileDialog::builder()
-        .title("Choose a folder for the new session")
-        .modal(true)
-        .build();
-    let st = state.clone();
-    dialog.select_folder(Some(&window), gtk4::gio::Cancellable::NONE, move |res| {
-        if let Ok(folder) = res {
-            if let Some(path) = folder.path() {
-                let s = Session::new(path);
-                s.save();
-                st.borrow_mut().save_sessions = true;
-                open_session(&st, s);
-                refresh_session_menu(&st);
-            }
-        }
-    });
+    let prev = state.borrow().current.clone();
+    let st_create = state.clone();
+    let st_cancel = state.clone();
+    let widget = session_picker::build_new(
+        window,
+        move |folder, panes| {
+            let mut s = Session::new(folder);
+            s.panes = panes;
+            s.save();
+            st_create.borrow_mut().save_sessions = true;
+            open_session(&st_create, s);
+        },
+        move || match prev.clone() {
+            Some(s) => open_session(&st_cancel, s),
+            None => show_session_picker(&st_cancel),
+        },
+    );
+    state.borrow().window.set_child(Some(&widget));
 }
 
 /// Make `session` the current one: chdir to its root, build the grid with its

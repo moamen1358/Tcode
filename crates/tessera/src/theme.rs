@@ -128,19 +128,42 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
                                              background-color: alpha({fg}, 0.08); }}\n\
          .clip-card.pinned .clip-text, .clip-card.pinned .clip-pin {{ color: #ffb38a; }}\n\
          .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 11px; }}\n\
-         .session-title {{ font-size: 30px; font-weight: bold; color: {fg}; }}\n\
-         .session-subtitle {{ color: alpha({fg}, 0.5); font-size: 13px; margin-bottom: 6px; }}\n\
+         .session-title {{ font-size: 32px; font-weight: bold; color: {fg}; }}\n\
+         .session-subtitle {{ color: alpha({fg}, 0.45); font-size: 13px; }}\n\
          .session-card {{ background-color: {surface}; background-image: none; \
                           border: 1px solid {border}; \
-                          border-radius: 0; padding: 9px 13px; }}\n\
-         .session-card:hover {{ background-color: alpha({fg}, 0.06); border-color: #ff9e64; }}\n\
+                          border-radius: 0; padding: 13px 15px; }}\n\
+         .session-card:hover {{ background-color: alpha({fg}, 0.05); border-color: #ff9e64; }}\n\
+         .session-card-icon {{ color: #ff9e64; }}\n\
          .session-name {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
-         .session-meta {{ color: alpha({fg}, 0.5); font-size: 11px; }}\n\
-         .session-new {{ background-color: alpha(#ff9e64, 0.14); background-image: none; \
+         .session-meta {{ color: alpha({fg}, 0.45); font-size: 11px; }}\n\
+         .session-badge {{ background-color: alpha({fg}, 0.07); padding: 1px 7px; \
+                           border-radius: 0; }}\n\
+         .session-badge label {{ font-size: 10px; color: alpha({fg}, 0.6); }}\n\
+         .session-badge image {{ color: alpha({fg}, 0.5); }}\n\
+         .session-field-label {{ color: alpha({fg}, 0.4); font-size: 10px; \
+                                 font-weight: bold; letter-spacing: 1px; margin-top: 8px; }}\n\
+         .session-folder-btn {{ background-color: {surface}; background-image: none; \
+                                border: 1px solid {border}; border-radius: 0; \
+                                padding: 10px 12px; color: {fg}; }}\n\
+         .session-folder-btn:hover {{ border-color: #ff9e64; }}\n\
+         .session-folder-btn image {{ color: #ff9e64; }}\n\
+         .session-count {{ background-color: {surface}; background-image: none; \
+                           border: 1px solid {border}; border-radius: 0; padding: 9px; \
+                           color: alpha({fg}, 0.8); font-weight: bold; }}\n\
+         .session-count:hover {{ background-color: alpha({fg}, 0.06); }}\n\
+         .session-count.selected {{ background-color: alpha(#ff9e64, 0.18); \
+                                    border-color: #ff9e64; color: #ffb38a; }}\n\
+         .session-new {{ background-color: alpha(#ff9e64, 0.16); background-image: none; \
                          color: #ffb38a; \
                          border: 1px solid alpha(#ff9e64, 0.5); border-radius: 0; \
-                         padding: 9px; font-weight: bold; margin-top: 6px; }}\n\
-         .session-new:hover {{ background-color: alpha(#ff9e64, 0.24); }}\n\
+                         padding: 11px; font-weight: bold; margin-top: 10px; }}\n\
+         .session-new:hover {{ background-color: alpha(#ff9e64, 0.26); }}\n\
+         .session-new:disabled {{ background-color: alpha({fg}, 0.04); background-image: none; \
+                                  color: alpha({fg}, 0.3); border-color: alpha({fg}, 0.15); }}\n\
+         .session-back {{ background: none; border: none; box-shadow: none; \
+                          color: alpha({fg}, 0.55); margin-top: 2px; }}\n\
+         .session-back:hover {{ color: {fg}; background-color: alpha({fg}, 0.06); }}\n\
          .session-switcher {{ background: none; border: none; box-shadow: none; \
                               color: {fg}; font-weight: bold; padding: 2px 10px; }}\n\
          .session-switcher:hover {{ background-color: alpha({fg}, 0.08); }}\n\
