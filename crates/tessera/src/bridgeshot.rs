@@ -25,6 +25,7 @@ mod tools;
 mod state;
 mod capture;
 mod canvas;
+mod export;
 
 const ACCENT: (f64, f64, f64) = (0.478, 0.635, 0.969); // #7aa2f7
 const YELLOW: (f64, f64, f64) = (0.878, 0.686, 0.408); // #e0af68
