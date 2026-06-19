@@ -84,12 +84,29 @@ impl Pane {
         // Right-click context menu (Copy / Paste / Select All).
         install_context_menu(&terminal);
 
-        // Per-pane label: a small editable bar above the terminal so you can tag
-        // what each one is doing. Enter hands focus back to the terminal.
+        let root = Overlay::new();
+        root.add_css_class("pane");
+        root.set_child(Some(&terminal));
+
+        // Focus ring: an overlay child drawn on top of the terminal. Because it's
+        // an overlay it adds no layout space and never reflows the terminal; CSS
+        // turns its border on only when the pane is active.
+        let ring = GtkBox::new(Orientation::Horizontal, 0);
+        ring.add_css_class("focus-ring");
+        ring.set_can_target(false); // clicks pass through to the terminal
+        root.add_overlay(&ring);
+
+        // Corner label tag: a small editable chip pinned to the pane's top-right,
+        // so you can tag what this terminal is doing. It floats over the terminal
+        // (no layout space); Enter hands focus back to the terminal.
         let label = Entry::new();
         label.add_css_class("pane-label");
         label.set_has_frame(false);
-        label.set_placeholder_text(Some("label…"));
+        label.set_placeholder_text(Some("label"));
+        label.set_halign(gtk4::Align::End);
+        label.set_valign(gtk4::Align::Start);
+        label.set_width_chars(5);
+        label.set_max_width_chars(18);
         {
             let term = terminal.downgrade();
             label.connect_activate(move |_| {
@@ -98,25 +115,7 @@ impl Pane {
                 }
             });
         }
-
-        // Stack the label over the terminal; the terminal fills the rest.
-        let body = GtkBox::new(Orientation::Vertical, 0);
-        terminal.set_hexpand(true);
-        terminal.set_vexpand(true);
-        body.append(&label);
-        body.append(&terminal);
-
-        let root = Overlay::new();
-        root.add_css_class("pane");
-        root.set_child(Some(&body));
-
-        // Focus ring: an overlay child drawn on top of the pane. Because it's an
-        // overlay it adds no layout space and never reflows the terminal; CSS
-        // turns its border on only when the pane is active.
-        let ring = GtkBox::new(Orientation::Horizontal, 0);
-        ring.add_css_class("focus-ring");
-        ring.set_can_target(false); // clicks pass through to the terminal
-        root.add_overlay(&ring);
+        root.add_overlay(&label);
 
         let pane = Pane {
             id,

@@ -52,10 +52,11 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .focus-ring {{ border: 1px solid transparent; }}\n\
          .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
          .pane-label {{ background-color: {surface}; color: {fg}; min-height: 0; \
-                        border: none; border-radius: 0; border-bottom: 1px solid {border}; \
-                        padding: 1px 8px; font-size: 11px; }}\n\
-         .pane-label:focus-within {{ border-bottom-color: #ff9e64; }}\n\
-         .pane.active-pane .pane-label {{ border-bottom-color: alpha(#e0af68, 0.5); }}\n\
+                        min-width: 0; border: 1px solid {border}; border-radius: 0; \
+                        padding: 0 6px; margin: 5px; font-size: 10px; \
+                        box-shadow: 0 1px 4px rgba(0,0,0,0.35); }}\n\
+         .pane-label:focus-within {{ border-color: #ff9e64; }}\n\
+         .pane.active-pane .pane-label {{ border-color: alpha(#e0af68, 0.6); }}\n\
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
