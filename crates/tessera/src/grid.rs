@@ -6,9 +6,8 @@
 //! State lives behind `Rc<RefCell<GridInner>>` so widget callbacks can mutate it;
 //! callbacks hold a `Weak` to avoid leaks across re-grid.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-use std::time::Duration;
 
 use gtk4::glib;
 use gtk4::prelude::*;
@@ -32,8 +31,6 @@ struct GridInner {
     window: ApplicationWindow,
     next_id: u64,
     self_weak: Weak<RefCell<GridInner>>,
-    resize_timer: Rc<Cell<Option<glib::SourceId>>>,
-    resizing: Rc<Cell<bool>>,
     /// Opens a Ctrl+clicked terminal path in the editor/viewer panel.
     on_open: OpenFn,
 }
@@ -140,44 +137,8 @@ impl GridInner {
             self.container.append(&tree);
             self.paneds = paneds;
             self.set_positions();
-
-            // Dragging a divider makes VTE re-wrap live; with scrollback it pulls
-            // blank/stale lines above the prompt as a pane grows (the prompt jumps
-            // to the bottom). Drop scrollback to 0 for the duration of the drag so
-            // there's nothing to pull, then restore it once the drag settles.
-            let weak = self.self_weak.clone();
-            let timer = self.resize_timer.clone();
-            let resizing = self.resizing.clone();
-            for (paned, _, _) in &self.paneds {
-                let weak = weak.clone();
-                let timer = timer.clone();
-                let resizing = resizing.clone();
-                paned.connect_position_notify(move |_| {
-                    if let Some(id) = timer.take() {
-                        id.remove();
-                    }
-                    if !resizing.replace(true) {
-                        if let Some(inner) = weak.upgrade() {
-                            for p in &inner.borrow().panes {
-                                p.set_resizing(true);
-                            }
-                        }
-                    }
-                    let weak2 = weak.clone();
-                    let timer2 = timer.clone();
-                    let resizing2 = resizing.clone();
-                    let id = glib::timeout_add_local_once(Duration::from_millis(60), move || {
-                        timer2.set(None);
-                        resizing2.set(false);
-                        if let Some(inner) = weak2.upgrade() {
-                            for p in &inner.borrow().panes {
-                                p.set_resizing(false);
-                            }
-                        }
-                    });
-                    timer.set(Some(id));
-                });
-            }
+            // Dividers resize natively: VTE re-wraps live and keeps its
+            // scrollback, so no content is hidden and history survives a resize.
         }
         for p in &self.panes {
             p.attach_ring();
@@ -271,8 +232,6 @@ impl Grid {
             window: window.clone(),
             next_id: 0,
             self_weak: Weak::new(),
-            resize_timer: Rc::new(Cell::new(None)),
-            resizing: Rc::new(Cell::new(false)),
             on_open,
         }));
         inner.borrow_mut().self_weak = Rc::downgrade(&inner);
@@ -364,28 +323,15 @@ impl Grid {
     }
 
     pub fn toggle_zoom(&self) {
-        {
-            let mut g = self.inner.borrow_mut();
-            if g.panes.is_empty() {
-                return;
-            }
-            // The focused pane grows on zoom; drop scrollback so VTE doesn't pull
-            // blank lines above the prompt (restored once the grow settles).
-            for p in &g.panes {
-                p.set_resizing(true);
-            }
-            g.zoomed = !g.zoomed;
-            g.apply_zoom();
-            if let Some(p) = g.panes.get(g.focus) {
-                p.grab_focus();
-            }
+        let mut g = self.inner.borrow_mut();
+        if g.panes.is_empty() {
+            return;
         }
-        let inner = self.inner.clone();
-        glib::timeout_add_local_once(Duration::from_millis(60), move || {
-            for p in &inner.borrow().panes {
-                p.set_resizing(false);
-            }
-        });
+        g.zoomed = !g.zoomed;
+        g.apply_zoom();
+        if let Some(p) = g.panes.get(g.focus) {
+            p.grab_focus();
+        }
     }
 
     pub fn feed_focused(&self, text: &str) {

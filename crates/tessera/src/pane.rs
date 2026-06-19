@@ -44,10 +44,7 @@ const PATH_RE: &str = r#"(?:~|\.{1,2})?/[^\s<>"'`:]+"#;
 const REL_PATH_RE: &str = r#"(?<![/\w.~-])[\w.\-]+(?:/[\w.\-]+)+(?::\d+){0,2}"#;
 const FILE_RE: &str = r#"[^\s<>"'`:/]+\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|pdf|docx?|pptx?|xlsx?|odt|odp|ods|mp4|webm|mkv|mov|avi|mp3|wav|flac|ogg|opus|txt|md|markdown|json|toml|ya?ml|rs|jsx?|tsx?|c|h|hpp|cpp|go|rb|java|sh|html?|css|csv|log|conf|ini)"#;
 
-/// Scrollback kept during normal use; dropped to 0 only while a divider is being
-/// dragged or a pane is zooming (see `set_resizing`). VTE fills a growing pane by
-/// pulling scrollback lines *above* the prompt, burying it — dropping scrollback
-/// just for the size change keeps the prompt at the top while retaining history.
+/// Lines of scrollback history each terminal keeps.
 const SCROLLBACK_LINES: i64 = 10_000;
 
 pub struct Pane {
@@ -191,14 +188,6 @@ impl Pane {
     /// Paste the clipboard into the terminal's child.
     pub fn paste(&self) {
         self.terminal.paste_clipboard();
-    }
-
-    /// Drop scrollback to 0 while a divider is being dragged so VTE can't pull
-    /// stale/blank lines above the prompt as a pane grows (the prompt otherwise
-    /// jumps to the bottom). Restore the normal scrollback once the drag settles.
-    pub fn set_resizing(&self, on: bool) {
-        self.terminal
-            .set_scrollback_lines(if on { 0 } else { SCROLLBACK_LINES });
     }
 
     pub fn set_active(&self, active: bool) {
