@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tessera
+GenericName=Terminal Workspace
+Comment=Borderless tiling-terminal workspace
+Exec=tessera
+Icon=tessera
+Terminal=false
+Categories=Utility;TerminalEmulator;
+Keywords=terminal;tiling;workspace;shell;panes;
+StartupNotify=true

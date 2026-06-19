@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Tessera = mosaic tile; a 2x2 grid of panes, active pane ringed in orange,
+       with a terminal prompt. Tokyo Night palette. -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#1a1b26"/>
+  <rect x="9"  y="9"  width="21" height="21" rx="3.5" fill="#7aa2f7"/>
+  <rect x="34" y="9"  width="21" height="21" rx="3.5" fill="#bb9af7"/>
+  <rect x="9"  y="34" width="21" height="21" rx="3.5" fill="#7dcfff"/>
+  <rect x="34" y="34" width="21" height="21" rx="3.5" fill="#9ece6a"/>
+  <!-- terminal prompt in the active pane -->
+  <path d="M14.5 14.5 l5 5 -5 5" fill="none" stroke="#1a1b26" stroke-width="2.4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="21.5" y="24" width="6" height="2.4" rx="1.2" fill="#1a1b26"/>
+  <!-- active-pane accent ring -->
+  <rect x="9" y="9" width="21" height="21" rx="3.5" fill="none" stroke="#ff9e64" stroke-width="2.6"/>
+</svg>

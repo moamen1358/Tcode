@@ -72,6 +72,15 @@ sudo apt install -y poppler-utils libreoffice xdg-desktop-portal
 - `xdg-desktop-portal` (+ a backend, e.g. `xdg-desktop-portal-gnome` or
   `…-cosmic`) — **screenshot** capture
 
+## Install as a desktop app
+
+```bash
+./packaging/install.sh
+```
+
+Builds and `cargo install`s the binary, then drops a `.desktop` launcher + icon
+into `~/.local/share`, so **Tessera** appears in your application menu. No root.
+
 ## Run in Docker (display forwarding)
 
 ```bash
