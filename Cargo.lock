@@ -683,6 +683,7 @@ name = "tessera"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "cairo-rs",
  "gtk4",
  "sourceview5",
  "tessera-core",

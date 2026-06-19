@@ -64,6 +64,16 @@ pub fn build(app: &Application, preset: Option<usize>) {
     editor_btn.add_css_class("flat");
     header.pack_end(&editor_btn);
 
+    // BridgeShot: capture + annotate a screenshot (also Alt+P).
+    let shot_btn = Button::from_icon_name("camera-photo-symbolic");
+    shot_btn.set_tooltip_text(Some("BridgeShot — annotate a screenshot (Alt+P)"));
+    shot_btn.add_css_class("flat");
+    header.pack_end(&shot_btn);
+    {
+        let win = window.clone();
+        shot_btn.connect_clicked(move |_| crate::bridgeshot::launch(&win));
+    }
+
     window.set_titlebar(Some(&header));
 
     let state: Shared = Rc::new(RefCell::new(State {
@@ -175,6 +185,18 @@ pub fn show_grid(state: &Shared, n: usize) {
     // Optionally open a file at startup (TESSERA_OPEN=path) — preview/testing aid.
     if let Some(path) = std::env::var_os("TESSERA_OPEN") {
         open_file(state, std::path::Path::new(&path));
+    }
+
+    // TEST aid: launch BridgeShot; if the value is an image path, also export a
+    // sample annotated shot (TESSERA_BRIDGESHOT=1 or =<image-path>).
+    // TEST aid: launch BridgeShot once Tessera is presented + rendering
+    // (TESSERA_BRIDGESHOT=1), mimicking a real Alt+P trigger so the auto-capture
+    // has a live frame clock.
+    if std::env::var_os("TESSERA_BRIDGESHOT").is_some() {
+        let w = window.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || {
+            crate::bridgeshot::launch(&w);
+        });
     }
 
     // Grab keyboard focus once the window is mapped (COSMIC drops a focus

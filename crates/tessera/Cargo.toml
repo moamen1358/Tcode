@@ -20,3 +20,6 @@ sourceview5 = "0.11"
 # Deliver document-render results from a worker thread to the GTK main thread
 # (glib 0.22 removed MainContext::channel). Pure Rust, no system libs.
 async-channel = "2"
+# Enable cairo's PNG writer (ImageSurface::write_to_png) for BridgeShot export.
+# Must match the cairo-rs that gtk4 0.11 re-exports (0.22); only adds `png`.
+cairo-rs = { version = "0.22", features = ["png"] }

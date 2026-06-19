@@ -50,7 +50,14 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .fallback-card {{ padding: 28px; }}\n\
          .fallback-title {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
          .fallback-meta {{ color: alpha({fg}, 0.55); }}\n\
-         .fallback-open {{ margin-top: 10px; }}"
+         .fallback-open {{ margin-top: 10px; }}\n\
+         .bridgeshot-window {{ background-color: {bg}; }}\n\
+         .bridgeshot-canvas {{ background-color: {bg}; }}\n\
+         .bridgeshot-list {{ background-color: {surface}; }}\n\
+         .bridgeshot-badge {{ color: {accent}; font-weight: bold; min-width: 24px; }}\n\
+         .bridgeshot-entry {{ background-color: {bg}; color: {fg}; }}\n\
+         .bridgeshot-entry:focus-within {{ box-shadow: inset 0 0 0 1px {accent}; }}\n\
+         .bridgeshot-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}"
     );
     let provider = CssProvider::new();
     provider.load_from_string(&css);

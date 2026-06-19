@@ -83,6 +83,11 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 st.borrow().window.close();
                 Propagation::Stop
             }
+            Key::p => {
+                let win = st.borrow().window.clone();
+                crate::bridgeshot::launch(&win);
+                Propagation::Stop
+            }
             _ => Propagation::Proceed,
         }
     });

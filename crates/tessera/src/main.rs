@@ -1,4 +1,5 @@
 mod app;
+mod bridgeshot;
 mod editor;
 mod grid;
 mod icons;
