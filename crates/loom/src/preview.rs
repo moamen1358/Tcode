@@ -10,6 +10,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use gtk4::gio::prelude::FileExt; // gio::File::uri
+
 const OFFICE_EXTS: &[&str] = &[
     "doc", "docx", "odt", "rtf", "ppt", "pptx", "odp", "xls", "xlsx", "ods",
 ];
@@ -146,12 +148,14 @@ fn office_to_pdf(
     cancel: &AtomicBool,
 ) -> Result<Option<PathBuf>, String> {
     let profile = cache.join("soffice-profile");
+    // A properly percent-encoded file:// URI (not a hand-built "file://" + path):
+    // the cache dir lives under the XDG cache home / username, which can contain
+    // spaces, '#' or '%'. Those make a raw "file://{path}" an invalid URL, and
+    // LibreOffice then silently ignores the per-file profile.
+    let profile_uri = gtk4::gio::File::for_path(&profile).uri();
     let mut cmd = Command::new("soffice");
     cmd.args(["--headless", "--norestore", "--invisible", "--nologo"])
-        .arg(format!(
-            "-env:UserInstallation=file://{}",
-            profile.display()
-        ))
+        .arg(format!("-env:UserInstallation={profile_uri}"))
         .args(["--convert-to", "pdf", "--outdir"])
         .arg(cache)
         .arg(path);
