@@ -180,7 +180,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .clip-copy {{ padding: 6px 9px; background: none; border: none; \
                        box-shadow: none; border-radius: 0; }}\n\
          .clip-copy:hover {{ background-color: alpha({fg}, 0.05); }}\n\
-         .clip-text {{ color: alpha({fg}, 0.85); font-size: 11px; \
+         .clip-text {{ color: alpha({fg}, 0.85); font-size: 13px; \
                        font-family: \"{font}\", monospace; }}\n\
          .clip-pin, .clip-del {{ min-height: 0; min-width: 0; padding: 2px; \
                                  margin: 4px 2px 0 0; background: none; border: none; \
@@ -188,7 +188,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .clip-pin:hover, .clip-del:hover {{ color: alpha({fg}, 0.75); \
                                              background-color: alpha({fg}, 0.08); }}\n\
          .clip-card.pinned .clip-text, .clip-card.pinned .clip-pin {{ color: #ffb38a; }}\n\
-         .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 11px; }}\n\
+         .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 12px; }}\n\
          .session-title {{ font-size: 32px; font-weight: bold; color: {fg}; }}\n\
          .session-subtitle {{ color: alpha({fg}, 0.45); font-size: 13px; }}\n\
          .session-card {{ background-color: {surface}; background-image: none; \

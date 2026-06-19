@@ -379,15 +379,36 @@ impl Grid {
         self.inner.borrow().panes.len()
     }
 
-    /// Apply the base font (point size) and the UI zoom to every terminal, via
-    /// VTE's native font-scale (the same clean mechanism gnome-terminal uses for
-    /// Ctrl +/-, so the terminal reflows without garbling).
+    /// Apply the base font (point size) and the UI zoom to every terminal.
+    ///
+    /// A font/cell-size change makes VTE re-wrap its scrollback, which paints the
+    /// prompt over itself (the same artifact as a live resize). So we drop
+    /// scrollback to 0 across the change and restore it shortly after it settles —
+    /// reusing the resize debounce timer so rapid zooms coalesce.
     pub fn apply_font(&self, font: &str, size: u32, scale: f64) {
         let desc = FontDescription::from_string(&format!("{font} {size}"));
-        for p in &self.inner.borrow().panes {
+        let g = self.inner.borrow();
+        for p in &g.panes {
+            p.set_resizing(true);
             p.terminal.set_font(Some(&desc));
             p.terminal.set_font_scale(scale);
         }
+        if let Some(id) = g.resize_timer.take() {
+            id.remove();
+        }
+        let weak = g.self_weak.clone();
+        let timer = g.resize_timer.clone();
+        let id = glib::timeout_add_local_once(Duration::from_millis(120), move || {
+            timer.set(None);
+            if let Some(inner) = weak.upgrade() {
+                if let Ok(g) = inner.try_borrow() {
+                    for p in &g.panes {
+                        p.set_resizing(false);
+                    }
+                }
+            }
+        });
+        g.resize_timer.set(Some(id));
     }
 
     pub fn move_focus(&self, dir: Dir) {
