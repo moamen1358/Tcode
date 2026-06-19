@@ -148,10 +148,14 @@ impl Pane {
         let argv: Vec<String> = if startup.is_empty() {
             vec![shell.clone(), "-l".into()]
         } else {
+            // Pass the shell path as $0 (a separate argv entry consumed by `-c`)
+            // rather than interpolating it into the script, so a $SHELL path with
+            // spaces or shell metacharacters still execs correctly.
             vec![
                 shell.clone(),
                 "-c".into(),
-                format!("{startup}; exec {shell}"),
+                format!("{startup}; exec \"$0\""),
+                shell.clone(),
             ]
         };
         SpawnParams { argv, cwd }
