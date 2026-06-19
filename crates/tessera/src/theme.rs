@@ -59,10 +59,26 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .fallback-open {{ margin-top: 10px; }}\n\
          .bridgeshot-window {{ background-color: {bg}; }}\n\
          .bridgeshot-canvas {{ background-color: {bg}; }}\n\
-         .bridgeshot-list {{ background-color: {surface}; }}\n\
-         .bridgeshot-badge {{ color: {accent}; font-weight: bold; min-width: 24px; }}\n\
-         .bridgeshot-entry {{ background-color: {bg}; color: {fg}; }}\n\
-         .bridgeshot-entry:focus-within {{ box-shadow: inset 0 0 0 1px {accent}; }}\n\
+         .bridgeshot-toolbar {{ background-color: {surface}; padding: 5px 8px; \
+                                border-bottom: 1px solid {border}; }}\n\
+         .bridgeshot-toolbar button {{ min-height: 0; padding: 3px 10px; }}\n\
+         .bridgeshot-tool:checked {{ background-color: alpha({accent}, 0.30); \
+                                     box-shadow: inset 0 0 0 1px {accent}; }}\n\
+         .bridgeshot-swatches {{ margin-left: 4px; }}\n\
+         .bridgeshot-swatch {{ min-width: 20px; min-height: 20px; padding: 0; \
+                               border-radius: 10px; margin: 0 1px; }}\n\
+         .bridgeshot-swatch.selected {{ box-shadow: 0 0 0 2px {fg}; }}\n\
+         .swatch-0 {{ background-image: none; background-color: #e84d5b; }}\n\
+         .swatch-1 {{ background-image: none; background-color: #7aa2f7; }}\n\
+         .swatch-2 {{ background-image: none; background-color: #e0af68; }}\n\
+         .swatch-3 {{ background-image: none; background-color: #8cc673; }}\n\
+         .swatch-4 {{ background-image: none; background-color: #f2f2f7; }}\n\
+         .swatch-5 {{ background-image: none; background-color: #1a1c26; }}\n\
+         .bridgeshot-gallery {{ background-color: {surface}; }}\n\
+         .bridgeshot-thumb {{ padding: 2px; border-radius: 4px; }}\n\
+         .bridgeshot-thumb.selected {{ box-shadow: inset 0 0 0 2px {accent}; }}\n\
+         .bridgeshot-text-entry {{ background-color: {bg}; color: {fg}; \
+                                   box-shadow: inset 0 0 0 1px {accent}; }}\n\
          .bridgeshot-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}"
     );
     let provider = CssProvider::new();
