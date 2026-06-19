@@ -70,7 +70,9 @@ pub fn build(app: &Application, preset: Option<usize>) {
     // screenshots panel. Capturing is the panel's own camera button.
     let shots_btn = ToggleButton::new();
     shots_btn.set_icon_name("image-x-generic-symbolic");
-    shots_btn.set_active(true);
+    // Hidden by default so the editor/viewer panel gets full width; toggle it on
+    // (button or Alt+P) when using BridgeShot.
+    shots_btn.set_active(false);
     shots_btn.set_tooltip_text(Some("Toggle screenshots panel (Alt+P)"));
     shots_btn.add_css_class("flat");
     header.pack_end(&shots_btn);
