@@ -21,6 +21,8 @@ use gtk4::{
     HeaderBar, Label, ListBox, ListBoxRow, Orientation, Paned, ScrolledWindow, Window,
 };
 
+mod tools;
+
 const ACCENT: (f64, f64, f64) = (0.478, 0.635, 0.969); // #7aa2f7
 const YELLOW: (f64, f64, f64) = (0.878, 0.686, 0.408); // #e0af68
 const BG: (f64, f64, f64) = (0.102, 0.106, 0.149); // #1a1b26
