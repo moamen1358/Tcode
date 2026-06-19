@@ -185,10 +185,7 @@ impl Editor {
                 Kind::Other => (fallback_viewer(path), None, None),
             };
 
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string());
+        let name = file_label(path);
         let tab = GtkBox::new(Orientation::Horizontal, 6);
         tab.add_css_class("editor-tab");
         let label = Label::new(Some(&name));
@@ -590,10 +587,7 @@ fn media_viewer(path: &Path) -> Widget {
     video.set_hexpand(true);
     video.add_css_class("media-view");
 
-    let name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let name = file_label(path);
     let bar = GtkBox::new(Orientation::Horizontal, 8);
     bar.add_css_class("viewer-toolbar");
     let title = Label::new(Some(&name));
@@ -878,12 +872,16 @@ fn size_doc_page(pic: &Picture, z: Option<f64>, panel: i32) {
     }
 }
 
+/// Display label for a file: its file name, or the full path if it has none.
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 /// Info card for files we can't preview inline (video, audio, archives, …).
 fn fallback_viewer(path: &Path) -> Widget {
-    let name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let name = file_label(path);
     let size = std::fs::metadata(path)
         .map(|m| human_size(m.len()))
         .unwrap_or_else(|_| "?".into());

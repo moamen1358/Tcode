@@ -213,15 +213,10 @@ fn cache_dir(path: &Path) -> Result<PathBuf, String> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let key = format!("{}|{}|{}", path.display(), mtime, meta.len());
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            home.join(".cache")
-        });
-    Ok(base.join("tessera").join("preview").join(fnv1a(&key)))
+    Ok(gtk4::glib::user_cache_dir()
+        .join("tessera")
+        .join("preview")
+        .join(fnv1a(&key)))
 }
 
 /// FNV-1a 64-bit — a stable cache key, no dependencies.
