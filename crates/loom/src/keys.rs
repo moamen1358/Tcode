@@ -76,12 +76,12 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
             return Propagation::Stop;
         }
 
-        // Alt+h/j/k/l -> move focus.
+        // Alt+h/j/k/l or Alt+arrows -> move focus between terminals.
         let dir = match keyval {
-            Key::h => Some(Dir::Left),
-            Key::j => Some(Dir::Down),
-            Key::k => Some(Dir::Up),
-            Key::l => Some(Dir::Right),
+            Key::h | Key::Left => Some(Dir::Left),
+            Key::j | Key::Down => Some(Dir::Down),
+            Key::k | Key::Up => Some(Dir::Up),
+            Key::l | Key::Right => Some(Dir::Right),
             _ => None,
         };
         if let Some(dir) = dir {
