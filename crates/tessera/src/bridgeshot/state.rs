@@ -16,6 +16,10 @@ pub struct Doc {
 
 /// An annotation being drawn (not yet committed), in image space.
 pub enum Drag {
+    Pan {
+        off_x: f64,
+        off_y: f64,
+    },
     Rect {
         x0: f64,
         y0: f64,
@@ -34,10 +38,12 @@ pub struct State {
     pub tool: Tool,
     pub color: Rgb,
     pub drag: Option<Drag>,
-    // Canvas transform for the active doc, recomputed every draw().
+    // Canvas transform for the active doc. Fit mode recomputes it on draw until
+    // the user pans the image.
     pub scale: f64,
     pub off_x: f64,
     pub off_y: f64,
+    pub fit: bool,
 }
 
 pub type Shot = Rc<RefCell<State>>;
@@ -47,12 +53,13 @@ impl State {
         State {
             docs: Vec::new(),
             active: None,
-            tool: Tool::Box,
+            tool: Tool::Move,
             color: DEFAULT_COLOR,
             drag: None,
             scale: 1.0,
             off_x: 0.0,
             off_y: 0.0,
+            fit: true,
         }
     }
 
@@ -90,6 +97,7 @@ impl State {
         self.docs.clear();
         self.active = None;
         self.drag = None;
+        self.fit = true;
     }
 }
 
@@ -103,6 +111,7 @@ pub fn add_doc(shot: &Shot, pixbuf: Pixbuf) -> usize {
     let idx = s.docs.len() - 1;
     s.active = Some(idx);
     s.drag = None;
+    s.fit = true;
     idx
 }
 

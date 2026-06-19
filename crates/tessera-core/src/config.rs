@@ -83,7 +83,9 @@ impl Config {
     }
 }
 
-fn config_path() -> PathBuf {
+/// Tessera's base config directory: `$XDG_CONFIG_HOME/tessera` or
+/// `~/.config/tessera`. Shared by the config file and saved sessions.
+pub fn config_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -92,7 +94,11 @@ fn config_path() -> PathBuf {
                 .unwrap_or_default();
             home.join(".config")
         });
-    base.join("tessera").join("config.toml")
+    base.join("tessera")
+}
+
+fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
 }
 
 #[cfg(test)]

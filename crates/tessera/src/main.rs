@@ -9,8 +9,8 @@ mod icons;
 mod keys;
 mod loader;
 mod pane;
-mod picker;
 mod preview;
+mod session_picker;
 mod sidebar;
 mod theme;
 

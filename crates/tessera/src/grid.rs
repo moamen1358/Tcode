@@ -363,6 +363,11 @@ impl Grid {
         g.rebuild();
     }
 
+    /// Number of live terminal panes (used to persist the session layout).
+    pub fn pane_count(&self) -> usize {
+        self.inner.borrow().panes.len()
+    }
+
     pub fn move_focus(&self, dir: Dir) {
         self.inner.borrow_mut().move_focus(dir);
     }

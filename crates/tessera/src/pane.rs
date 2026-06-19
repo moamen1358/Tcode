@@ -102,6 +102,7 @@ impl Pane {
             terminal,
             ring,
         };
+        pane.install_file_drop();
         pane.spawn(cfg);
         pane
     }
@@ -175,6 +176,19 @@ impl Pane {
     /// Type text into the terminal's child as if entered at the keyboard.
     pub fn feed_text(&self, text: &str) {
         self.terminal.feed_child(text.as_bytes());
+    }
+
+    /// Drop files directly on this terminal and insert shell-quoted paths here,
+    /// instead of relying on whichever pane happened to be focused.
+    fn install_file_drop(&self) {
+        let term = self.terminal.downgrade();
+        crate::dnd::install_path_drop(&self.terminal, move |paths| {
+            let Some(term) = term.upgrade() else {
+                return;
+            };
+            term.grab_focus();
+            term.feed_child(crate::dnd::shell_join_paths(&paths).as_bytes());
+        });
     }
 
     /// Copy the current selection to the clipboard (no-op without a selection,

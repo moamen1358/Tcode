@@ -2,6 +2,7 @@
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
+    Move,
     Box,
     Arrow,
     Text,

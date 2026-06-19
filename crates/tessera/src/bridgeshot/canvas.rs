@@ -2,13 +2,16 @@
 //! into annotations according to the current tool. Text uses an Entry placed on
 //! a Fixed overlay above the DrawingArea.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk4::cairo;
 use gtk4::gdk::prelude::GdkCairoContextExt; // cr.set_source_pixbuf
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    DrawingArea, Entry, EventControllerFocus, EventControllerKey, Fixed, GestureClick, GestureDrag,
-    Overlay,
+    DrawingArea, Entry, EventControllerFocus, EventControllerKey, EventControllerMotion,
+    EventControllerScroll, EventControllerScrollFlags, Fixed, GestureClick, GestureDrag, Overlay,
 };
 
 use super::state::{to_image, Drag, Shot};
@@ -21,6 +24,8 @@ const HL_W: f64 = 16.0;
 const TEXT_SIZE: f64 = 22.0; // image-space px
 const ARROW_HEAD_LEN: f64 = 18.0;
 const ARROW_HEAD_W: f64 = 14.0;
+const MIN_SCALE: f64 = 0.05;
+const MAX_SCALE: f64 = 20.0;
 
 pub struct CanvasUi {
     pub area: DrawingArea,
@@ -46,7 +51,10 @@ pub fn build(shot: &Shot) -> CanvasUi {
         area.set_draw_func(move |_a, cr, w, h| draw(cr, w, h, &shot));
     }
 
-    // Box / Arrow / Pen / Highlight via drag.
+    // Image navigation.
+    install_scroll_zoom(&area, shot);
+
+    // Move / Box / Arrow / Pen / Highlight via drag.
     install_drag(&area, shot);
 
     // Text via click (only acts when the Text tool is active).
@@ -72,11 +80,18 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
 
     let iw = pb.width().max(1) as f64;
     let ih = pb.height().max(1) as f64;
-    let scale = (w as f64 / iw).min(h as f64 / ih).min(4.0);
-    let scale = if scale.abs() < 1e-6 { 1.0 } else { scale };
-    s.scale = scale;
-    s.off_x = (w as f64 - iw * scale) / 2.0;
-    s.off_y = (h as f64 - ih * scale) / 2.0;
+    if s.fit || s.scale.abs() < 1e-6 {
+        let scale = (w as f64 / iw).min(h as f64 / ih).min(4.0);
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        s.scale = scale;
+        s.off_x = (w as f64 - iw * scale) / 2.0;
+        s.off_y = (h as f64 - ih * scale) / 2.0;
+    }
+    let scale = s.scale;
 
     let _ = cr.save();
     cr.translate(s.off_x, s.off_y);
@@ -114,6 +129,7 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
             Drag::Stroke { points, highlight } => {
                 paint_stroke(cr, points, *highlight, color, scale)
             }
+            Drag::Pan { .. } => {}
         }
     }
     let _ = cr.restore();
@@ -207,6 +223,46 @@ fn paint_stroke(
     let _ = cr.stroke();
 }
 
+fn install_scroll_zoom(area: &DrawingArea, shot: &Shot) {
+    let ptr = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+
+    let motion = EventControllerMotion::new();
+    {
+        let ptr = ptr.clone();
+        motion.connect_motion(move |_c, x, y| ptr.set((x, y)));
+    }
+    area.add_controller(motion);
+
+    let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+    {
+        let (shot, area, ptr) = (shot.clone(), area.clone(), ptr.clone());
+        scroll.connect_scroll(move |_c, _dx, dy| {
+            let factor = 1.15_f64.powf(-dy);
+            if !factor.is_finite() || factor <= 0.0 {
+                return glib::Propagation::Stop;
+            }
+            let (px, py) = ptr.get();
+            let mut s = shot.borrow_mut();
+            if s.active.is_none() || s.scale <= 0.0 {
+                return glib::Propagation::Stop;
+            }
+            let old_scale = s.scale;
+            let new_scale = (old_scale * factor).clamp(MIN_SCALE, MAX_SCALE);
+            let ix = (px - s.off_x) / old_scale;
+            let iy = (py - s.off_y) / old_scale;
+            s.scale = new_scale;
+            s.off_x = px - ix * new_scale;
+            s.off_y = py - iy * new_scale;
+            s.fit = false;
+            s.drag = None;
+            drop(s);
+            area.queue_draw();
+            glib::Propagation::Stop
+        });
+    }
+    area.add_controller(scroll);
+}
+
 fn install_drag(area: &DrawingArea, shot: &Shot) {
     let drag = GestureDrag::new();
 
@@ -214,6 +270,15 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
     drag.connect_drag_begin(move |_g, x, y| {
         let mut s = sb.borrow_mut();
         if s.active.is_none() || s.tool == Tool::Text {
+            return;
+        }
+        if s.tool == Tool::Move {
+            s.drag = Some(Drag::Pan {
+                off_x: s.off_x,
+                off_y: s.off_y,
+            });
+            drop(s);
+            cb.set_cursor_from_name(Some("grabbing"));
             return;
         }
         let (ix, iy) = to_image(&s, x, y);
@@ -243,6 +308,17 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
             return;
         };
         let mut s = su.borrow_mut();
+        if let Some((off_x, off_y)) = match &s.drag {
+            Some(Drag::Pan { off_x, off_y }) => Some((*off_x, *off_y)),
+            _ => None,
+        } {
+            s.off_x = off_x + dx;
+            s.off_y = off_y + dy;
+            s.fit = false;
+            drop(s);
+            cu.queue_draw();
+            return;
+        }
         let (ix, iy) = to_image(&s, sx + dx, sy + dy);
         match s.drag.as_mut() {
             Some(Drag::Rect { x1, y1, .. }) => {
@@ -250,6 +326,7 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
                 *y1 = iy;
             }
             Some(Drag::Stroke { points, .. }) => points.push((ix, iy)),
+            Some(Drag::Pan { .. }) => return,
             None => return,
         }
         drop(s);
@@ -263,6 +340,7 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
         let tool = s.tool;
         if let Some(drag) = s.drag.take() {
             match drag {
+                Drag::Pan { .. } => {}
                 Drag::Rect { x0, y0, x1, y1 } => {
                     if tool == Tool::Arrow {
                         let dist = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
@@ -293,6 +371,9 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
             }
         }
         drop(s);
+        if tool == Tool::Move {
+            ce.set_cursor_from_name(Some("grab"));
+        }
         ce.queue_draw();
     });
 
@@ -302,7 +383,15 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
 fn install_text_click(area: &DrawingArea, fixed: &Fixed, shot: &Shot) {
     let click = GestureClick::new();
     let (sb, fb, ab) = (shot.clone(), fixed.clone(), area.clone());
-    click.connect_pressed(move |_g, _n, x, y| {
+    click.connect_pressed(move |_g, n, x, y| {
+        if n == 2 {
+            let mut s = sb.borrow_mut();
+            s.fit = true;
+            s.drag = None;
+            drop(s);
+            ab.queue_draw();
+            return;
+        }
         let s = sb.borrow();
         if s.active.is_none() || s.tool != Tool::Text {
             return;

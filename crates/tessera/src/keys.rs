@@ -7,7 +7,7 @@ use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, EventControllerKey, PropagationPhase};
 use tessera_core::grid::Dir;
 
-use crate::app::{show_grid, Shared};
+use crate::app::{set_panes, Shared};
 
 pub fn install(window: &ApplicationWindow, state: &Shared) {
     let controller = EventControllerKey::new();
@@ -53,7 +53,7 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
             _ => None,
         };
         if let Some(n) = digit {
-            show_grid(&st, n);
+            set_panes(&st, n);
             return Propagation::Stop;
         }
 

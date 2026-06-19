@@ -7,11 +7,12 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use tessera_core::config::Config;
+use tessera_core::session::{self, Session};
 
 use crate::editor::Editor;
 use crate::grid::Grid;
 use crate::sidebar::Sidebar;
-use crate::{keys, picker, theme};
+use crate::{keys, session_picker, theme};
 
 pub struct State {
     pub window: ApplicationWindow,
@@ -29,6 +30,13 @@ pub struct State {
     /// Clipboard-history panel — built once and re-parented across relayouts so
     /// the history and its single clipboard watcher persist.
     pub clipboard: Option<Rc<crate::clipboard::Panel>>,
+    /// The session currently open in this window, if any.
+    pub current: Option<Session>,
+    /// Whether to persist `current` on changes. False for `tessera N` quick
+    /// launches (ephemeral), true for sessions opened/created via the picker.
+    pub save_sessions: bool,
+    /// Titlebar session switcher: shows the current name, popover lists/creates.
+    pub session_btn: gtk4::MenuButton,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -84,6 +92,14 @@ pub fn build(app: &Application, preset: Option<usize>) {
     capture_btn.add_css_class("flat");
     header.pack_end(&capture_btn);
 
+    // Centered session switcher: shows the current session's name; its popover
+    // lists saved sessions (click to switch) and a New-session action.
+    let session_btn = gtk4::MenuButton::new();
+    session_btn.set_label("Tessera");
+    session_btn.add_css_class("session-switcher");
+    session_btn.set_tooltip_text(Some("Switch session"));
+    header.set_title_widget(Some(&session_btn));
+
     window.set_titlebar(Some(&header));
 
     let state: Shared = Rc::new(RefCell::new(State {
@@ -98,6 +114,9 @@ pub fn build(app: &Application, preset: Option<usize>) {
         shots_panel: None,
         shots_capture: None,
         clipboard: None,
+        current: None,
+        save_sessions: false,
+        session_btn: session_btn.clone(),
     }));
 
     // Flip the current sidebar's visibility whenever the button toggles.
@@ -162,17 +181,213 @@ pub fn build(app: &Application, preset: Option<usize>) {
 
     keys::install(&window, &state);
 
-    match preset {
-        Some(n) => show_grid(&state, n),
-        None => show_picker(&state),
+    // Save the open session when the window closes.
+    {
+        let st = state.clone();
+        window.connect_close_request(move |_| {
+            save_current(&st);
+            gtk4::glib::Propagation::Proceed
+        });
     }
+
+    match preset {
+        // `tessera N`: a quick ephemeral session (N panes, current dir), no picker.
+        Some(n) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+            let mut s = Session::new(cwd);
+            s.panes = n;
+            open_session(&state, s);
+        }
+        None => show_session_picker(&state),
+    }
+    refresh_session_menu(&state);
     window.present();
 }
 
-pub fn show_picker(state: &Shared) {
-    let st = state.clone();
-    let widget = picker::build(move |n| show_grid(&st, n));
+/// Show the startup session picker (resume a saved session or start a new one).
+pub fn show_session_picker(state: &Shared) {
+    let st_open = state.clone();
+    let st_new = state.clone();
+    let widget = session_picker::build(
+        session::list(),
+        move |s| {
+            st_open.borrow_mut().save_sessions = true;
+            open_session(&st_open, s);
+            refresh_session_menu(&st_open);
+        },
+        move || new_session(&st_new),
+    );
     state.borrow().window.set_child(Some(&widget));
+}
+
+/// Prompt for a folder, then create + open a new saved session rooted there.
+fn new_session(state: &Shared) {
+    let window = state.borrow().window.clone();
+    let dialog = gtk4::FileDialog::builder()
+        .title("Choose a folder for the new session")
+        .modal(true)
+        .build();
+    let st = state.clone();
+    dialog.select_folder(Some(&window), gtk4::gio::Cancellable::NONE, move |res| {
+        if let Ok(folder) = res {
+            if let Some(path) = folder.path() {
+                let s = Session::new(path);
+                s.save();
+                st.borrow_mut().save_sessions = true;
+                open_session(&st, s);
+                refresh_session_menu(&st);
+            }
+        }
+    });
+}
+
+/// Make `session` the current one: chdir to its root, build the grid with its
+/// pane count, then reopen its files.
+pub fn open_session(state: &Shared, session: Session) {
+    let root = session.root.clone();
+    let panes = session.panes.max(1);
+    let files = session.files.clone();
+    let active = session.active;
+    let _ = std::env::set_current_dir(&root);
+    state.borrow_mut().current = Some(session);
+
+    show_grid(state, panes);
+
+    for f in &files {
+        if f.exists() {
+            open_file(state, f);
+        }
+    }
+    if let Some(idx) = active {
+        if let Some(editor) = state.borrow().editor.as_ref() {
+            editor.root.set_current_page(Some(idx as u32));
+        }
+    }
+    refresh_session_menu(state);
+}
+
+/// Switch to another saved session: persist the current one first.
+fn switch_session(state: &Shared, session: Session) {
+    save_current(state);
+    state.borrow_mut().save_sessions = true;
+    open_session(state, session);
+}
+
+/// Snapshot the live UI (open files, active tab, pane count) into `current`.
+fn capture_current(state: &Shared) {
+    let (files, active, panes) = {
+        let s = state.borrow();
+        if s.current.is_none() {
+            return;
+        }
+        (
+            s.editor
+                .as_ref()
+                .map(|e| e.open_files())
+                .unwrap_or_default(),
+            s.editor.as_ref().and_then(|e| e.active_index()),
+            s.grid.as_ref().map(|g| g.pane_count()).unwrap_or(1),
+        )
+    };
+    if let Some(cur) = state.borrow_mut().current.as_mut() {
+        cur.files = files;
+        cur.active = active;
+        cur.panes = panes;
+    }
+}
+
+/// Capture + persist the current session (only if it's a saved one).
+pub fn save_current(state: &Shared) {
+    capture_current(state);
+    let s = state.borrow();
+    if s.save_sessions {
+        if let Some(cur) = s.current.as_ref() {
+            cur.save();
+        }
+    }
+}
+
+/// Rebuild the terminal grid with `n` panes, keeping the session's open files.
+pub fn set_panes(state: &Shared, n: usize) {
+    capture_current(state);
+    let session = {
+        let mut s = state.borrow_mut();
+        if let Some(cur) = s.current.as_mut() {
+            cur.panes = n;
+        }
+        s.current.clone()
+    };
+    match session {
+        Some(s) => open_session(state, s),
+        None => show_grid(state, n),
+    }
+}
+
+/// Update the titlebar switcher: current name as label, popover with the session
+/// list (click to switch) plus a New-session action.
+fn refresh_session_menu(state: &Shared) {
+    let btn = state.borrow().session_btn.clone();
+    let name = state
+        .borrow()
+        .current
+        .as_ref()
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "Tessera".to_string());
+    btn.set_label(&name);
+
+    let current_id = state.borrow().current.as_ref().map(|c| c.id.clone());
+    let popover = gtk4::Popover::new();
+    popover.add_css_class("session-popover");
+    let col = gtk4::Box::new(Orientation::Vertical, 2);
+    col.set_margin_top(6);
+    col.set_margin_bottom(6);
+    col.set_margin_start(6);
+    col.set_margin_end(6);
+    col.add_css_class("session-menu");
+
+    for sess in session::list() {
+        let row = Button::with_label(&sess.name);
+        row.add_css_class("session-menu-row");
+        if Some(&sess.id) == current_id.as_ref() {
+            row.add_css_class("current");
+        }
+        let st = state.clone();
+        let pop = popover.downgrade();
+        btn_on_click_switch(
+            &row,
+            move |s| {
+                if let Some(p) = pop.upgrade() {
+                    p.popdown();
+                }
+                switch_session(&st, s);
+            },
+            sess,
+        );
+        col.append(&row);
+    }
+
+    col.append(&gtk4::Separator::new(Orientation::Horizontal));
+    let new = Button::with_label("＋  New session");
+    new.add_css_class("session-menu-new");
+    {
+        let st = state.clone();
+        let pop = popover.downgrade();
+        new.connect_clicked(move |_| {
+            if let Some(p) = pop.upgrade() {
+                p.popdown();
+            }
+            new_session(&st);
+        });
+    }
+    col.append(&new);
+
+    popover.set_child(Some(&col));
+    btn.set_popover(Some(&popover));
+}
+
+/// Wire a session row button to call `f(session)` on click.
+fn btn_on_click_switch(row: &Button, f: impl Fn(Session) + 'static, session: Session) {
+    row.connect_clicked(move |_| f(session.clone()));
 }
 
 pub fn show_grid(state: &Shared, n: usize) {

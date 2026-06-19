@@ -215,6 +215,24 @@ impl Editor {
         child.grab_focus();
     }
 
+    /// Paths of all open tabs, in tab order (used to persist the session).
+    pub fn open_files(&self) -> Vec<PathBuf> {
+        self.open
+            .borrow()
+            .iter()
+            .map(|of| of.path.clone())
+            .collect()
+    }
+
+    /// Index, in tab order, of the active tab (if any).
+    pub fn active_index(&self) -> Option<usize> {
+        let cur = self.root.current_page()?;
+        self.open
+            .borrow()
+            .iter()
+            .position(|of| self.root.page_num(&of.child) == Some(cur))
+    }
+
     fn reveal(&self) {
         // Set the split position only on the very first reveal; otherwise opening a
         // second file would snap the divider back to 50%, discarding the width the
