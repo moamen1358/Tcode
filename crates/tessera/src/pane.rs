@@ -160,8 +160,10 @@ impl Pane {
                     eprintln!("tessera: spawn failed: {err}");
                     if let Some(term) = term.upgrade() {
                         term.feed(
-                            format!("\r\n\x1b[1;31mtessera: failed to start shell: {err}\x1b[0m\r\n")
-                                .as_bytes(),
+                            format!(
+                                "\r\n\x1b[1;31mtessera: failed to start shell: {err}\x1b[0m\r\n"
+                            )
+                            .as_bytes(),
                         );
                     }
                 }

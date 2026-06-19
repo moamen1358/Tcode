@@ -128,7 +128,10 @@ fn office_to_pdf(
     let profile = cache.join("soffice-profile");
     let mut cmd = Command::new("soffice");
     cmd.args(["--headless", "--norestore", "--invisible", "--nologo"])
-        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .arg(format!(
+            "-env:UserInstallation=file://{}",
+            profile.display()
+        ))
         .args(["--convert-to", "pdf", "--outdir"])
         .arg(cache)
         .arg(path);
