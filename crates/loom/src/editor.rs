@@ -673,12 +673,15 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
     // upper ourselves from the known scale ratio so the new value isn't clamped
     // to the stale bounds before the layout pass runs.
     let zoom_to: ZoomFn = {
+        // Weak content: the scroll controller that holds this closure is owned by
+        // `content`, so a strong capture would form a content→controller→zoom_to→
+        // content cycle and leak the whole page subtree when the tab closes.
         let (apply, zoom, fit, pct, content) = (
             apply.clone(),
             zoom.clone(),
             fit.clone(),
             pct.clone(),
-            content.clone(),
+            content.downgrade(),
         );
         Rc::new(move |z: f64, anchor: Option<(f64, f64)>| {
             let z = z.clamp(0.1, 8.0);
@@ -688,6 +691,9 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
             fit.set(false);
             pct.set_text(&format!("{:.0}%", z * 100.0));
 
+            let Some(content) = content.upgrade() else {
+                return;
+            };
             let hadj = content.hadjustment();
             let vadj = content.vadjustment();
             let (oh, ohu, ohp) = (hadj.value(), hadj.upper(), hadj.page_size());
@@ -772,24 +778,34 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
     drag.set_button(gtk4::gdk::BUTTON_PRIMARY);
     let start = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
     {
-        let (content, start) = (content.clone(), start.clone());
+        let (content, start) = (content.downgrade(), start.clone());
         drag.connect_drag_begin(move |g, _x, _y| {
             g.set_state(EventSequenceState::Claimed);
+            let Some(content) = content.upgrade() else {
+                return;
+            };
             start.set((content.hadjustment().value(), content.vadjustment().value()));
             content.set_cursor_from_name(Some("grabbing"));
         });
     }
     {
-        let (content, start) = (content.clone(), start.clone());
+        let (content, start) = (content.downgrade(), start.clone());
         drag.connect_drag_update(move |_g, ox, oy| {
+            let Some(content) = content.upgrade() else {
+                return;
+            };
             let (h0, v0) = start.get();
             content.hadjustment().set_value(h0 - ox);
             content.vadjustment().set_value(v0 - oy);
         });
     }
     {
-        let content = content.clone();
-        drag.connect_drag_end(move |_g, _ox, _oy| content.set_cursor_from_name(Some("grab")));
+        let content = content.downgrade();
+        drag.connect_drag_end(move |_g, _ox, _oy| {
+            if let Some(content) = content.upgrade() {
+                content.set_cursor_from_name(Some("grab"));
+            }
+        });
     }
     content.add_controller(drag);
     content.set_cursor_from_name(Some("grab"));
