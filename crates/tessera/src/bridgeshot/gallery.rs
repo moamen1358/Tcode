@@ -3,7 +3,6 @@
 //! dir on startup, so history survives restarts). Clicking a thumbnail re-opens
 //! it in the annotation canvas.
 
-use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -11,10 +10,10 @@ use gtk4::gdk::{ContentProvider, DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{
-    gio, Box as GtkBox, Button, DragSource, Label, Orientation, PolicyType, ScrolledWindow,
-    Separator,
-};
+use gtk4::{gio, Box as GtkBox, Button, DragSource, Label, Orientation, Separator};
+
+/// Only the most recent N screenshots are kept on screen (no scrolling).
+const MAX_SHOTS: usize = 3;
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
@@ -55,14 +54,8 @@ pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel
     list.set_margin_bottom(6);
     list.set_margin_start(6);
     list.set_margin_end(6);
-    // Fixed height (~3 thumbnails); scroll for older shots.
-    let scroll = ScrolledWindow::builder()
-        .child(&list)
-        .hscrollbar_policy(PolicyType::Never)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .height_request(264)
-        .build();
-    root.append(&scroll);
+    // Only the most recent few screenshots are shown — sized to content, no scroll.
+    root.append(&list);
 
     let panel = Rc::new(Panel {
         root,
@@ -76,17 +69,19 @@ pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel
 impl Panel {
     /// Append a thumbnail for a saved screenshot at `path` (newest at the bottom).
     pub fn add_saved(&self, path: PathBuf) {
-        let Ok(pb) = Pixbuf::from_file_at_scale(&path, 240, -1, true) else {
+        // Display through a GtkImage at a fixed pixel size. Unlike GtkPicture,
+        // GtkImage does NOT do height-for-width, so every thumbnail is a bounded,
+        // uniform square regardless of the capture's aspect — portrait shots no
+        // longer balloon and squeeze out the file tree above. Decode larger than
+        // shown so the downscale stays crisp.
+        let Ok(pb) = Pixbuf::from_file_at_scale(&path, 320, 320, true) else {
             return;
         };
         let texture = Texture::for_pixbuf(&pb);
-        let pic = gtk4::Picture::for_paintable(&texture);
-        pic.set_can_shrink(true);
-        pic.set_content_fit(gtk4::ContentFit::Contain);
-        let btn = Button::builder().child(&pic).build();
+        let img = gtk4::Image::from_paintable(Some(&texture));
+        img.set_pixel_size(84);
+        let btn = Button::builder().child(&img).build();
         btn.add_css_class("bridgeshot-thumb");
-        // Fixed thumbnail height so ~3 fill the strip; older shots scroll.
-        btn.set_size_request(-1, 80);
         btn.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
 
         // Drag a thumbnail into any terminal (or other drop target) — it provides
@@ -103,10 +98,22 @@ impl Panel {
 
         let on_pick = self.on_pick.clone();
         btn.connect_clicked(move |_| on_pick(path.clone()));
-        // Newest at the top so a fresh capture is immediately visible (instead of
-        // appended below the fold). Existing shots load oldest-first, so each
-        // prepend leaves the newest on top there too.
+        // Newest at the top so a fresh capture is immediately visible.
         self.list.prepend(&btn);
+
+        // Keep only the MAX_SHOTS most recent thumbnails: the prepend above put
+        // the newest first, so drop anything past the limit (older captures stay
+        // on disk, they're just no longer shown).
+        let mut shown = 0;
+        let mut child = self.list.first_child();
+        while let Some(c) = child {
+            let next = c.next_sibling();
+            shown += 1;
+            if shown > MAX_SHOTS {
+                self.list.remove(&c);
+            }
+            child = next;
+        }
     }
 
     /// Scan the cache dir for saved shot-*.png paths, sorted oldest first.
@@ -139,33 +146,23 @@ impl Panel {
         shots.into_iter().map(|(_, p)| p).collect()
     }
 
-    /// Load every saved shot-*.png from the cache dir, oldest first, without
-    /// blocking window startup.
+    /// Populate the strip with the MAX_SHOTS most recent screenshots, decoded
+    /// after the window presents so startup isn't blocked.
     ///
-    /// The directory scan runs now (it is cheap), but the expensive part —
-    /// decoding a thumbnail Pixbuf per file in `add_saved` — is spread across
-    /// idle ticks so the window can present immediately. Each tick decodes a
-    /// small batch and appends it, preserving the oldest-first sort order.
+    /// `scan_shots` is oldest-first, so we take the tail (the newest few) and add
+    /// them oldest-first — each prepend in `add_saved` then leaves the newest on top.
     fn load_existing_deferred(self: &Rc<Self>) {
-        let shots = Self::scan_shots();
-        if shots.is_empty() {
+        let mut shots = Self::scan_shots();
+        let start = shots.len().saturating_sub(MAX_SHOTS);
+        let recent = shots.split_off(start);
+        if recent.is_empty() {
             return;
         }
-
-        // Number of thumbnails decoded per idle tick. Small enough that no
-        // single tick stalls the main loop noticeably.
-        const BATCH: usize = 3;
-
         let panel = self.clone();
-        let remaining = Rc::new(RefCell::new(shots.into_iter()));
-        glib::idle_add_local(move || {
-            for _ in 0..BATCH {
-                match remaining.borrow_mut().next() {
-                    Some(p) => panel.add_saved(p),
-                    None => return glib::ControlFlow::Break,
-                }
+        glib::idle_add_local_once(move || {
+            for p in recent {
+                panel.add_saved(p);
             }
-            glib::ControlFlow::Continue
         });
     }
 }
