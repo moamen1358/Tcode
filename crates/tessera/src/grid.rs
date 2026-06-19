@@ -1,6 +1,6 @@
 //! The terminal grid — a *resizable* layout built from standard `GtkPaned`
 //! splits (drag any border to resize). Panes are arranged in the balanced shape
-//! from `loom_core::grid::layout`, realized as nested Paned chains. Adding a
+//! from `tessera_core::grid::layout`, realized as nested Paned chains. Adding a
 //! pane (`+` / `Alt+n`) or a shell exiting rebuilds the split tree.
 //!
 //! State lives behind `Rc<RefCell<GridInner>>` so widget callbacks can mutate it;
@@ -14,8 +14,8 @@ use gtk4::glib;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, EventControllerFocus, Orientation, Paned};
-use loom_core::config::Config;
-use loom_core::grid::{coords, flat_index, layout, neighbor, Dir};
+use tessera_core::config::Config;
+use tessera_core::grid::{coords, flat_index, layout, neighbor, Dir};
 use vte4::prelude::*; // TerminalExt: connect_child_exited
 
 use crate::pane::{OpenFn, Pane};

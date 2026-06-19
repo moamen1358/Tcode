@@ -69,7 +69,7 @@ const ICONS: &[(&str, &str)] = &[
 ];
 
 fn cache_dir() -> PathBuf {
-    gtk4::glib::user_cache_dir().join("loom").join("icons")
+    gtk4::glib::user_cache_dir().join("tessera").join("icons")
 }
 
 /// Recolor every fill/stroke/stop color in an SVG to a single `color`, so the

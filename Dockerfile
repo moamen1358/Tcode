@@ -1,4 +1,4 @@
-# Loom — multi-stage build. Runs INSIDE the container; the GUI renders on the
+# Tessera — multi-stage build. Runs INSIDE the container; the GUI renders on the
 # host display via socket forwarding (see run-docker.sh).
 
 # ---- Stage 1: build the release binary -------------------------------------
@@ -14,7 +14,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p loom
+RUN cargo build --release -p tessera
 
 # ---- Stage 2: slim runtime image -------------------------------------------
 FROM ubuntu:24.04 AS runtime
@@ -26,9 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-jetbrains-mono fonts-dejavu-core \
         libgl1-mesa-dri libegl1 libgles2 \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/loom /usr/local/bin/loom
+COPY --from=builder /app/target/release/tessera /usr/local/bin/tessera
 # Container panes run bash with a directory-showing prompt (native runs use your $SHELL).
-COPY docker/loom-profile.sh /etc/profile.d/zz-loom.sh
+COPY docker/tessera-profile.sh /etc/profile.d/zz-tessera.sh
 ENV SHELL=/bin/bash
 # If a host has no GPU passthrough, set GSK_RENDERER=cairo for software rendering.
-ENTRYPOINT ["loom"]
+ENTRYPOINT ["tessera"]

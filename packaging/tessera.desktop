@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Loom
+Name=Tessera
 GenericName=Terminal Workspace
 Comment=Borderless tiling-terminal workspace
-Exec=loom
-Icon=loom
+Exec=tessera
+Icon=tessera
 Terminal=false
 Categories=Utility;TerminalEmulator;
 Keywords=terminal;tiling;workspace;shell;panes;

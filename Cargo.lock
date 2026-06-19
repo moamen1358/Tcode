@@ -743,28 +743,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
-name = "loom"
-version = "0.1.0"
-dependencies = [
- "ashpd",
- "async-channel",
- "cairo-rs",
- "csv",
- "gtk4",
- "loom-core",
- "sourceview5",
- "vte4",
-]
-
-[[package]]
-name = "loom-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "toml 0.8.23",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1092,6 +1070,28 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "tessera"
+version = "0.1.0"
+dependencies = [
+ "ashpd",
+ "async-channel",
+ "cairo-rs",
+ "csv",
+ "gtk4",
+ "sourceview5",
+ "tessera-core",
+ "vte4",
+]
+
+[[package]]
+name = "tessera-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]

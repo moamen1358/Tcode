@@ -3,7 +3,7 @@
 
 use gtk4::gdk::{Display, RGBA};
 use gtk4::{CssProvider, STYLE_PROVIDER_PRIORITY_APPLICATION};
-use loom_core::config::Theme;
+use tessera_core::config::Theme;
 
 /// Parse a `#rrggbb` string into an RGBA, falling back to opaque black.
 pub fn rgba(hex: &str) -> RGBA {
@@ -95,9 +95,9 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .sidebar .hovered {{ background-color: alpha({fg}, 0.08); border-radius: 4px; }}\n\
          .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
          .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.3); }}\n\
-         .loom-titlebar {{ min-height: 24px; background-color: {bg}; \
+         .tessera-titlebar {{ min-height: 24px; background-color: {bg}; \
                               box-shadow: none; border: none; color: {fg}; }}\n\
-         .loom-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
+         .tessera-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
          .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\

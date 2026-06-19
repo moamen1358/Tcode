@@ -1,4 +1,4 @@
-//! Frame — integrated screenshot annotator for Loom's main window.
+//! Frame — integrated screenshot annotator for Tessera's main window.
 //!
 //! A persistent panel on the left lists saved screenshots (loaded from the cache
 //! dir, so they survive restarts). Capturing (its Capture button, or Alt+P opens
@@ -44,7 +44,7 @@ pub struct Frame {
     pub capture: Rc<dyn Fn()>,
 }
 
-/// Wrap `content` (Loom's sidebar+center) with the Frame panel and a
+/// Wrap `content` (Tessera's sidebar+center) with the Frame panel and a
 /// hidden annotation layer. `main` is the window — hidden during capture so it
 /// isn't in the shot, and the clipboard owner on export.
 pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame {
@@ -87,7 +87,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame 
         })
     };
 
-    // Capture: keep Loom visible (so you can capture it too, and so the
+    // Capture: keep Tessera visible (so you can capture it too, and so the
     // self-snapshot fallback has a window to snapshot) and run the portal picker;
     // the compositor's picker overlays the desktop and lets you choose any
     // window/region. The result is loaded into the annotation canvas.
@@ -132,7 +132,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame 
                 }
                 // Keep the annotation canvas open on failure so the user's work
                 // isn't silently discarded (e.g. an image too large for cairo).
-                Err(e) => eprintln!("loom: screenshot export failed: {e}"),
+                Err(e) => eprintln!("tessera: screenshot export failed: {e}"),
             }
         });
     }

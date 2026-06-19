@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Tessera symbolic icon</title>
+  <desc id="desc">A single-color orange tessera terminal grid mark for symbolic use.</desc>
+
+  <defs>
+    <mask id="promptCutout" maskUnits="userSpaceOnUse">
+      <rect width="512" height="512" fill="#ffffff"/>
+      <path d="m267 251 30 21-30 21" fill="none" stroke="#000000" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M318 292h34" fill="none" stroke="#000000" stroke-width="16" stroke-linecap="round"/>
+    </mask>
+  </defs>
+
+  <!-- Single-color tessera terminal silhouette -->
+  <g id="tessera-symbol" fill="#FF7A18" mask="url(#promptCutout)">
+    <rect x="68" y="68" width="376" height="376" rx="84" opacity="0.18"/>
+    <rect x="116" y="116" width="128" height="88" rx="18"/>
+    <rect x="268" y="116" width="128" height="88" rx="18"/>
+    <rect x="116" y="228" width="88" height="88" rx="18"/>
+    <rect x="228" y="228" width="168" height="88" rx="18"/>
+    <rect x="116" y="340" width="168" height="56" rx="18"/>
+    <rect x="308" y="340" width="88" height="56" rx="18"/>
+  </g>
+</svg>

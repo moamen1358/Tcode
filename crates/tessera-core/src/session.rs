@@ -1,10 +1,10 @@
 //! Named workspace sessions. Each session remembers its root folder, the
 //! terminal layout (pane count + split sizes), and the open editor files,
-//! persisted as a TOML file under `~/.config/loom/sessions/` so Loom can reopen
+//! persisted as a TOML file under `~/.config/tessera/sessions/` so Tessera can reopen
 //! where you left off. (Per-terminal working dirs are modeled below but not
 //! captured yet — reserved for a later pass.)
 //!
-//! This is pure data + disk I/O (no GTK); the UI lives in the `loom` crate
+//! This is pure data + disk I/O (no GTK); the UI lives in the `tessera` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
 
 use std::io::Write;
@@ -121,7 +121,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.write_all(bytes)
 }
 
-/// Directory holding session files: `~/.config/loom/sessions/`.
+/// Directory holding session files: `~/.config/tessera/sessions/`.
 pub fn sessions_dir() -> PathBuf {
     config_dir().join("sessions")
 }

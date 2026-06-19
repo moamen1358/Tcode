@@ -17,7 +17,7 @@ mod theme;
 use gtk4::prelude::*;
 use gtk4::{gio, glib, Application};
 
-const APP_ID: &str = "dev.loom.Loom";
+const APP_ID: &str = "dev.tessera.Tessera";
 
 fn main() -> glib::ExitCode {
     // Carry over data written under the old name so the rename loses nothing.
@@ -25,7 +25,7 @@ fn main() -> glib::ExitCode {
     // Make the bundled default font available before GTK initializes fontconfig.
     ensure_bundled_font();
 
-    // Optional pane count from argv[1] (e.g. `loom 4`). Read it ourselves so
+    // Optional pane count from argv[1] (e.g. `tessera 4`). Read it ourselves so
     // GTK never sees it — we hand GTK a clean argv to avoid file-open parsing.
     let preset: Option<usize> = std::env::args()
         .nth(1)
@@ -33,17 +33,17 @@ fn main() -> glib::ExitCode {
         .filter(|n| (1..=16).contains(n));
 
     // NON_UNIQUE: each launch is its own independent window (no single-instance
-    // handoff to an already-running Loom).
+    // handoff to an already-running Tessera).
     let app = Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.connect_activate(move |app| app::build(app, preset));
-    app.run_with_args(&["loom"])
+    app.run_with_args(&["tessera"])
 }
 
-/// One-time migration of data written under the old "tessera" name into the new
-/// "loom" dirs, so existing sessions, clipboard history, and screenshots survive
+/// One-time migration of data written under the old "loom" name into the new
+/// "tessera" dirs, so existing sessions, clipboard history, and screenshots survive
 /// the rename. Each move only happens if the new location doesn't exist yet.
 fn migrate_legacy_data() {
     for base in [
@@ -51,13 +51,13 @@ fn migrate_legacy_data() {
         glib::user_cache_dir(),
         glib::user_data_dir(),
     ] {
-        let (old, new) = (base.join("tessera"), base.join("loom"));
+        let (old, new) = (base.join("loom"), base.join("tessera"));
         if old.is_dir() && !new.exists() {
             let _ = std::fs::rename(&old, &new);
         }
     }
     // The screenshots subdir was renamed too (bridgeshot -> frame).
-    let cache = glib::user_cache_dir().join("loom");
+    let cache = glib::user_cache_dir().join("tessera");
     let (old, new) = (cache.join("bridgeshot"), cache.join("frame"));
     if old.is_dir() && !new.exists() {
         let _ = std::fs::rename(&old, &new);
@@ -69,7 +69,7 @@ fn migrate_legacy_data() {
 /// picks the file up and the app's default font renders on a fresh machine
 /// without a manual install.
 fn ensure_bundled_font() {
-    let dir = glib::user_data_dir().join("fonts").join("loom");
+    let dir = glib::user_data_dir().join("fonts").join("tessera");
     let file = dir.join("MartianMono.ttf");
     if file.exists() {
         return;

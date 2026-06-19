@@ -1,5 +1,5 @@
 //! Image capture for Frame: the XDG screenshot portal (any window/region,
-//! Wayland-safe) with the Loom self-snapshot as a fallback.
+//! Wayland-safe) with the Tessera self-snapshot as a fallback.
 
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
@@ -9,14 +9,14 @@ use gtk4::ApplicationWindow;
 /// Capture ANY window/region via the desktop portal. COSMIC shows its own
 /// interactive picker; the chosen area comes back as a PNG we load. On any
 /// failure (portal absent/denied/cancelled) we fall back to snapshotting
-/// Loom's own window so capture never dead-ends.
+/// Tessera's own window so capture never dead-ends.
 pub fn capture_screen<F: Fn(Option<Pixbuf>) + 'static>(fallback: &ApplicationWindow, done: F) {
     let fallback = fallback.clone();
     glib::spawn_future_local(async move {
         match request_portal_screenshot().await {
             Some(pb) => done(Some(pb)),
             None => {
-                eprintln!("loom: screenshot portal unavailable; capturing Loom's own window");
+                eprintln!("tessera: screenshot portal unavailable; capturing Tessera's own window");
                 capture_window_async(&fallback, done)
             }
         }
@@ -41,7 +41,7 @@ async fn request_portal_screenshot() -> Option<Pixbuf> {
     Pixbuf::from_file(&path).ok()
 }
 
-/// Snapshot the live Loom window into a `Pixbuf`, asynchronously.
+/// Snapshot the live Tessera window into a `Pixbuf`, asynchronously.
 ///
 /// `WidgetPaintable` only records a render node on the widget's *next* snapshot
 /// after it is attached — so a synchronous capture of an already-drawn, static
