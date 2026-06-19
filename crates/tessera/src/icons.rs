@@ -1,7 +1,8 @@
-//! Colored file-type icons from the Material Icon Theme (MIT) — see
-//! `assets/icons/ATTRIBUTION.txt`. The SVGs are embedded at build time, written
-//! to a cache dir at startup, and chosen per file by name/extension, giving the
-//! sidebar Zed/VSCode-style icons independent of the system icon theme.
+//! Monochrome file-type icons from the Material Icon Theme (MIT) shapes — see
+//! `assets/icons/ATTRIBUTION.txt`. The SVGs are embedded at build time, recolored
+//! to a single tone (the theme foreground) and written to a cache dir at startup,
+//! and chosen per file by name/extension, giving the sidebar clean Zed/VSCode-style
+//! icons independent of the system icon theme.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -71,13 +72,38 @@ fn cache_dir() -> PathBuf {
     gtk4::glib::user_cache_dir().join("tessera").join("icons")
 }
 
-/// Write the embedded icons to the cache dir (idempotent). Returns that dir.
-/// The SVGs are written verbatim so they keep their original Material colors.
-pub fn ensure() -> PathBuf {
+/// Recolor every fill/stroke/stop color in an SVG to a single `color`, so the
+/// icon set renders as a clean monochrome (shapes kept, color unified). `url(#id)`
+/// references (gradient lookups) are left intact.
+fn recolor(svg: &str, color: &str) -> String {
+    let s = svg.as_bytes();
+    let mut out = String::with_capacity(svg.len() + 16);
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'#' && (i == 0 || s[i - 1] != b'(') {
+            let mut j = i + 1;
+            while j < s.len() && s[j].is_ascii_hexdigit() {
+                j += 1;
+            }
+            if matches!(j - (i + 1), 3 | 4 | 6 | 8) {
+                out.push_str(color);
+                i = j;
+                continue;
+            }
+        }
+        out.push(s[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// Write the embedded icons to the cache dir (idempotent), recolored to `color`
+/// for a clean monochrome sidebar. Returns that dir.
+pub fn ensure(color: &str) -> PathBuf {
     let dir = cache_dir();
     let _ = fs::create_dir_all(&dir);
     for (name, svg) in ICONS {
-        let _ = fs::write(dir.join(format!("{name}.svg")), svg);
+        let _ = fs::write(dir.join(format!("{name}.svg")), recolor(svg, color));
     }
     dir
 }

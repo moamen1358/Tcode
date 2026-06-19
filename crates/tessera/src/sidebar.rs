@@ -14,16 +14,6 @@ use gtk4::{
 
 use crate::app::{open_file, Shared};
 
-/// Single-quote a path for safe shell insertion (used by the image drop target).
-pub(crate) fn shell_quote(p: &Path) -> String {
-    let cleaned: String = p
-        .to_string_lossy()
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
-    format!("'{}'", cleaned.replace('\'', "'\\''"))
-}
-
 pub struct Sidebar {
     pub root: GtkBox,
 }
@@ -185,7 +175,9 @@ impl Sidebar {
 
             item.set_child(Some(&expander));
         });
-        let icons_dir = crate::icons::ensure();
+        // Monochrome icons, tinted to the theme's foreground color.
+        let icon_color = state.borrow().cfg.theme.foreground.clone();
+        let icons_dir = crate::icons::ensure(&icon_color);
         factory.connect_bind(move |_f, obj| {
             let Some(item) = obj.downcast_ref::<ListItem>() else {
                 return;
