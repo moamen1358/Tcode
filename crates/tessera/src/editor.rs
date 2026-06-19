@@ -36,6 +36,7 @@ use crate::preview;
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Text,
+    Csv,
     Image,
     Pdf,
     Office,
@@ -52,7 +53,10 @@ fn kind_of(path: &Path) -> Kind {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg" | "tif" | "tiff"
         | "xpm" | "pnm" | "tga" | "icns" => Kind::Image,
         "pdf" => Kind::Pdf,
-        // Office formats (rendered via soffice -> pdf -> images). CSV stays text.
+        // Tabular text → rendered as a real table (falls back to text if it
+        // doesn't parse as a grid).
+        "csv" | "tsv" | "tab" => Kind::Csv,
+        // Office formats (rendered via soffice -> pdf -> images).
         "doc" | "docx" | "odt" | "rtf" | "ppt" | "pptx" | "odp" | "xls" | "xlsx" | "ods" => {
             Kind::Office
         }
@@ -163,6 +167,14 @@ impl Editor {
                     Some((w, b)) => (w, Some(b), None),
                     None => (fallback_viewer(path), None, None),
                 },
+                // Table view; if it doesn't parse as a grid, fall back to text.
+                Kind::Csv => match crate::csvview::csv_viewer(path) {
+                    Some(w) => (w, None, None),
+                    None => match text_viewer(path) {
+                        Some((w, b)) => (w, Some(b), None),
+                        None => (fallback_viewer(path), None, None),
+                    },
+                },
                 Kind::Image => (image_viewer(path, self.backdrop), None, None),
                 Kind::Pdf | Kind::Office => {
                     let cancel = Arc::new(AtomicBool::new(false));
@@ -218,6 +230,12 @@ impl Editor {
 /// Editable source view with line numbers + syntax highlighting. Returns `None`
 /// if the file isn't valid UTF-8 (binary) so the caller can show the info card.
 fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
+    // Guard against opening a multi-GB file synchronously (would freeze the UI /
+    // exhaust memory); over the cap we show the info card instead.
+    const MAX_TEXT_BYTES: u64 = 64 * 1024 * 1024;
+    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_TEXT_BYTES {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
     if bytes.contains(&0) {
         return None; // NUL byte -> binary

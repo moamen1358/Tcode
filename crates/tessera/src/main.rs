@@ -1,5 +1,6 @@
 mod app;
 mod bridgeshot;
+mod csvview;
 mod editor;
 mod grid;
 mod icons;
