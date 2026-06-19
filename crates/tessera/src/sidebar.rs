@@ -143,6 +143,8 @@ impl Sidebar {
             // neither show an arrow nor indent (we handle indentation ourselves).
             let indent = GtkBox::new(Orientation::Horizontal, 0);
             let content = GtkBox::new(Orientation::Horizontal, 6);
+            // Gap between the indent guide line and the folder/file icon.
+            content.set_margin_start(8);
             let image = Image::new();
             image.set_pixel_size(14);
             let label = Label::builder().halign(Align::Start).build();
@@ -154,6 +156,9 @@ impl Sidebar {
             let expander = TreeExpander::new();
             expander.set_hide_expander(true);
             expander.set_indent_for_depth(false);
+            // Don't reserve expander-arrow width (we hide the arrow and draw our
+            // own indent guides), so the root folder hugs the left edge.
+            expander.set_indent_for_icon(false);
             expander.set_child(Some(&row));
 
             // Custom hover highlight: a per-row motion controller toggles the
@@ -209,8 +214,13 @@ impl Sidebar {
                 indent.remove(&child);
             }
             for _ in 0..treerow.depth() {
+                // One indent level (22px). The guide line is the cell's left
+                // border, placed 15px in so it lands under the centre of the
+                // parent folder's icon (8px content margin + 7px half-icon); the
+                // 7px cell after it keeps the gap to this row's own icon.
                 let cell = GtkBox::new(Orientation::Horizontal, 0);
-                cell.set_size_request(14, -1);
+                cell.set_size_request(7, -1);
+                cell.set_margin_start(15);
                 cell.add_css_class("indent-guide");
                 indent.append(&cell);
             }

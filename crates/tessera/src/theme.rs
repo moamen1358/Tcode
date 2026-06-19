@@ -33,7 +33,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .sidebar row:hover {{ background-color: transparent; }}\n\
          .sidebar .hovered {{ background-color: alpha({fg}, 0.08); border-radius: 4px; }}\n\
          .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
-         .sidebar .indent-guide {{ border-left: 1px solid alpha({fg}, 0.32); }}\n\
+         .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.3); }}\n\
          .tessera-titlebar {{ min-height: 24px; background-color: {bg}; \
                               box-shadow: none; border: none; color: {fg}; }}\n\
          .tessera-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
