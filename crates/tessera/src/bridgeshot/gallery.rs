@@ -95,7 +95,10 @@ impl Panel {
 
         let on_pick = self.on_pick.clone();
         btn.connect_clicked(move |_| on_pick(path.clone()));
-        self.list.append(&btn);
+        // Newest at the top so a fresh capture is immediately visible (instead of
+        // appended below the fold). Existing shots load oldest-first, so each
+        // prepend leaves the newest on top there too.
+        self.list.prepend(&btn);
     }
 
     /// Scan the cache dir for saved shot-*.png paths, sorted oldest first.
