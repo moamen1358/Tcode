@@ -195,11 +195,14 @@ fn install_links(terminal: &Terminal, on_open: OpenFn) {
     click.set_button(BUTTON_PRIMARY);
     // Capture phase so we can claim a Ctrl+click before VTE starts a selection.
     click.set_propagation_phase(PropagationPhase::Capture);
-    let term = terminal.clone();
+    // Weak: the terminal owns this controller, so a strong capture here would
+    // form a cycle and leak the terminal (+ its PTY) when the pane closes.
+    let term = terminal.downgrade();
     click.connect_pressed(move |g, _n, x, y| {
         if !g.current_event_state().contains(ModifierType::CONTROL_MASK) {
             return;
         }
+        let Some(term) = term.upgrade() else { return };
         let hit = term
             .check_hyperlink_at(x, y)
             .or_else(|| term.check_match_at(x, y).0);
@@ -269,12 +272,16 @@ fn install_context_menu(terminal: &Terminal) {
 
     let actions = gio::SimpleActionGroup::new();
 
+    // Weak terminal refs throughout: the action group + the gesture below are
+    // owned by the terminal, so strong captures would cycle and leak it.
     let copy = gio::SimpleAction::new("copy", None);
     {
-        let t = terminal.clone();
+        let t = terminal.downgrade();
         copy.connect_activate(move |_, _| {
-            if t.has_selection() {
-                t.copy_clipboard_format(Format::Text);
+            if let Some(t) = t.upgrade() {
+                if t.has_selection() {
+                    t.copy_clipboard_format(Format::Text);
+                }
             }
         });
     }
@@ -282,15 +289,23 @@ fn install_context_menu(terminal: &Terminal) {
 
     let paste = gio::SimpleAction::new("paste", None);
     {
-        let t = terminal.clone();
-        paste.connect_activate(move |_, _| t.paste_clipboard());
+        let t = terminal.downgrade();
+        paste.connect_activate(move |_, _| {
+            if let Some(t) = t.upgrade() {
+                t.paste_clipboard();
+            }
+        });
     }
     actions.add_action(&paste);
 
     let select_all = gio::SimpleAction::new("select-all", None);
     {
-        let t = terminal.clone();
-        select_all.connect_activate(move |_, _| t.select_all());
+        let t = terminal.downgrade();
+        select_all.connect_activate(move |_, _| {
+            if let Some(t) = t.upgrade() {
+                t.select_all();
+            }
+        });
     }
     actions.add_action(&select_all);
 
@@ -302,8 +317,9 @@ fn install_context_menu(terminal: &Terminal) {
     click.set_button(BUTTON_SECONDARY);
     click.set_propagation_phase(PropagationPhase::Capture);
     {
-        let (t, pop) = (terminal.clone(), popover.clone());
+        let (t, pop) = (terminal.downgrade(), popover.clone());
         click.connect_pressed(move |g, _n, x, y| {
+            let Some(t) = t.upgrade() else { return };
             copy.set_enabled(t.has_selection());
             pop.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             pop.popup();

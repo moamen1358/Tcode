@@ -324,7 +324,8 @@ impl Zoomer {
 
     /// Zoom toward the canvas centre (toolbar ± buttons).
     fn zoom_center(&self, factor: f64) {
-        let (w, h) = (self.area.width() as f64, self.area.height() as f64);
+        // max(1) so a not-yet-allocated canvas zooms toward a sane point, not (0,0).
+        let (w, h) = (self.area.width().max(1) as f64, self.area.height().max(1) as f64);
         self.zoom_to(w / 2.0, h / 2.0, factor);
     }
 
@@ -338,13 +339,17 @@ impl Zoomer {
         if self.running.replace(true) {
             return;
         }
-        let z = self.clone();
+        // Capture only the Rc state, NOT the DrawingArea — capturing `self` (which
+        // holds `area`) would form an area→tick→area cycle, and a detached
+        // widget's frame clock stops ticking, so closing a tab mid-animation would
+        // leak the canvas forever. The area arrives as the `a` parameter instead.
+        let (state, anim, running) = (self.state.clone(), self.anim.clone(), self.running.clone());
         self.area.add_tick_callback(move |a, _clock| {
-            let Some(an) = z.anim.get() else {
-                z.running.set(false);
+            let Some(an) = anim.get() else {
+                running.set(false);
                 return glib::ControlFlow::Break;
             };
-            let mut v = z.state.get();
+            let mut v = state.get();
             // Frame-rate-stable enough easing toward the target (~50 ms settle).
             let next = v.zoom + (an.target - v.zoom) * 0.30;
             let done = (an.target - next).abs() <= an.target * 0.002;
@@ -352,11 +357,11 @@ impl Zoomer {
             v.off_x = an.ax - an.ix * v.zoom;
             v.off_y = an.ay - an.iy * v.zoom;
             v.fit = false;
-            z.state.set(v);
+            state.set(v);
             a.queue_draw();
             if done {
-                z.anim.set(None);
-                z.running.set(false);
+                anim.set(None);
+                running.set(false);
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
@@ -763,7 +768,9 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     // Streaming pages adopt the current mode as they arrive.
     let mode: Rc<Cell<Option<f64>>> = Rc::new(Cell::new(None));
 
-    let (tx, rx) = async_channel::unbounded::<preview::Msg>();
+    // Bounded so a slow UI applies backpressure to the worker instead of letting
+    // page messages queue without limit; the worker bails if the receiver is gone.
+    let (tx, rx) = async_channel::bounded::<preview::Msg>(32);
     preview::start_render(path.to_path_buf(), tx, cancel);
 
     let col = column.clone();
@@ -778,6 +785,10 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                     st.set_text(&format!("Rendering {n} page{}…", if n == 1 { "" } else { "s" }));
                 }
                 preview::Msg::Page(page) => {
+                    if !page.exists() {
+                        eprintln!("tessera: preview page vanished: {}", page.display());
+                        continue;
+                    }
                     let pic = Picture::for_filename(&page);
                     pic.set_can_shrink(true);
                     pic.set_content_fit(ContentFit::Contain);
@@ -912,7 +923,7 @@ fn close_tab(nb: &Notebook, open: &OpenFiles, paned: &Paned, child: &Widget) {
         .find(|of| &of.child == child)
         .and_then(|of| of.cancel.clone())
     {
-        cancel.store(true, Ordering::Relaxed);
+        cancel.store(true, Ordering::Release);
     }
     open.borrow_mut().retain(|of| &of.child != child);
     if open.borrow().is_empty() {
