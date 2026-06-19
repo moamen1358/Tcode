@@ -18,7 +18,10 @@ pub fn capture_screen<F: Fn(Option<Pixbuf>) + 'static>(fallback: &ApplicationWin
     glib::spawn_future_local(async move {
         match request_portal_screenshot().await {
             Some(pb) => done(Some(pb)),
-            None => capture_window_async(&fallback, done),
+            None => {
+                eprintln!("tessera: screenshot portal unavailable; capturing Tessera's own window");
+                capture_window_async(&fallback, done)
+            }
         }
     });
 }

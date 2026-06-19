@@ -911,7 +911,9 @@ fn open_externally(path: &Path) -> Button {
     btn.add_css_class("fallback-open");
     let p = path.to_path_buf();
     btn.connect_clicked(move |_| {
-        let _ = std::process::Command::new("xdg-open").arg(&p).spawn();
+        if let Err(e) = std::process::Command::new("xdg-open").arg(&p).spawn() {
+            eprintln!("tessera: 'Open externally' failed (xdg-open): {e}");
+        }
     });
     btn
 }

@@ -328,11 +328,23 @@ impl Grid {
 
         let weak2 = Rc::downgrade(&self.inner);
         pane.terminal.connect_child_exited(move |_t, _status| {
-            if let Some(inner) = weak2.upgrade() {
-                if let Ok(mut g) = inner.try_borrow_mut() {
-                    g.remove_by_id(id);
-                }
+            let Some(inner) = weak2.upgrade() else {
+                return;
+            };
+            if let Ok(mut g) = inner.try_borrow_mut() {
+                g.remove_by_id(id);
+                return;
             }
+            // Inner was already borrowed (rare re-entrancy) — retry on idle so the
+            // exited pane is never silently left in the grid with a dead PTY.
+            let weak = weak2.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(inner) = weak.upgrade() {
+                    if let Ok(mut g) = inner.try_borrow_mut() {
+                        g.remove_by_id(id);
+                    }
+                }
+            });
         });
 
         pane

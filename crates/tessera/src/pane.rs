@@ -142,6 +142,10 @@ impl Pane {
         };
         let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
 
+        // Weak so the one-shot spawn callback can't form a terminal->callback->
+        // terminal cycle. On failure, write a visible message into the terminal
+        // instead of leaving a silent black pane.
+        let term = self.terminal.downgrade();
         self.terminal.spawn_async(
             PtyFlags::DEFAULT,
             Some(cwd.as_str()),
@@ -154,6 +158,12 @@ impl Pane {
             move |res| {
                 if let Err(err) = res {
                     eprintln!("tessera: spawn failed: {err}");
+                    if let Some(term) = term.upgrade() {
+                        term.feed(
+                            format!("\r\n\x1b[1;31mtessera: failed to start shell: {err}\x1b[0m\r\n")
+                                .as_bytes(),
+                        );
+                    }
                 }
             },
         );
@@ -246,7 +256,9 @@ fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
         return false;
     }
     if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://") {
-        let _ = Command::new("xdg-open").arg(s).spawn();
+        if let Err(e) = Command::new("xdg-open").arg(s).spawn() {
+            eprintln!("tessera: xdg-open failed for {s}: {e}");
+        }
         return true;
     }
     // Drop a trailing :line[:col] (rustc/grep style) before resolving the path.
