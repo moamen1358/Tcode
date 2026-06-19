@@ -1,8 +1,6 @@
 //! BridgeShot session state: a list of captured documents (each with its own
 //! annotations) plus the current tool/color and the active canvas transform.
 
-#![allow(dead_code)] // wired up in the orchestrator task
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -107,9 +105,4 @@ pub fn add_doc(shot: &Shot, pixbuf: Pixbuf) -> usize {
 pub fn to_image(s: &State, wx: f64, wy: f64) -> (f64, f64) {
     let sc = if s.scale.abs() < 1e-6 { 1.0 } else { s.scale };
     ((wx - s.off_x) / sc, (wy - s.off_y) / sc)
-}
-
-/// Image point -> widget point using the active transform.
-pub fn to_widget(s: &State, ix: f64, iy: f64) -> (f64, f64) {
-    (s.off_x + ix * s.scale, s.off_y + iy * s.scale)
 }

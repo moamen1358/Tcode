@@ -1,8 +1,6 @@
 //! Image capture for BridgeShot: the XDG screenshot portal (any window/region,
 //! Wayland-safe) with the Tessera self-snapshot as a fallback.
 
-#![allow(dead_code)] // wired up in the orchestrator task
-
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;

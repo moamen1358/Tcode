@@ -1,8 +1,6 @@
 //! Render the active document (image + annotations) to a PNG and return a
 //! Pixbuf of the result for the clipboard.
 
-#![allow(dead_code)] // wired up in the orchestrator task
-
 use std::path::PathBuf;
 
 use gtk4::cairo;

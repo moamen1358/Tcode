@@ -1,8 +1,6 @@
 //! Left-side thumbnail strip of this session's captures. Clicking a thumbnail
 //! makes that document active on the canvas.
 
-#![allow(dead_code)] // wired up in the orchestrator task
-
 use gtk4::gdk::Texture;
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::prelude::*;

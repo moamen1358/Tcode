@@ -2,8 +2,6 @@
 //! into annotations according to the current tool. Text uses an Entry placed on
 //! a Fixed overlay above the DrawingArea.
 
-#![allow(dead_code)] // wired up in the orchestrator task
-
 use gtk4::cairo;
 use gtk4::gdk::prelude::GdkCairoContextExt; // cr.set_source_pixbuf
 use gtk4::glib;
