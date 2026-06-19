@@ -275,7 +275,17 @@ pub fn build(app: &Application, preset: Option<usize>) {
             s.panes = n;
             open_session(&state, s);
         }
-        None => show_session_picker(&state),
+        // `LOOM_RESUME=<id>` opens that saved session directly, skipping the
+        // picker (handy for scripting a launch straight into a known session).
+        None => match std::env::var_os("LOOM_RESUME")
+            .and_then(|id| session::load(&id.to_string_lossy()))
+        {
+            Some(sess) => {
+                state.borrow_mut().save_sessions = true;
+                open_session(&state, sess);
+            }
+            None => show_session_picker(&state),
+        },
     }
     refresh_session_menu(&state);
     apply_view(&state);
@@ -885,43 +895,109 @@ pub fn show_grid(state: &Shared, n: usize) {
     // Apply the current font size + UI scale to the freshly built terminals.
     apply_view(state);
 
-    // Once the window is mapped (so panes have a real size), restore the saved
-    // split sizes for this session — or fall back to equal splits — and grab
-    // keyboard focus (COSMIC drops a focus grabbed before present()).
+    // Restore the saved split sizes once the window is mapped and settled.
+    restore_session_layout(state);
+}
+
+/// Restore a freshly-built session's split sizes in the right order so each
+/// terminal is sized exactly once, at its final width.
+///
+/// The outer splits (sidebar width, editor split) must be applied *before* the
+/// terminal grid's splits — otherwise the grid is sized against a transient width
+/// and then resized again when the editor/sidebar move, which makes VTE re-wrap
+/// and pushes the prompt down (leaving dead space above it). Widget allocations
+/// don't update until the next layout pass, so we drive this as a short poll:
+/// wait for the window to be allocated, apply the outer splits, wait for the grid
+/// container width to stabilize, apply the terminal splits, then repaint.
+fn restore_session_layout(state: &Shared) {
+    use gtk4::glib::ControlFlow;
+    // Drop scrollback up front so the resizes below can't flood/garble the buffer;
+    // restored with a clean repaint once everything settles.
+    if let Some(g) = state.borrow().grid.as_ref() {
+        g.begin_restore();
+    }
     let st = state.clone();
-    gtk4::glib::idle_add_local_once(move || {
+    let mut phase = 0u8;
+    let mut last_w = -1i32;
+    let mut stable = 0u8;
+    let mut ticks = 0u32;
+    gtk4::glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+        ticks += 1;
+        // ~2s safety cap: never leave scrollback suppressed if sizes never settle.
+        if ticks > 120 {
+            if let Some(g) = st.borrow().grid.as_ref() {
+                g.end_restore();
+                g.grab_focused();
+            }
+            return ControlFlow::Break;
+        }
         let s = st.borrow();
-        if let Some(g) = s.grid.as_ref() {
-            // Suppress reflow garble across all the split changes below (the shell
-            // has already printed its prompt at the default size).
-            g.suppress_reflow_briefly();
-            let ratios = s
-                .current
-                .as_ref()
-                .map(|c| c.divisors.clone())
-                .unwrap_or_default();
-            if ratios.is_empty() {
-                g.relayout_positions();
-            } else {
-                g.apply_split_ratios(&ratios);
+        let center_w = s.center_paned.as_ref().map(|c| c.width()).unwrap_or(0);
+        match phase {
+            // Phase 0: wait for a real allocation, then apply the outer splits.
+            0 => {
+                if center_w <= 1 {
+                    return ControlFlow::Continue;
+                }
+                if let (Some(content), Some(sw)) = (
+                    s.content_paned.as_ref(),
+                    s.current.as_ref().and_then(|c| c.sidebar_width),
+                ) {
+                    content.set_position(sw);
+                }
+                if let (Some(center), Some(ratio)) = (
+                    s.center_paned.as_ref(),
+                    s.current.as_ref().and_then(|c| c.editor_split),
+                ) {
+                    if center.end_child().is_some() {
+                        center.set_position((ratio * center_w as f64).round() as i32);
+                    }
+                }
+                phase = 1;
+                last_w = -1;
+                stable = 0;
+                ControlFlow::Continue
             }
-            g.grab_focused();
-        }
-        // Restore the editor split (terminals | editor) and the sidebar width.
-        if let (Some(center), Some(ratio)) = (
-            s.center_paned.as_ref(),
-            s.current.as_ref().and_then(|c| c.editor_split),
-        ) {
-            let w = center.width();
-            if center.end_child().is_some() && w > 1 {
-                center.set_position((ratio * w as f64).round() as i32);
+            // Phase 1: wait for the grid container width to settle after the outer
+            // splits take effect, then size the terminal splits against it.
+            1 => {
+                let cw = s.grid.as_ref().map(|g| g.container_size().0).unwrap_or(0);
+                stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
+                last_w = cw;
+                if stable < 2 {
+                    return ControlFlow::Continue;
+                }
+                if let Some(g) = s.grid.as_ref() {
+                    let ratios = s
+                        .current
+                        .as_ref()
+                        .map(|c| c.divisors.clone())
+                        .unwrap_or_default();
+                    if ratios.is_empty() {
+                        g.relayout_positions();
+                    } else {
+                        g.apply_split_ratios(&ratios);
+                    }
+                }
+                phase = 2;
+                last_w = -1;
+                stable = 0;
+                ControlFlow::Continue
             }
-        }
-        if let (Some(content), Some(sw)) = (
-            s.content_paned.as_ref(),
-            s.current.as_ref().and_then(|c| c.sidebar_width),
-        ) {
-            content.set_position(sw);
+            // Phase 2: let the terminal splits settle, then repaint clean prompts.
+            _ => {
+                let cw = s.grid.as_ref().map(|g| g.container_size().0).unwrap_or(0);
+                stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
+                last_w = cw;
+                if stable < 2 {
+                    return ControlFlow::Continue;
+                }
+                if let Some(g) = s.grid.as_ref() {
+                    g.end_restore();
+                    g.grab_focused();
+                }
+                ControlFlow::Break
+            }
         }
     });
 }

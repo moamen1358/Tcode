@@ -382,8 +382,8 @@ impl Grid {
 
     /// Apply the base font (point size) and the UI zoom to every terminal.
     /// Non-destructive (no scrollback touch), so it's safe to re-apply when
-    /// revealing a live session. Open-time garble is handled by the build idle's
-    /// `suppress_reflow_briefly`.
+    /// revealing a live session. Open-time garble is handled by the restore poll's
+    /// `begin_restore`/`end_restore`.
     pub fn apply_font(&self, font: &str, size: u32, scale: f64) {
         let desc = FontDescription::from_string(&format!("{font} {size}"));
         for p in &self.inner.borrow().panes {
@@ -456,31 +456,30 @@ impl Grid {
         self.inner.borrow().set_positions();
     }
 
-    /// Drop every terminal's scrollback briefly while an upcoming resize reflows
-    /// them (session restore changes the grid / editor / sidebar splits at once,
-    /// after the shell has already printed its prompt — otherwise the prompt is
-    /// re-wrapped over itself). Restored shortly after.
-    pub fn suppress_reflow_briefly(&self) {
-        let weak = {
-            let g = self.inner.borrow();
-            for p in &g.panes {
-                p.set_resizing(true);
-            }
-            g.self_weak.clone()
-        };
-        glib::timeout_add_local_once(Duration::from_millis(250), move || {
-            if let Some(inner) = weak.upgrade() {
-                if let Ok(g) = inner.try_borrow() {
-                    for p in &g.panes {
-                        p.set_resizing(false);
-                        // After the reflow settles, send the shell a clear-screen so
-                        // it repaints one clean prompt instead of the wrapped mess.
-                        // Safe: these are freshly-spawned shells at their prompt.
-                        p.terminal.feed_child(b"\x0c");
-                    }
-                }
-            }
-        });
+    /// Grid container size in pixels — used by the session-restore poll to know
+    /// when the terminal area has reached its final width before sizing splits.
+    pub fn container_size(&self) -> (i32, i32) {
+        let g = self.inner.borrow();
+        (g.container.width(), g.container.height())
+    }
+
+    /// Drop every terminal's scrollback for the duration of a session restore so
+    /// the split changes don't flood/re-wrap the buffer mid-resize. Pair with
+    /// `end_restore` once the layout has settled.
+    pub fn begin_restore(&self) {
+        for p in &self.inner.borrow().panes {
+            p.set_resizing(true);
+        }
+    }
+
+    /// Finish a session restore: re-enable scrollback and repaint each shell's
+    /// prompt cleanly (Ctrl+L), now that every split is at its final size. Safe:
+    /// these are freshly-spawned shells sitting at their prompt.
+    pub fn end_restore(&self) {
+        for p in &self.inner.borrow().panes {
+            p.set_resizing(false);
+            p.terminal.feed_child(b"\x0c");
+        }
     }
 
     /// Current divider positions as ratios of the container dimension (in paned
