@@ -141,7 +141,17 @@ pub fn show_grid(state: &Shared, n: usize) {
         let s = state.borrow();
         (s.cfg.clone(), s.window.clone())
     };
-    let grid = Grid::new(n, &cfg, &window);
+    // A Ctrl+clicked path in any terminal opens in the editor/viewer. Weak ref so
+    // the grid (held by the state) doesn't form a cycle back to the state.
+    let on_open: crate::pane::OpenFn = {
+        let weak = Rc::downgrade(state);
+        Rc::new(move |path: &std::path::Path| {
+            if let Some(s) = weak.upgrade() {
+                open_file(&s, path);
+            }
+        })
+    };
+    let grid = Grid::new(n, &cfg, &window, on_open);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
 
     install_image_drop(&grid.root, state);

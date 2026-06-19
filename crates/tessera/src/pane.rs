@@ -2,16 +2,39 @@
 //! user's shell over a PTY. Lifecycle (focus tracking, exit-removal) is wired by
 //! the grid, which owns the panes — each pane carries a stable `id` for that.
 
-use gtk4::gdk::RGBA;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::rc::Rc;
+
+use gtk4::gdk::{ModifierType, BUTTON_PRIMARY, RGBA};
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
-use gtk4::{gio, Box as GtkBox, Orientation, Overlay};
+use gtk4::{
+    gio, Box as GtkBox, EventSequenceState, GestureClick, Orientation, Overlay, PropagationPhase,
+};
 use tessera_core::config::Config;
 use vte4::prelude::*;
-use vte4::{PtyFlags, Terminal};
+use vte4::{PtyFlags, Regex, Terminal};
 
 use crate::theme::rgba;
+
+/// Open a resolved filesystem path in the editor/viewer panel. Supplied by the
+/// app so a Ctrl+clicked path in the terminal lands in the inline viewer.
+pub type OpenFn = Rc<dyn Fn(&Path)>;
+
+// PCRE2 compile flags for VTE match regexes (mirrors gnome-terminal's defaults).
+const PCRE2_CASELESS: u32 = 0x0000_0008;
+const PCRE2_MULTILINE: u32 = 0x0000_0400;
+const PCRE2_UCP: u32 = 0x0002_0000;
+const PCRE2_UTF: u32 = 0x0008_0000;
+const MATCH_FLAGS: u32 = PCRE2_UTF | PCRE2_UCP | PCRE2_MULTILINE | PCRE2_CASELESS;
+
+// Clickable patterns: web/file URLs, then filesystem paths (absolute / ~ / ./),
+// then bare filenames carrying a known asset extension.
+const URL_RE: &str = r#"(?:https?|ftp|file)://[^\s<>"'`]+"#;
+const PATH_RE: &str = r#"(?:~|\.{1,2})?/[^\s<>"'`:]+"#;
+const FILE_RE: &str = r#"[^\s<>"'`:/]+\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|pdf|docx?|pptx?|xlsx?|odt|odp|ods|mp4|webm|mkv|mov|avi|mp3|wav|flac|ogg|opus|txt|md|markdown|json|toml|ya?ml|rs|jsx?|tsx?|c|h|hpp|cpp|go|rb|java|sh|html?|css|csv|log|conf|ini)"#;
 
 /// Scrollback kept during normal use; dropped to 0 only while a divider is being
 /// dragged or a pane is zooming (see `set_resizing`). VTE fills a growing pane by
@@ -30,7 +53,7 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn new(cfg: &Config, id: u64) -> Pane {
+    pub fn new(cfg: &Config, id: u64, on_open: OpenFn) -> Pane {
         let terminal = Terminal::new();
 
         // Cell colors come from the VTE API, not CSS.
@@ -43,6 +66,9 @@ impl Pane {
         let fd = FontDescription::from_string(&format!("{} {}", cfg.font, cfg.font_size));
         terminal.set_font(Some(&fd));
         terminal.set_scrollback_lines(SCROLLBACK_LINES);
+
+        // Ctrl+click a URL or file path to follow it (VS Code-style).
+        install_links(&terminal, on_open);
 
         let root = Overlay::new();
         root.add_css_class("pane");
@@ -136,4 +162,78 @@ impl Pane {
             self.root.remove_css_class("active-pane");
         }
     }
+}
+
+/// Register clickable regexes + OSC 8 hyperlinks, and a Ctrl+click handler that
+/// opens web URLs in the browser and file paths in the inline viewer.
+fn install_links(terminal: &Terminal, on_open: OpenFn) {
+    terminal.set_allow_hyperlink(true);
+    for pat in [URL_RE, PATH_RE, FILE_RE] {
+        if let Ok(re) = Regex::for_match(pat, MATCH_FLAGS) {
+            let tag = terminal.match_add_regex(&re, 0);
+            terminal.match_set_cursor_name(tag, "pointer");
+        }
+    }
+
+    let click = GestureClick::new();
+    click.set_button(BUTTON_PRIMARY);
+    // Capture phase so we can claim a Ctrl+click before VTE starts a selection.
+    click.set_propagation_phase(PropagationPhase::Capture);
+    let term = terminal.clone();
+    click.connect_pressed(move |g, _n, x, y| {
+        if !g.current_event_state().contains(ModifierType::CONTROL_MASK) {
+            return;
+        }
+        let hit = term
+            .check_hyperlink_at(x, y)
+            .or_else(|| term.check_match_at(x, y).0);
+        if let Some(s) = hit {
+            if open_link(&s, &term, &on_open) {
+                g.set_state(EventSequenceState::Claimed);
+            }
+        }
+    });
+    terminal.add_controller(click);
+}
+
+/// Route a matched string: web URLs to the browser, file paths/URIs to the
+/// inline viewer. Returns whether it was handled.
+fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
+    let s = matched.trim().trim_end_matches(|c: char| {
+        matches!(
+            c,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"' | '>'
+        )
+    });
+    if s.is_empty() {
+        return false;
+    }
+    if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://") {
+        let _ = Command::new("xdg-open").arg(s).spawn();
+        return true;
+    }
+    let path: Option<PathBuf> = if s.starts_with("file://") {
+        gio::File::for_uri(s).path()
+    } else if let Some(rest) = s.strip_prefix("~/") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest))
+    } else if s.starts_with('/') {
+        Some(PathBuf::from(s))
+    } else {
+        Some(term_cwd(terminal).join(s))
+    };
+    match path {
+        Some(p) if p.exists() => {
+            on_open(&p);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The terminal's working directory (OSC 7), falling back to the process cwd.
+fn term_cwd(terminal: &Terminal) -> PathBuf {
+    terminal
+        .current_directory_uri()
+        .and_then(|uri| gio::File::for_uri(&uri).path())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
 }

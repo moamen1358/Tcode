@@ -17,7 +17,7 @@ use tessera_core::config::Config;
 use tessera_core::grid::{coords, flat_index, layout, neighbor, Dir};
 use vte4::prelude::*; // TerminalExt: connect_child_exited
 
-use crate::pane::Pane;
+use crate::pane::{OpenFn, Pane};
 
 /// A Paned, whether it splits horizontally, and the divisor for an equal split.
 type PanedInfo = (Paned, bool, usize);
@@ -34,6 +34,8 @@ struct GridInner {
     self_weak: Weak<RefCell<GridInner>>,
     resize_timer: Rc<Cell<Option<glib::SourceId>>>,
     resizing: Rc<Cell<bool>>,
+    /// Opens a Ctrl+clicked terminal path in the editor/viewer panel.
+    on_open: OpenFn,
 }
 
 /// Build a right-nested Paned chain over `items`. Returns the root widget and the
@@ -249,7 +251,7 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn new(n: usize, cfg: &Config, window: &ApplicationWindow) -> Grid {
+    pub fn new(n: usize, cfg: &Config, window: &ApplicationWindow, on_open: OpenFn) -> Grid {
         let container = GtkBox::new(Orientation::Vertical, 0);
         container.add_css_class("grid-root");
 
@@ -265,6 +267,7 @@ impl Grid {
             self_weak: Weak::new(),
             resize_timer: Rc::new(Cell::new(None)),
             resizing: Rc::new(Cell::new(false)),
+            on_open,
         }));
         inner.borrow_mut().self_weak = Rc::downgrade(&inner);
 
@@ -281,13 +284,13 @@ impl Grid {
     }
 
     fn make_pane(&self) -> Pane {
-        let (id, cfg) = {
+        let (id, cfg, on_open) = {
             let mut g = self.inner.borrow_mut();
             let id = g.next_id;
             g.next_id += 1;
-            (id, g.cfg.clone())
+            (id, g.cfg.clone(), g.on_open.clone())
         };
-        let pane = Pane::new(&cfg, id);
+        let pane = Pane::new(&cfg, id, on_open);
 
         let controller = EventControllerFocus::new();
         let weak = Rc::downgrade(&self.inner);
