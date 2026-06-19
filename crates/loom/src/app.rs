@@ -429,9 +429,10 @@ fn switch_session(state: &Shared, session: Session) {
     open_session(state, session);
 }
 
-/// Snapshot the live UI (open files, active tab, pane count) into `current`.
+/// Snapshot the live UI (open files, active tab, pane count, split sizes) into
+/// `current`.
 fn capture_current(state: &Shared) {
-    let (files, active, panes) = {
+    let (files, active, panes, divisors) = {
         let s = state.borrow();
         if s.current.is_none() {
             return;
@@ -443,12 +444,17 @@ fn capture_current(state: &Shared) {
                 .unwrap_or_default(),
             s.editor.as_ref().and_then(|e| e.active_index()),
             s.grid.as_ref().map(|g| g.pane_count()).unwrap_or(1),
+            s.grid
+                .as_ref()
+                .map(|g| g.split_ratios())
+                .unwrap_or_default(),
         )
     };
     if let Some(cur) = state.borrow_mut().current.as_mut() {
         cur.files = files;
         cur.active = active;
         cur.panes = panes;
+        cur.divisors = divisors;
     }
 }
 
@@ -475,6 +481,7 @@ pub fn set_panes(state: &Shared, n: usize) {
         let mut s = state.borrow_mut();
         if let Some(cur) = s.current.as_mut() {
             cur.panes = n;
+            cur.divisors.clear(); // count changed → reset to equal splits
         }
         s.current.clone()
     };
@@ -662,12 +669,23 @@ pub fn show_grid(state: &Shared, n: usize) {
     // Apply the current font size + UI scale to the freshly built terminals.
     apply_view(state);
 
-    // Grab keyboard focus once the window is mapped (COSMIC drops a focus
-    // grabbed before present()).
+    // Once the window is mapped (so panes have a real size), restore the saved
+    // split sizes for this session — or fall back to equal splits — and grab
+    // keyboard focus (COSMIC drops a focus grabbed before present()).
     let st = state.clone();
     gtk4::glib::idle_add_local_once(move || {
-        if let Some(g) = st.borrow().grid.as_ref() {
-            g.relayout_positions();
+        let s = st.borrow();
+        if let Some(g) = s.grid.as_ref() {
+            let ratios = s
+                .current
+                .as_ref()
+                .map(|c| c.divisors.clone())
+                .unwrap_or_default();
+            if ratios.is_empty() {
+                g.relayout_positions();
+            } else {
+                g.apply_split_ratios(&ratios);
+            }
             g.grab_focused();
         }
     });

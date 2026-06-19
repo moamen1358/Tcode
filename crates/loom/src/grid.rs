@@ -474,4 +474,36 @@ impl Grid {
     pub fn relayout_positions(&self) {
         self.inner.borrow().set_positions();
     }
+
+    /// Current divider positions as ratios of the container dimension (in paned
+    /// order), so a session can restore exactly how the terminals were resized.
+    pub fn split_ratios(&self) -> Vec<f64> {
+        let g = self.inner.borrow();
+        let (w, h) = (g.container.width(), g.container.height());
+        g.paneds
+            .iter()
+            .map(|(paned, is_h, _)| {
+                let dim = if *is_h { w } else { h };
+                if dim > 1 {
+                    paned.position() as f64 / dim as f64
+                } else {
+                    0.5
+                }
+            })
+            .collect()
+    }
+
+    /// Restore divider positions from saved ratios (paned order must match, which
+    /// it does for a given pane count). Falls back to leaving a paned untouched
+    /// when its ratio is missing or out of range.
+    pub fn apply_split_ratios(&self, ratios: &[f64]) {
+        let g = self.inner.borrow();
+        let (w, h) = (g.container.width(), g.container.height());
+        for ((paned, is_h, _), &ratio) in g.paneds.iter().zip(ratios) {
+            let dim = if *is_h { w } else { h };
+            if dim > 1 && ratio > 0.0 && ratio < 1.0 {
+                paned.set_position((ratio * dim as f64).round() as i32);
+            }
+        }
+    }
 }

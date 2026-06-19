@@ -1,8 +1,8 @@
-//! Named workspace sessions. Each session remembers its root folder, the number
-//! of terminal panes, and the open editor files, persisted as a TOML file under
-//! `~/.config/loom/sessions/` so Loom can reopen where you left off.
-//! (Split sizes + per-terminal working dirs are modeled below but not captured
-//! yet — reserved for a later pass.)
+//! Named workspace sessions. Each session remembers its root folder, the
+//! terminal layout (pane count + split sizes), and the open editor files,
+//! persisted as a TOML file under `~/.config/loom/sessions/` so Loom can reopen
+//! where you left off. (Per-terminal working dirs are modeled below but not
+//! captured yet — reserved for a later pass.)
 //!
 //! This is pure data + disk I/O (no GTK); the UI lives in the `loom` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
@@ -26,7 +26,8 @@ pub struct Session {
     pub root: PathBuf,
     /// Number of terminal panes.
     pub panes: usize,
-    /// Reserved (not captured yet): split divider ratios for exact split sizes.
+    /// Split divider positions as ratios of the container (in paned order), so
+    /// the terminals reopen resized exactly how you left them.
     #[serde(default)]
     pub divisors: Vec<f64>,
     /// Reserved (not captured yet): per-terminal working directories.
