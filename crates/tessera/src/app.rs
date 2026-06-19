@@ -1,12 +1,8 @@
 //! Application state and window wiring: borderless window, picker ↔ (sidebar + grid),
 //! and the image drag-and-drop target.
 
-use gtk4::gdk::{DragAction, FileList};
 use gtk4::prelude::*;
-use gtk4::{
-    gio, glib, Application, ApplicationWindow, Button, DropTarget, HeaderBar, Orientation, Paned,
-    ToggleButton,
-};
+use gtk4::{Application, ApplicationWindow, Button, HeaderBar, Orientation, Paned, ToggleButton};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -14,7 +10,7 @@ use tessera_core::config::Config;
 
 use crate::editor::Editor;
 use crate::grid::Grid;
-use crate::sidebar::{shell_quote, Sidebar};
+use crate::sidebar::Sidebar;
 use crate::{keys, picker, theme};
 
 pub struct State {
@@ -30,6 +26,9 @@ pub struct State {
     /// BridgeShot capture action (region-select → annotate), set once the grid
     /// is built; the titlebar camera button invokes it.
     pub shots_capture: Option<Rc<dyn Fn()>>,
+    /// Clipboard-history panel — built once and re-parented across relayouts so
+    /// the history and its single clipboard watcher persist.
+    pub clipboard: Option<Rc<crate::clipboard::Panel>>,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -98,6 +97,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
         shots_btn: shots_btn.clone(),
         shots_panel: None,
         shots_capture: None,
+        clipboard: None,
     }));
 
     // Flip the current sidebar's visibility whenever the button toggles.
@@ -247,6 +247,21 @@ pub fn show_grid(state: &Shared, n: usize) {
     // only while editing a capture), and embed the screenshots gallery at the
     // bottom of the file sidebar.
     let bridge = crate::bridgeshot::integrate(&window, &content);
+
+    // Clipboard-history strip, above the screenshots strip. Built once and
+    // re-parented across relayouts so its history + single clipboard watcher
+    // persist.
+    let clip = {
+        let mut s = state.borrow_mut();
+        if s.clipboard.is_none() {
+            s.clipboard = Some(crate::clipboard::build());
+        }
+        s.clipboard.clone().unwrap()
+    };
+    if clip.root.parent().is_some() {
+        clip.root.unparent();
+    }
+    sidebar.root.append(&clip.root);
     sidebar.root.append(&bridge.panel_root);
     window.set_child(Some(&bridge.root));
 
@@ -290,36 +305,11 @@ pub fn open_file(state: &Shared, path: &std::path::Path) {
 
 /// Drag-and-drop image (or any file) → insert its path into the focused pane.
 fn install_image_drop(widget: &impl IsA<gtk4::Widget>, state: &Shared) {
-    let drop = DropTarget::new(glib::Type::INVALID, DragAction::COPY);
-    drop.set_types(&[FileList::static_type(), gio::File::static_type()]);
     let st = state.clone();
-    drop.connect_drop(move |_t, value, _x, _y| {
-        let mut paths: Vec<PathBuf> = Vec::new();
-        if let Ok(list) = value.get::<FileList>() {
-            for f in list.files() {
-                if let Some(p) = f.path() {
-                    paths.push(p);
-                }
-            }
-        } else if let Ok(f) = value.get::<gio::File>() {
-            if let Some(p) = f.path() {
-                paths.push(p);
-            }
-        } else {
-            return false;
-        }
-        if paths.is_empty() {
-            return false;
-        }
-        let joined = paths
-            .iter()
-            .map(|p| shell_quote(p))
-            .collect::<Vec<_>>()
-            .join(" ");
+    crate::dnd::install_path_drop(widget, move |paths| {
+        let joined = crate::dnd::shell_join_paths(&paths);
         if let Some(g) = st.borrow().grid.as_ref() {
             g.feed_focused(&joined);
         }
-        true
     });
-    widget.add_controller(drop);
 }
