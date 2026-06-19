@@ -7,7 +7,7 @@ use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, EventControllerKey, PropagationPhase};
 use loom_core::grid::Dir;
 
-use crate::app::{set_panes, Shared};
+use crate::app::{change_scale, reset_view, set_panes, Shared};
 
 pub fn install(window: &ApplicationWindow, state: &Shared) {
     let controller = EventControllerKey::new();
@@ -29,6 +29,25 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                     if let Some(g) = st.borrow().grid.as_ref() {
                         g.paste_focused();
                     }
+                    return Propagation::Stop;
+                }
+                _ => {}
+            }
+        }
+
+        // Ctrl +/- / 0: zoom the whole UI in / out / reset.
+        if mods.contains(ModifierType::CONTROL_MASK) {
+            match keyval {
+                Key::plus | Key::equal | Key::KP_Add => {
+                    change_scale(&st, 1);
+                    return Propagation::Stop;
+                }
+                Key::minus | Key::KP_Subtract => {
+                    change_scale(&st, -1);
+                    return Propagation::Stop;
+                }
+                Key::_0 | Key::KP_0 => {
+                    reset_view(&st);
                     return Propagation::Stop;
                 }
                 _ => {}

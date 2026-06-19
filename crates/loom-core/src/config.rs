@@ -1,10 +1,10 @@
 //! User configuration, loaded from `~/.config/loom/config.toml`.
 //! Every field has a default, so a missing or partial file is fine.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub font: String,
@@ -14,10 +14,12 @@ pub struct Config {
     /// `false` to keep history only for the running session (nothing written to
     /// disk) — useful if you don't want copied secrets stored.
     pub clipboard_persist: bool,
+    /// Whole-UI zoom multiplier (1.0 = 100%): scales every font/terminal together.
+    pub scale: f64,
     pub theme: Theme,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Theme {
     pub background: String,
@@ -43,6 +45,7 @@ impl Default for Config {
             font_size: 11,
             startup_command: String::new(),
             clipboard_persist: true,
+            scale: 1.0,
             theme: Theme::default(),
         }
     }
@@ -78,13 +81,42 @@ impl Config {
     /// Parse TOML, falling back to defaults (with a warning) on parse error.
     /// Missing fields are filled from defaults via `#[serde(default)]`.
     pub fn from_str_or_default(s: &str) -> Config {
-        match toml::from_str(s) {
-            Ok(c) => c,
+        match toml::from_str::<Config>(s) {
+            Ok(mut c) => {
+                c.clamp();
+                c
+            }
             Err(e) => {
                 eprintln!("loom: config parse error ({e}); using defaults");
                 Config::default()
             }
         }
+    }
+
+    /// Bounds for the UI scale (50%–300%).
+    pub const MIN_SCALE: f64 = 0.5;
+    pub const MAX_SCALE: f64 = 3.0;
+
+    /// Keep runtime-adjustable values in sane ranges (a hand-edited or corrupt
+    /// config can't push the font/scale to something unusable).
+    pub fn clamp(&mut self) {
+        self.font_size = self.font_size.clamp(4, 96);
+        if !self.scale.is_finite() {
+            self.scale = 1.0;
+        }
+        self.scale = self.scale.clamp(Self::MIN_SCALE, Self::MAX_SCALE);
+    }
+
+    /// Persist to the standard config path (creating the dir as needed).
+    pub fn save(&self) {
+        let Ok(text) = toml::to_string_pretty(self) else {
+            return;
+        };
+        let path = config_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, text);
     }
 }
 

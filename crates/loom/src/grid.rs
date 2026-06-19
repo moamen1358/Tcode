@@ -11,6 +11,7 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use gtk4::glib;
+use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, Box as GtkBox, EventControllerFocus, Orientation, Paned};
 use loom_core::config::Config;
@@ -376,6 +377,16 @@ impl Grid {
     /// Number of live terminal panes (used to persist the session layout).
     pub fn pane_count(&self) -> usize {
         self.inner.borrow().panes.len()
+    }
+
+    /// Apply the base font (point size) to every terminal. UI scale is handled
+    /// globally via the font DPI (which VTE also honors), so font-scale stays 1.0.
+    pub fn apply_font(&self, font: &str, size: u32) {
+        let desc = FontDescription::from_string(&format!("{font} {size}"));
+        for p in &self.inner.borrow().panes {
+            p.terminal.set_font(Some(&desc));
+            p.terminal.set_font_scale(1.0);
+        }
     }
 
     pub fn move_focus(&self, dir: Dir) {

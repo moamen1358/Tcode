@@ -204,7 +204,10 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .session-menu-row.current {{ color: #ffb38a; }}\n\
          .session-menu-new {{ background: none; border: none; box-shadow: none; \
                               border-radius: 0; padding: 4px 10px; color: #ffb38a; font-weight: bold; }}\n\
-         .session-menu-new:hover {{ background-color: alpha(#ff9e64, 0.16); }}"
+         .session-menu-new:hover {{ background-color: alpha(#ff9e64, 0.16); }}\n\
+         .view-step {{ min-height: 0; min-width: 26px; padding: 2px 0; \
+                       font-weight: bold; }}\n\
+         .view-readout {{ color: {fg}; font-size: 12px; }}"
     );
     let provider = CssProvider::new();
     provider.load_from_string(&css);

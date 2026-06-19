@@ -37,6 +37,11 @@ pub struct State {
     pub save_sessions: bool,
     /// Titlebar session switcher: shows the current name, popover lists/creates.
     pub session_btn: gtk4::MenuButton,
+    /// Baseline font DPI (1024ths) captured at startup; the UI scale multiplies it.
+    pub base_dpi: i32,
+    /// Readouts in the view-settings popover, kept in sync by font/scale changes.
+    pub font_readout: gtk4::Label,
+    pub scale_readout: gtk4::Label,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -92,6 +97,19 @@ pub fn build(app: &Application, preset: Option<usize>) {
     capture_btn.add_css_class("flat");
     header.pack_end(&capture_btn);
 
+    // View settings (font size + whole-UI scale) — a titlebar popover.
+    let font_readout = gtk4::Label::new(None);
+    let scale_readout = gtk4::Label::new(None);
+    let view_btn = gtk4::MenuButton::new();
+    view_btn.set_icon_name("preferences-system-symbolic");
+    view_btn.set_tooltip_text(Some("Font size & scale"));
+    view_btn.add_css_class("flat");
+    header.pack_end(&view_btn);
+    // Baseline font DPI captured before any scaling; the UI scale multiplies it.
+    let base_dpi = gtk4::Settings::default()
+        .map(|s| s.gtk_xft_dpi())
+        .unwrap_or(96 * 1024);
+
     // Centered session switcher: shows the current session's name; its popover
     // lists saved sessions (click to switch) and a New-session action.
     let session_btn = gtk4::MenuButton::new();
@@ -117,7 +135,38 @@ pub fn build(app: &Application, preset: Option<usize>) {
         current: None,
         save_sessions: false,
         session_btn: session_btn.clone(),
+        base_dpi,
+        font_readout: font_readout.clone(),
+        scale_readout: scale_readout.clone(),
     }));
+
+    // Build the view-settings popover: font-size + scale steppers + reset.
+    {
+        let popover = gtk4::Popover::new();
+        popover.add_css_class("session-popover");
+        let col = gtk4::Box::new(Orientation::Vertical, 6);
+        col.set_margin_top(8);
+        col.set_margin_bottom(8);
+        col.set_margin_start(8);
+        col.set_margin_end(8);
+        col.append(&view_row("Font size", &font_readout, {
+            let st = state.clone();
+            move |step| change_font_size(&st, step)
+        }));
+        col.append(&view_row("Scale", &scale_readout, {
+            let st = state.clone();
+            move |step| change_scale(&st, step)
+        }));
+        let reset = Button::with_label("Reset scale");
+        reset.add_css_class("session-menu-row");
+        {
+            let st = state.clone();
+            reset.connect_clicked(move |_| reset_view(&st));
+        }
+        col.append(&reset);
+        popover.set_child(Some(&col));
+        view_btn.set_popover(Some(&popover));
+    }
 
     // Flip the current sidebar's visibility whenever the button toggles.
     {
@@ -201,7 +250,101 @@ pub fn build(app: &Application, preset: Option<usize>) {
         None => show_session_picker(&state),
     }
     refresh_session_menu(&state);
+    apply_view(&state);
+    refresh_view_readout(&state);
     window.present();
+}
+
+/// A "title  [−] readout [+]" stepper row for the view popover. `on_step` is
+/// called with -1 / +1.
+fn view_row(title: &str, readout: &gtk4::Label, on_step: impl Fn(i32) + 'static) -> gtk4::Box {
+    let on_step = Rc::new(on_step);
+    let row = gtk4::Box::new(Orientation::Horizontal, 8);
+    let t = gtk4::Label::new(Some(title));
+    t.set_xalign(0.0);
+    t.set_hexpand(true);
+    let minus = Button::with_label("\u{2212}");
+    minus.add_css_class("view-step");
+    let plus = Button::with_label("+");
+    plus.add_css_class("view-step");
+    readout.set_width_chars(5);
+    readout.add_css_class("view-readout");
+    {
+        let f = on_step.clone();
+        minus.connect_clicked(move |_| f(-1));
+    }
+    {
+        let f = on_step.clone();
+        plus.connect_clicked(move |_| f(1));
+    }
+    row.append(&t);
+    row.append(&minus);
+    row.append(readout);
+    row.append(&plus);
+    row
+}
+
+/// Apply the current font size + UI scale: scale all widget fonts via the font
+/// DPI, set each terminal's base font and zoom, and refresh the editor CSS.
+pub fn apply_view(state: &Shared) {
+    let (font, size, scale, base_dpi) = {
+        let s = state.borrow();
+        (s.cfg.font.clone(), s.cfg.font_size, s.cfg.scale, s.base_dpi)
+    };
+    if let Some(settings) = gtk4::Settings::default() {
+        let dpi = if (scale - 1.0).abs() < f64::EPSILON {
+            base_dpi // leave the system value untouched at 100%
+        } else {
+            let b = if base_dpi > 0 { base_dpi } else { 96 * 1024 };
+            (b as f64 * scale).round() as i32
+        };
+        settings.set_gtk_xft_dpi(dpi);
+    }
+    // (scale is applied globally via the font DPI above; VTE honors it too)
+    if let Some(g) = state.borrow().grid.as_ref() {
+        g.apply_font(&font, size);
+    }
+    let s = state.borrow();
+    theme::install_css(&s.cfg.theme, &s.cfg.font, s.cfg.font_size);
+}
+
+/// Sync the popover readouts with the current font size / scale.
+fn refresh_view_readout(state: &Shared) {
+    let s = state.borrow();
+    s.font_readout.set_text(&format!("{} pt", s.cfg.font_size));
+    s.scale_readout
+        .set_text(&format!("{}%", (s.cfg.scale * 100.0).round() as i32));
+}
+
+/// Step the base font size, apply, and persist.
+pub fn change_font_size(state: &Shared, step: i32) {
+    {
+        let mut s = state.borrow_mut();
+        s.cfg.font_size = (s.cfg.font_size as i32 + step).clamp(4, 96) as u32;
+    }
+    apply_view(state);
+    refresh_view_readout(state);
+    state.borrow().cfg.save();
+}
+
+/// Step the UI scale by 10% per step, apply, and persist.
+pub fn change_scale(state: &Shared, step: i32) {
+    {
+        let mut s = state.borrow_mut();
+        let new = s.cfg.scale + step as f64 * 0.1;
+        s.cfg.scale = ((new * 10.0).round() / 10.0).clamp(Config::MIN_SCALE, Config::MAX_SCALE);
+    }
+    apply_view(state);
+    refresh_view_readout(state);
+    state.borrow().cfg.save();
+}
+
+/// Reset the UI scale to 100% (leaves the font size as-is).
+pub fn reset_view(state: &Shared) {
+    state.borrow_mut().cfg.scale = 1.0;
+    apply_view(state);
+    refresh_view_readout(state);
+    state.borrow().cfg.save();
 }
 
 /// Show the startup session picker (resume a saved session or start a new one).
@@ -528,6 +671,9 @@ pub fn show_grid(state: &Shared, n: usize) {
     if let Some(path) = std::env::var_os("LOOM_OPEN") {
         open_file(state, std::path::Path::new(&path));
     }
+
+    // Apply the current font size + UI scale to the freshly built terminals.
+    apply_view(state);
 
     // Grab keyboard focus once the window is mapped (COSMIC drops a focus
     // grabbed before present()).
