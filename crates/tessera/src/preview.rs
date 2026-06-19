@@ -110,8 +110,10 @@ fn office_to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
 }
 
 fn rasterize(pdf: &Path, cache: &Path) -> Result<(), String> {
+    // 200 DPI keeps pages crisp when zoomed in (150 visibly pixelates) while
+    // staying light enough to cache and load quickly.
     let status = Command::new("pdftoppm")
-        .args(["-png", "-r", "150"])
+        .args(["-png", "-r", "200"])
         .arg(pdf)
         .arg(cache.join("page"))
         .status()

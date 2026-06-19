@@ -751,10 +751,19 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     column.set_margin_start(10);
     column.set_margin_end(10);
     column.add_css_class("doc-view");
+    // A spinner + label so an office conversion (soffice can take seconds before
+    // the first page) reads as working, not frozen.
+    let status_box = GtkBox::new(Orientation::Horizontal, 10);
+    status_box.set_halign(Align::Center);
+    status_box.set_margin_top(40);
+    let spinner = gtk4::Spinner::new();
+    spinner.set_size_request(20, 20);
+    spinner.start();
     let status = Label::new(Some("Rendering…"));
-    status.set_margin_top(40);
     status.add_css_class("doc-status");
-    column.append(&status);
+    status_box.append(&spinner);
+    status_box.append(&status);
+    column.append(&status_box);
 
     let scroller = ScrolledWindow::builder()
         .hscrollbar_policy(PolicyType::Automatic)
@@ -775,6 +784,8 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
 
     let col = column.clone();
     let st = status.clone();
+    let sb = status_box.clone();
+    let sp = spinner.clone();
     let p = path.to_path_buf();
     let mode_rx = mode.clone();
     let sc_rx = scroller.clone();
@@ -797,8 +808,12 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                     size_doc_page(&pic, mode_rx.get(), sc_rx.width());
                     col.append(&pic);
                 }
-                preview::Msg::Done => st.set_visible(false),
+                preview::Msg::Done => {
+                    sp.stop();
+                    sb.set_visible(false);
+                }
                 preview::Msg::Error(e) => {
+                    sp.stop();
                     st.set_text(&format!("Could not render preview:\n{e}"));
                     st.add_css_class("doc-error");
                     col.append(&open_externally(&p));
