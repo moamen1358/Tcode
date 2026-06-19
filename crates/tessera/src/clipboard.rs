@@ -1,9 +1,8 @@
-//! Clipboard-history strip in the sidebar, styled after dedicated clipboard
-//! managers (CopyQ / Windows Win+V / Maccy): a header with a Clear button, then a
-//! scrollable stack of cards — each card a content-type accent bar, a type label,
-//! a two-line preview, and a delete (×). Click a card to copy it again. It records
-//! every text copied to the system clipboard (from any app) while Tessera runs,
-//! newest on top. In-memory only — nothing is written to disk.
+//! Clipboard-history strip in the sidebar: a CLIPBOARD header with a Clear
+//! button, then a scrollable stack of minimal cards — each just the copied text
+//! in a rounded rectangle (two-line preview) with a delete (×). Click a card to
+//! copy it again. Records every text copied to the system clipboard (from any
+//! app) while Tessera runs, newest on top. In-memory only — nothing on disk.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -139,25 +138,13 @@ impl Panel {
             self.list.remove(&h);
         }
 
-        let (kind, accent) = classify(&text);
-
+        // A minimal card: just the copied text in a rounded rectangle.
         let card = GtkBox::new(Orientation::Horizontal, 0);
         card.add_css_class("clip-card");
 
-        // Content-type accent bar down the left edge.
-        let bar = GtkBox::new(Orientation::Vertical, 0);
-        bar.add_css_class("clip-bar");
-        bar.add_css_class(accent);
-        card.append(&bar);
-
-        // Body: type label + two-line preview, the whole thing a copy button.
         let copy = Button::new();
         copy.add_css_class("clip-copy");
         copy.set_hexpand(true);
-        let body = GtkBox::new(Orientation::Vertical, 1);
-        let meta = Label::new(Some(kind));
-        meta.set_xalign(0.0);
-        meta.add_css_class("clip-meta");
         let prev = Label::new(Some(&preview(&text)));
         prev.set_xalign(0.0);
         prev.add_css_class("clip-text");
@@ -165,9 +152,7 @@ impl Panel {
         prev.set_wrap_mode(WrapMode::WordChar);
         prev.set_lines(2);
         prev.set_ellipsize(EllipsizeMode::End);
-        body.append(&meta);
-        body.append(&prev);
-        copy.set_child(Some(&body));
+        copy.set_child(Some(&prev));
         copy.set_tooltip_text(Some(text.trim()));
         card.append(&copy);
 
@@ -212,30 +197,6 @@ impl Panel {
             child = next;
         }
     }
-}
-
-/// Classify copied text into a (label, accent-css-class) for the card.
-fn classify(text: &str) -> (&'static str, &'static str) {
-    let t = text.trim();
-    if t.starts_with("http://")
-        || t.starts_with("https://")
-        || t.starts_with("ftp://")
-        || t.starts_with("www.")
-    {
-        return ("LINK", "clip-bar-url");
-    }
-    let one_line = !t.contains('\n');
-    if t.starts_with('/')
-        || t.starts_with("~/")
-        || t.starts_with("./")
-        || (one_line && t.contains('/') && !t.contains(char::is_whitespace))
-    {
-        return ("PATH", "clip-bar-path");
-    }
-    if !one_line {
-        return ("CODE", "clip-bar-code");
-    }
-    ("TEXT", "clip-bar-text")
 }
 
 /// Preview text for a card: whitespace runs (including newlines) collapsed to
