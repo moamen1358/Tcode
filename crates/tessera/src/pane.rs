@@ -32,9 +32,16 @@ const PCRE2_UTF: u32 = 0x0008_0000;
 const MATCH_FLAGS: u32 = PCRE2_UTF | PCRE2_UCP | PCRE2_MULTILINE | PCRE2_CASELESS;
 
 // Clickable patterns: web/file URLs, then filesystem paths (absolute / ~ / ./),
-// then bare filenames carrying a known asset extension.
+// then relative paths that include a directory, then bare filenames with a known
+// asset extension.
 const URL_RE: &str = r#"(?:https?|ftp|file)://[^\s<>"'`]+"#;
 const PATH_RE: &str = r#"(?:~|\.{1,2})?/[^\s<>"'`:]+"#;
+// Relative paths with a directory component, e.g. `src/main.rs` or
+// `crates/tessera/src/app.rs:12:5` (rustc/grep output) — neither PATH_RE (needs a
+// leading /, ~/, ./, ..) nor FILE_RE (rejects /) catches these. The lookbehind
+// stops it matching inside an absolute path; the :line[:col] suffix is stripped
+// in open_link before the existence check.
+const REL_PATH_RE: &str = r#"(?<![/\w.~-])[\w.\-]+(?:/[\w.\-]+)+(?::\d+){0,2}"#;
 const FILE_RE: &str = r#"[^\s<>"'`:/]+\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|pdf|docx?|pptx?|xlsx?|odt|odp|ods|mp4|webm|mkv|mov|avi|mp3|wav|flac|ogg|opus|txt|md|markdown|json|toml|ya?ml|rs|jsx?|tsx?|c|h|hpp|cpp|go|rb|java|sh|html?|css|csv|log|conf|ini)"#;
 
 /// Scrollback kept during normal use; dropped to 0 only while a divider is being
@@ -191,7 +198,7 @@ impl Pane {
 /// opens web URLs in the browser and file paths in the inline viewer.
 fn install_links(terminal: &Terminal, on_open: OpenFn) {
     terminal.set_allow_hyperlink(true);
-    for pat in [URL_RE, PATH_RE, FILE_RE] {
+    for pat in [URL_RE, PATH_RE, REL_PATH_RE, FILE_RE] {
         if let Ok(re) = Regex::for_match(pat, MATCH_FLAGS) {
             let tag = terminal.match_add_regex(&re, 0);
             terminal.match_set_cursor_name(tag, "pointer");
@@ -238,6 +245,8 @@ fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
         let _ = Command::new("xdg-open").arg(s).spawn();
         return true;
     }
+    // Drop a trailing :line[:col] (rustc/grep style) before resolving the path.
+    let s = strip_line_col(s);
     let path: Option<PathBuf> = if s.starts_with("file://") {
         gio::File::for_uri(s).path()
     } else if let Some(rest) = s.strip_prefix("~/") {
@@ -254,6 +263,23 @@ fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
         }
         _ => false,
     }
+}
+
+/// Strip a trailing `:line` or `:line:col` suffix (compiler/grep style) so the
+/// remaining filesystem path can be checked for existence.
+fn strip_line_col(s: &str) -> &str {
+    let mut s = s;
+    for _ in 0..2 {
+        match s.rsplit_once(':') {
+            Some((head, tail))
+                if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                s = head;
+            }
+            _ => break,
+        }
+    }
+    s
 }
 
 /// The terminal's working directory (OSC 7), falling back to the process cwd.
