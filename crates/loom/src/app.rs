@@ -2,12 +2,28 @@
 //! and the image drag-and-drop target.
 
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Button, HeaderBar, Orientation, Paned, ToggleButton};
+use gtk4::{
+    Application, ApplicationWindow, Button, HeaderBar, Orientation, Paned, Stack, ToggleButton,
+};
 use loom_core::config::Config;
 use loom_core::session::{self, Session};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+/// A session's live content, kept alive (shells still running) while another
+/// session is shown, so switching back resumes it instead of rebuilding.
+#[derive(Clone)]
+struct LiveContent {
+    grid: Grid,
+    sidebar: Sidebar,
+    editor: Editor,
+    shots_panel: gtk4::Box,
+    shots_capture: Rc<dyn Fn()>,
+    center: Paned,
+    content: Paned,
+}
 
 use crate::editor::Editor;
 use crate::grid::Grid;
@@ -44,6 +60,11 @@ pub struct State {
     /// their drag positions can be saved into the session and restored.
     pub center_paned: Option<Paned>,
     pub content_paned: Option<Paned>,
+    /// Holds one page per open session; switching flips the visible page so each
+    /// session's terminals keep running in the background.
+    pub stack: Stack,
+    /// Live content per session id (kept alive while hidden).
+    live: HashMap<String, LiveContent>,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -118,6 +139,12 @@ pub fn build(app: &Application, preset: Option<usize>) {
 
     window.set_titlebar(Some(&header));
 
+    // The window's only child for its lifetime: a stack with one page per open
+    // session. Switching flips the visible page so hidden sessions' shells live on.
+    let stack = Stack::new();
+    stack.set_transition_type(gtk4::StackTransitionType::None);
+    window.set_child(Some(&stack));
+
     let state: Shared = Rc::new(RefCell::new(State {
         window: window.clone(),
         cfg,
@@ -137,6 +164,8 @@ pub fn build(app: &Application, preset: Option<usize>) {
         scale_readout: scale_readout.clone(),
         center_paned: None,
         content_paned: None,
+        stack: stack.clone(),
+        live: HashMap::new(),
     }));
 
     // Build the view-settings popover: font-size + scale steppers + reset.
@@ -340,6 +369,36 @@ pub fn reset_view(state: &Shared) {
     state.borrow().cfg.save();
 }
 
+/// Reserved stack-page name for the transient picker / new-session screens (not
+/// a session, so it never collides with a session id and is replaced each time).
+const PICKER_PAGE: &str = "__loom_picker__";
+
+/// Show a transient full-window screen (picker or new-session form) as the
+/// reserved stack page, replacing any previous one.
+fn show_transient(state: &Shared, widget: &impl IsA<gtk4::Widget>) {
+    let (stack, old) = {
+        let s = state.borrow();
+        (s.stack.clone(), s.stack.child_by_name(PICKER_PAGE))
+    };
+    if let Some(old) = old {
+        stack.remove(&old);
+    }
+    stack.add_named(widget, Some(PICKER_PAGE));
+    stack.set_visible_child_name(PICKER_PAGE);
+}
+
+/// Drop the transient picker page once a real session is shown (breaks the
+/// picker closures' Rc cycle back to the state).
+fn clear_picker_page(state: &Shared) {
+    let (stack, child) = {
+        let s = state.borrow();
+        (s.stack.clone(), s.stack.child_by_name(PICKER_PAGE))
+    };
+    if let Some(p) = child {
+        stack.remove(&p);
+    }
+}
+
 /// Show the startup session picker (resume a saved session or start a new one).
 pub fn show_session_picker(state: &Shared) {
     let st_open = state.clone();
@@ -353,7 +412,7 @@ pub fn show_session_picker(state: &Shared) {
         },
         move || new_session(&st_new),
     );
-    state.borrow().window.set_child(Some(&widget));
+    show_transient(state, &widget);
 }
 
 /// Show the "new session" screen: choose a folder + terminal count, then create
@@ -380,33 +439,42 @@ fn new_session(state: &Shared) {
             None => show_session_picker(&st_cancel),
         },
     );
-    state.borrow().window.set_child(Some(&widget));
+    show_transient(state, &widget);
 }
 
-/// Make `session` the current one: chdir to its root, build the grid with its
-/// pane count, then reopen its files.
+/// Show `session`: reveal its kept-alive content if it's already open this run,
+/// otherwise build it fresh.
 pub fn open_session(state: &Shared, session: Session) {
-    let root = session.root.clone();
-    // If the saved root is gone, don't silently open in a stale cwd — send the
-    // user back to the picker to pick/recreate instead.
-    if !root.is_dir() {
+    if !session.root.is_dir() {
+        // If the saved root is gone, don't silently open in a stale cwd.
         eprintln!(
             "loom: session root {} is missing; returning to picker",
-            root.display()
+            session.root.display()
         );
         show_session_picker(state);
         return;
     }
+    if state.borrow().live.contains_key(&session.id) {
+        reveal_session(state, session);
+    } else {
+        build_session(state, session);
+    }
+}
+
+/// Build a session's content fresh (chdir, grid, files), add it as a stack page,
+/// and remember it so switching back later resumes it instead of rebuilding.
+fn build_session(state: &Shared, session: Session) {
+    let root = session.root.clone();
+    let id = session.id.clone();
     let panes = session.panes.max(1);
     let files = session.files.clone();
     let active = session.active;
     let _ = std::env::set_current_dir(&root);
     state.borrow_mut().current = Some(session);
 
-    show_grid(state, panes);
+    show_grid(state, panes); // builds content, adds + shows the stack page `id`
 
     for f in &files {
-        // Skip anything that's gone or is no longer a regular file.
         if f.is_file() {
             open_file(state, f);
         }
@@ -416,7 +484,112 @@ pub fn open_session(state: &Shared, session: Session) {
             editor.root.set_current_page(Some(idx as u32));
         }
     }
+    // Remember the live content so its shells keep running while hidden.
+    {
+        let mut s = state.borrow_mut();
+        if let (
+            Some(grid),
+            Some(sidebar),
+            Some(editor),
+            Some(shots_panel),
+            Some(shots_capture),
+            Some(center),
+            Some(content),
+        ) = (
+            s.grid.clone(),
+            s.sidebar.clone(),
+            s.editor.clone(),
+            s.shots_panel.clone(),
+            s.shots_capture.clone(),
+            s.center_paned.clone(),
+            s.content_paned.clone(),
+        ) {
+            s.live.insert(
+                id.clone(),
+                LiveContent {
+                    grid,
+                    sidebar,
+                    editor,
+                    shots_panel,
+                    shots_capture,
+                    center,
+                    content,
+                },
+            );
+        }
+    }
+    clear_picker_page(state);
     refresh_session_menu(state);
+}
+
+/// Reveal an already-built session: flip the stack to its page (its shells keep
+/// running), restore the active handles, and move the shared clipboard into it.
+fn reveal_session(state: &Shared, session: Session) {
+    let id = session.id.clone();
+    let _ = std::env::set_current_dir(&session.root);
+    // Swap the active handles to this session's live content under a short borrow.
+    let (stack, shots_panel, shots_active) = {
+        let mut s = state.borrow_mut();
+        if let Some(lc) = s.live.get(&id).cloned() {
+            s.grid = Some(lc.grid);
+            s.sidebar = Some(lc.sidebar);
+            s.editor = Some(lc.editor);
+            s.shots_panel = Some(lc.shots_panel);
+            s.shots_capture = Some(lc.shots_capture);
+            s.center_paned = Some(lc.center);
+            s.content_paned = Some(lc.content);
+        }
+        s.current = Some(session);
+        (
+            s.stack.clone(),
+            s.shots_panel.clone(),
+            s.shots_btn.is_active(),
+        )
+    };
+    // Flip the stack with no borrow held: mapping the revealed page can re-enter
+    // GTK signal handlers, and holding a borrow across that risks a RefCell panic.
+    stack.set_visible_child_name(&id);
+    if let Some(p) = shots_panel.as_ref() {
+        p.set_visible(shots_active);
+    }
+    reparent_clipboard(state);
+    apply_view(state); // re-apply current font/scale (non-destructive) to this grid
+    if let Some(g) = state.borrow().grid.as_ref() {
+        g.grab_focused();
+    }
+    clear_picker_page(state);
+    refresh_session_menu(state);
+}
+
+/// Move the shared clipboard strip into the active session's sidebar (after the
+/// file tree, before the screenshots strip).
+fn reparent_clipboard(state: &Shared) {
+    let s = state.borrow();
+    let Some(clip) = s.clipboard.clone() else {
+        return;
+    };
+    let Some(sidebar) = s.sidebar.as_ref() else {
+        return;
+    };
+    if clip.root.parent().is_some() {
+        clip.root.unparent();
+    }
+    let first = sidebar.root.first_child();
+    sidebar.root.insert_child_after(&clip.root, first.as_ref());
+}
+
+/// Drop a session's live content (its shells die) and remove its stack page.
+fn drop_live(state: &Shared, id: &str) {
+    let (stack, child) = {
+        let mut s = state.borrow_mut();
+        s.live.remove(id);
+        let child = s.stack.child_by_name(id);
+        (s.stack.clone(), child)
+    };
+    // Remove with no borrow held: destroying the page can re-enter GTK handlers.
+    if let Some(child) = child {
+        stack.remove(&child);
+    }
 }
 
 /// Switch to another saved session: persist the current one first.
@@ -506,7 +679,10 @@ pub fn set_panes(state: &Shared, n: usize) {
         s.current.clone()
     };
     if let Some(s) = session {
-        open_session(state, s);
+        // Pane count changed → tear the live page down and rebuild it (reveal
+        // alone would keep the old terminal count).
+        drop_live(state, &s.id);
+        build_session(state, s);
     }
 }
 
@@ -666,7 +842,25 @@ pub fn show_grid(state: &Shared, n: usize) {
     }
     sidebar.root.append(&clip.root);
     sidebar.root.append(&bridge.panel_root);
-    window.set_child(Some(&bridge.root));
+    // Add this session's content as a stack page and show it. Switching to a
+    // different session later just flips the visible page, so these shells keep
+    // running in the background. Done with no borrow held: mapping the page can
+    // re-enter GTK signal handlers.
+    let (stack, id, old) = {
+        let s = state.borrow();
+        let id = s
+            .current
+            .as_ref()
+            .map(|c| c.id.clone())
+            .unwrap_or_default();
+        let old = s.stack.child_by_name(&id);
+        (s.stack.clone(), id, old)
+    };
+    if let Some(old) = old {
+        stack.remove(&old);
+    }
+    stack.add_named(&bridge.root, Some(&id));
+    stack.set_visible_child_name(&id);
 
     {
         let mut s = state.borrow_mut();

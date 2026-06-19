@@ -91,6 +91,7 @@ type OpenFiles = Rc<RefCell<Vec<OpenFile>>>;
 /// centre). Used by the toolbar, Ctrl+scroll, and keyboard.
 type ZoomFn = Rc<dyn Fn(f64, Option<(f64, f64)>)>;
 
+#[derive(Clone)]
 pub struct Editor {
     pub root: Notebook,
     paned: Paned,

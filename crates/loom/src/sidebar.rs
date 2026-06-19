@@ -14,6 +14,7 @@ use gtk4::{
 
 use crate::app::{open_file, Shared};
 
+#[derive(Clone)]
 pub struct Sidebar {
     pub root: GtkBox,
 }

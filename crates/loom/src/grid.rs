@@ -266,6 +266,7 @@ impl GridInner {
     }
 }
 
+#[derive(Clone)]
 pub struct Grid {
     pub root: GtkBox,
     inner: Rc<RefCell<GridInner>>,
@@ -380,35 +381,15 @@ impl Grid {
     }
 
     /// Apply the base font (point size) and the UI zoom to every terminal.
-    ///
-    /// A font/cell-size change makes VTE re-wrap its scrollback, which paints the
-    /// prompt over itself (the same artifact as a live resize). So we drop
-    /// scrollback to 0 across the change and restore it shortly after it settles —
-    /// reusing the resize debounce timer so rapid zooms coalesce.
+    /// Non-destructive (no scrollback touch), so it's safe to re-apply when
+    /// revealing a live session. Open-time garble is handled by the build idle's
+    /// `suppress_reflow_briefly`.
     pub fn apply_font(&self, font: &str, size: u32, scale: f64) {
         let desc = FontDescription::from_string(&format!("{font} {size}"));
-        let g = self.inner.borrow();
-        for p in &g.panes {
-            p.set_resizing(true);
+        for p in &self.inner.borrow().panes {
             p.terminal.set_font(Some(&desc));
             p.terminal.set_font_scale(scale);
         }
-        if let Some(id) = g.resize_timer.take() {
-            id.remove();
-        }
-        let weak = g.self_weak.clone();
-        let timer = g.resize_timer.clone();
-        let id = glib::timeout_add_local_once(Duration::from_millis(120), move || {
-            timer.set(None);
-            if let Some(inner) = weak.upgrade() {
-                if let Ok(g) = inner.try_borrow() {
-                    for p in &g.panes {
-                        p.set_resizing(false);
-                    }
-                }
-            }
-        });
-        g.resize_timer.set(Some(id));
     }
 
     pub fn move_focus(&self, dir: Dir) {
