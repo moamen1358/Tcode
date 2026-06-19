@@ -368,11 +368,56 @@ impl Grid {
 
     pub fn add_pane(&self) {
         let pane = self.make_pane();
-        let mut g = self.inner.borrow_mut();
-        g.panes.push(pane);
-        g.focus = g.panes.len() - 1;
-        g.zoomed = false;
-        g.rebuild();
+        let id = pane.id;
+        {
+            let mut g = self.inner.borrow_mut();
+            g.panes.push(pane);
+            g.focus = g.panes.len() - 1;
+            g.zoomed = false;
+            g.rebuild();
+        }
+        // Spawn the new pane's shell once it's been allocated at its final size
+        // (the rest of the grid is already live and sized).
+        self.spawn_when_sized(id);
+    }
+
+    /// Spawn the shell in every pane that hasn't started one yet. Called once the
+    /// freshly-built grid has reached its final layout, so each prompt prints at
+    /// the right size. Idempotent (already-spawned panes are skipped).
+    pub fn spawn_pending(&self) {
+        for p in &self.inner.borrow().panes {
+            p.spawn();
+        }
+    }
+
+    /// Spawn pane `id`'s shell once its terminal has settled at a real size. Used
+    /// when adding a pane to a live grid; the build path uses `spawn_pending` after
+    /// the whole layout settles.
+    fn spawn_when_sized(&self, id: u64) {
+        let weak = Rc::downgrade(&self.inner);
+        let mut last = -1i32;
+        let mut stable = 0u8;
+        let mut ticks = 0u32;
+        glib::timeout_add_local(Duration::from_millis(16), move || {
+            ticks += 1;
+            let Some(inner) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let Ok(g) = inner.try_borrow() else {
+                return glib::ControlFlow::Continue;
+            };
+            let Some(p) = g.panes.iter().find(|p| p.id == id) else {
+                return glib::ControlFlow::Break; // pane gone (e.g. removed)
+            };
+            let w = p.terminal.width();
+            stable = if w > 1 && w == last { stable + 1 } else { 0 };
+            last = w;
+            if stable >= 3 || ticks > 120 {
+                p.spawn();
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
+        });
     }
 
     /// Number of live terminal panes (used to persist the session layout).
@@ -461,30 +506,6 @@ impl Grid {
     pub fn container_size(&self) -> (i32, i32) {
         let g = self.inner.borrow();
         (g.container.width(), g.container.height())
-    }
-
-    /// Shift every split by `delta` px. Paired with a follow-up `apply_split_ratios`
-    /// / `relayout_positions` to restore the layout, this is a deliberate size
-    /// change that forces every terminal to re-wrap and snap its prompt back to the
-    /// top after a restore — which a programmatic split that doesn't change a pane's
-    /// pixel size won't trigger on its own (the same effect as a manual drag).
-    pub fn nudge_all(&self, delta: i32) {
-        let g = self.inner.borrow();
-        for (paned, _, _) in &g.paneds {
-            paned.set_position((paned.position() + delta).max(1));
-        }
-    }
-
-    /// Finish a session restore: drop and re-enable each terminal's scrollback
-    /// (clears any blank/garbled lines the open-time resize left in history), then
-    /// repaint a clean prompt (Ctrl+L). Run after every split is at its final size.
-    /// Safe: these are freshly-spawned shells sitting at their prompt.
-    pub fn clear_and_repaint(&self) {
-        for p in &self.inner.borrow().panes {
-            p.set_resizing(true); // scrollback -> 0, discards history
-            p.set_resizing(false); // scrollback -> full again
-            p.terminal.feed_child(b"\x0c");
-        }
     }
 
     /// Current divider positions as ratios of the container dimension (in paned

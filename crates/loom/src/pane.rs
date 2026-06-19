@@ -2,6 +2,7 @@
 //! user's shell over a PTY. Lifecycle (focus tracking, exit-removal) is wired by
 //! the grid, which owns the panes — each pane carries a stable `id` for that.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -47,6 +48,13 @@ const FILE_RE: &str = r#"[^\s<>"'`:/]+\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|
 /// Lines of scrollback history each terminal keeps.
 const SCROLLBACK_LINES: i64 = 10_000;
 
+/// Shell-spawn parameters, computed at construction but applied later (see
+/// `Pane::spawn`).
+struct SpawnParams {
+    argv: Vec<String>,
+    cwd: String,
+}
+
 pub struct Pane {
     /// Stable identity, assigned by the grid (survives re-tiling/reordering).
     pub id: u64,
@@ -55,6 +63,12 @@ pub struct Pane {
     pub terminal: Terminal,
     /// Focus-ring overlay child (detached around re-parenting — see `detach_ring`).
     ring: GtkBox,
+    /// Deferred shell-spawn parameters, taken once by `spawn()`. Spawning is
+    /// delayed until the pane has its final size so the shell prints its prompt
+    /// once, at the right dimensions — otherwise the maximize/split-restore resize
+    /// reflows it (and the shell reprints its prompt on SIGWINCH), leaving stacked
+    /// prompts and dead space on session open.
+    spawn: RefCell<Option<SpawnParams>>,
 }
 
 impl Pane {
@@ -101,9 +115,9 @@ impl Pane {
             root,
             terminal,
             ring,
+            spawn: RefCell::new(Some(Self::spawn_params(cfg))),
         };
         pane.install_file_drop();
-        pane.spawn(cfg);
         pane
     }
 
@@ -120,8 +134,10 @@ impl Pane {
         self.root.add_overlay(&self.ring);
     }
 
-    /// Spawn the shell (+ optional startup command) over a PTY.
-    fn spawn(&self, cfg: &Config) {
+    /// Compute the shell argv + working dir for the deferred spawn. Captured at
+    /// construction (the process cwd is the session root then) so the later spawn
+    /// starts in the right place even if the cwd has since moved.
+    fn spawn_params(cfg: &Config) -> SpawnParams {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let cwd = std::env::current_dir()
             .ok()
@@ -132,13 +148,19 @@ impl Pane {
         let argv: Vec<String> = if startup.is_empty() {
             vec![shell.clone(), "-l".into()]
         } else {
-            vec![
-                shell.clone(),
-                "-c".into(),
-                format!("{startup}; exec {shell}"),
-            ]
+            vec![shell.clone(), "-c".into(), format!("{startup}; exec {shell}")]
         };
-        let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
+        SpawnParams { argv, cwd }
+    }
+
+    /// Spawn the shell (+ optional startup command) over a PTY. Deferred from
+    /// construction until the pane has its final size; idempotent (a second call
+    /// is a no-op once the params have been consumed).
+    pub fn spawn(&self) {
+        let Some(params) = self.spawn.borrow_mut().take() else {
+            return;
+        };
+        let argv_ref: Vec<&str> = params.argv.iter().map(String::as_str).collect();
 
         // Weak so the one-shot spawn callback can't form a terminal->callback->
         // terminal cycle. On failure, write a visible message into the terminal
@@ -146,7 +168,7 @@ impl Pane {
         let term = self.terminal.downgrade();
         self.terminal.spawn_async(
             PtyFlags::DEFAULT,
-            Some(cwd.as_str()),
+            Some(params.cwd.as_str()),
             &argv_ref,
             &[],
             SpawnFlags::DEFAULT,
