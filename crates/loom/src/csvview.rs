@@ -90,6 +90,7 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
             let to = (bot + 4).min(last);
             let d = delim.get();
             let mut done = tagged.borrow_mut();
+            let mut ranges: Vec<(i32, i32)> = Vec::new(); // reused across lines
             for line in from..=to {
                 if !done.insert(line) {
                     continue;
@@ -99,8 +100,11 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
                 };
                 let mut end = start;
                 end.forward_to_line_end(); // stops before the line terminator
-                let content = buffer.text(&start, &end, false).to_string();
-                for (col, (s, e)) in field_ranges(&content, d).into_iter().enumerate() {
+                // Tag straight off the buffer text (a GString) with no extra String
+                // copy, into a scratch Vec reused for every visible line.
+                let content = buffer.text(&start, &end, false);
+                field_ranges(content.as_str(), d, &mut ranges);
+                for (col, &(s, e)) in ranges.iter().enumerate() {
                     if e <= s {
                         continue;
                     }
@@ -143,10 +147,10 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
     Some(scroller.upcast())
 }
 
-/// Character-offset `(start, end)` ranges of each field in `line` (quote-aware,
-/// so a delimiter inside `"…"` doesn't split a field).
-fn field_ranges(line: &str, delim: char) -> Vec<(i32, i32)> {
-    let mut ranges = Vec::new();
+/// Fill `out` with the character-offset `(start, end)` range of each field in
+/// `line` (quote-aware, so a delimiter inside `"…"` doesn't split a field).
+fn field_ranges(line: &str, delim: char, out: &mut Vec<(i32, i32)>) {
+    out.clear();
     let mut start = 0i32;
     let mut idx = 0i32;
     let mut in_quotes = false;
@@ -154,13 +158,12 @@ fn field_ranges(line: &str, delim: char) -> Vec<(i32, i32)> {
         if ch == '"' {
             in_quotes = !in_quotes;
         } else if ch == delim && !in_quotes {
-            ranges.push((start, idx));
+            out.push((start, idx));
             start = idx + 1;
         }
         idx += 1;
     }
-    ranges.push((start, idx));
-    ranges
+    out.push((start, idx));
 }
 
 /// Pick the delimiter: `.tsv` is always tab; otherwise the most frequent of
