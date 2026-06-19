@@ -168,7 +168,24 @@ pub fn show_grid(state: &Shared, n: usize) {
     center.set_shrink_start_child(false);
     center.set_resize_end_child(true);
     center.set_shrink_end_child(false);
-    let editor = Editor::new(&center);
+    let editor = Editor::new(&center, &cfg.theme.surface);
+
+    // Clicking anywhere in the editor/viewer panel pulls keyboard focus off the
+    // terminals, so the active-pane yellow ring clears when you click an image or
+    // document (the image canvas alone doesn't grab focus on click). Capture phase
+    // runs before the viewer's own gestures; it never claims, so the viewer's
+    // pan/zoom still work.
+    {
+        let nb = editor.root.clone();
+        let click = gtk4::GestureClick::new();
+        click.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        click.connect_pressed(move |_g, _n, _x, _y| {
+            if let Some(w) = nb.current_page().and_then(|p| nb.nth_page(Some(p))) {
+                w.grab_focus();
+            }
+        });
+        editor.root.add_controller(click);
+    }
 
     let sidebar = Sidebar::new(&cwd, state);
     // Respect the current toggle state for the freshly built sidebar.
