@@ -1,5 +1,5 @@
 [package]
-name = "tessera-core"
+name = "loom-core"
 edition.workspace = true
 version.workspace = true
 

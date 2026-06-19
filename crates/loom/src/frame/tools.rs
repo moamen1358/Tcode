@@ -1,4 +1,4 @@
-//! BridgeShot annotation model + pure geometry helpers (unit-tested, no GTK).
+//! Frame annotation model + pure geometry helpers (unit-tested, no GTK).
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tool {

@@ -112,8 +112,8 @@ impl Sidebar {
         root_store.append(&root_info);
 
         // Lazy tree: each directory yields a sorted child listing; files are leaves.
-        // TESSERA_AUTOEXPAND=1 expands every folder (visual-testing aid).
-        let autoexpand = std::env::var_os("TESSERA_AUTOEXPAND").is_some();
+        // LOOM_AUTOEXPAND=1 expands every folder (visual-testing aid).
+        let autoexpand = std::env::var_os("LOOM_AUTOEXPAND").is_some();
         let tree = TreeListModel::new(root_store, false, autoexpand, |obj| {
             let info = obj.downcast_ref::<gio::FileInfo>()?;
             if info.file_type() == gio::FileType::Directory {
@@ -262,7 +262,7 @@ impl Sidebar {
             } else if let Some(path) = file_of(&info).and_then(|f| f.path()) {
                 open_file(&st, &path);
             } else {
-                eprintln!("tessera: could not resolve path for sidebar item");
+                eprintln!("loom: could not resolve path for sidebar item");
             }
         });
 

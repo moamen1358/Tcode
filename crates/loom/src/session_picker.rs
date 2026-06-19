@@ -13,7 +13,7 @@ use gtk4::{
     PolicyType, ScrolledWindow, Widget,
 };
 
-use tessera_core::session::Session;
+use loom_core::session::Session;
 
 /// Terminal-count choices offered when creating a new session.
 const COUNTS: [usize; 7] = [1, 2, 3, 4, 6, 8, 9];
@@ -30,7 +30,7 @@ pub fn build(
     let column = centered_column();
 
     column.append(&heading(
-        "Tessera",
+        "Loom",
         if sessions.is_empty() {
             "No saved sessions yet — start a new one"
         } else {

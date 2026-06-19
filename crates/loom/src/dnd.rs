@@ -1,4 +1,4 @@
-//! File drag-and-drop helpers shared by terminals and BridgeShot thumbnails.
+//! File drag-and-drop helpers shared by terminals and Frame thumbnails.
 
 use std::path::{Path, PathBuf};
 

@@ -3,7 +3,7 @@
 
 use gtk4::gdk::{Display, RGBA};
 use gtk4::{CssProvider, STYLE_PROVIDER_PRIORITY_APPLICATION};
-use tessera_core::config::Theme;
+use loom_core::config::Theme;
 
 /// Parse a `#rrggbb` string into an RGBA, falling back to opaque black.
 pub fn rgba(hex: &str) -> RGBA {
@@ -63,9 +63,9 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .sidebar .hovered {{ background-color: alpha({fg}, 0.08); border-radius: 4px; }}\n\
          .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
          .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.3); }}\n\
-         .tessera-titlebar {{ min-height: 24px; background-color: {bg}; \
+         .loom-titlebar {{ min-height: 24px; background-color: {bg}; \
                               box-shadow: none; border: none; color: {fg}; }}\n\
-         .tessera-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
+         .loom-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
          .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
@@ -91,38 +91,38 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .fallback-title {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
          .fallback-meta {{ color: alpha({fg}, 0.55); }}\n\
          .fallback-open {{ margin-top: 10px; }}\n\
-         .bridgeshot-window {{ background-color: {bg}; }}\n\
-         .bridgeshot-canvas {{ background-color: {bg}; }}\n\
-         .bridgeshot-toolbar {{ background-color: alpha({bg}, 0.96); padding: 4px 10px; \
+         .frame-window {{ background-color: {bg}; }}\n\
+         .frame-canvas {{ background-color: {bg}; }}\n\
+         .frame-toolbar {{ background-color: alpha({bg}, 0.96); padding: 4px 10px; \
                                 border-bottom: 1px solid {border}; }}\n\
-         .bridgeshot-toolbar-center {{ background-color: {surface}; padding: 3px; \
+         .frame-toolbar-center {{ background-color: {surface}; padding: 3px; \
                                        border: 1px solid alpha({fg}, 0.10); \
                                        border-radius: 7px; \
                                        box-shadow: 0 4px 14px rgba(0,0,0,0.22); }}\n\
-         .bridgeshot-toolbar button {{ min-height: 0; min-width: 0; padding: 2px 6px; \
+         .frame-toolbar button {{ min-height: 0; min-width: 0; padding: 2px 6px; \
                                        border-radius: 5px; }}\n\
-         .bridgeshot-tool-group {{ background-color: alpha({fg}, 0.05); padding: 1px; \
+         .frame-tool-group {{ background-color: alpha({fg}, 0.05); padding: 1px; \
                                    border-radius: 6px; }}\n\
-         .bridgeshot-tool {{ min-width: 38px; min-height: 26px; background: transparent; border: none; \
+         .frame-tool {{ min-width: 38px; min-height: 26px; background: transparent; border: none; \
                              box-shadow: none; color: alpha({fg}, 0.76); }}\n\
-         .bridgeshot-tool:hover {{ background-color: alpha({fg}, 0.08); color: {fg}; }}\n\
-         .bridgeshot-tool:checked {{ background-color: alpha({accent}, 0.30); color: {fg}; \
+         .frame-tool:hover {{ background-color: alpha({fg}, 0.08); color: {fg}; }}\n\
+         .frame-tool:checked {{ background-color: alpha({accent}, 0.30); color: {fg}; \
                                      box-shadow: inset 0 0 0 1px alpha({accent}, 0.78); }}\n\
-         .bridgeshot-utility {{ min-width: 28px; min-height: 26px; background: transparent; border: none; box-shadow: none; \
+         .frame-utility {{ min-width: 28px; min-height: 26px; background: transparent; border: none; box-shadow: none; \
                                 color: alpha({fg}, 0.72); }}\n\
-         .bridgeshot-utility:hover {{ background-color: alpha({fg}, 0.08); color: {fg}; }}\n\
-         .bridgeshot-actions button {{ min-width: 30px; min-height: 28px; padding: 2px 7px; }}\n\
-         .bridgeshot-cancel {{ background: transparent; border: none; box-shadow: none; \
+         .frame-utility:hover {{ background-color: alpha({fg}, 0.08); color: {fg}; }}\n\
+         .frame-actions button {{ min-width: 30px; min-height: 28px; padding: 2px 7px; }}\n\
+         .frame-cancel {{ background: transparent; border: none; box-shadow: none; \
                                 color: alpha({fg}, 0.72); }}\n\
-         .bridgeshot-cancel:hover {{ background-color: alpha(#e84d5b, 0.16); color: #e84d5b; }}\n\
-         .bridgeshot-save {{ font-weight: 600; border-radius: 5px; }}\n\
-         .bridgeshot-swatches {{ margin-left: 2px; margin-right: 2px; }}\n\
-         .bridgeshot-swatch {{ min-width: 18px; min-height: 18px; padding: 0; \
+         .frame-cancel:hover {{ background-color: alpha(#e84d5b, 0.16); color: #e84d5b; }}\n\
+         .frame-save {{ font-weight: 600; border-radius: 5px; }}\n\
+         .frame-swatches {{ margin-left: 2px; margin-right: 2px; }}\n\
+         .frame-swatch {{ min-width: 18px; min-height: 18px; padding: 0; \
                                border-radius: 9px; margin: 0 1px; \
                                box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18); }}\n\
-         .bridgeshot-swatch:hover {{ box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32), \
+         .frame-swatch:hover {{ box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32), \
                                      0 0 0 2px alpha({fg}, 0.10); }}\n\
-         .bridgeshot-swatch.selected {{ box-shadow: inset 0 0 0 1px rgba(255,255,255,0.38), \
+         .frame-swatch.selected {{ box-shadow: inset 0 0 0 1px rgba(255,255,255,0.38), \
                                         0 0 0 2px {fg}; }}\n\
          .swatch-0 {{ background-image: none; background-color: #e84d5b; }}\n\
          .swatch-1 {{ background-image: none; background-color: #7aa2f7; }}\n\
@@ -130,12 +130,12 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .swatch-3 {{ background-image: none; background-color: #8cc673; }}\n\
          .swatch-4 {{ background-image: none; background-color: #f2f2f7; }}\n\
          .swatch-5 {{ background-image: none; background-color: #1a1c26; }}\n\
-         .bridgeshot-gallery {{ background-color: {surface}; }}\n\
-         .bridgeshot-thumb {{ padding: 2px; border-radius: 4px; }}\n\
-         .bridgeshot-thumb.selected {{ box-shadow: inset 0 0 0 2px {accent}; }}\n\
-         .bridgeshot-text-entry {{ background-color: {bg}; color: {fg}; \
+         .frame-gallery {{ background-color: {surface}; }}\n\
+         .frame-thumb {{ padding: 2px; border-radius: 4px; }}\n\
+         .frame-thumb.selected {{ box-shadow: inset 0 0 0 2px {accent}; }}\n\
+         .frame-text-entry {{ background-color: {bg}; color: {fg}; \
                                    box-shadow: inset 0 0 0 1px {accent}; }}\n\
-         .bridgeshot-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}\n\
+         .frame-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}\n\
          .clip-header {{ padding: 5px 8px 3px 10px; }}\n\
          .clip-header label {{ color: alpha({fg}, 0.45); font-size: 10px; \
                                font-weight: bold; letter-spacing: 1px; }}\n\

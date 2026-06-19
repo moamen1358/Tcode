@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/tessera-core", "crates/tessera"]
+members = ["crates/loom-core", "crates/loom"]
 
 [workspace.package]
 edition = "2021"

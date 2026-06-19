@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Tessera inside Docker, rendering on the host display.
+# Run Loom inside Docker, rendering on the host display.
 # Usage:  ./run-docker.sh [pane-count]
 #   e.g.  ./run-docker.sh 4
 #
@@ -7,11 +7,11 @@
 # host files. Prefers Wayland; falls back to X11.
 set -euo pipefail
 
-IMAGE="tessera:latest"
+IMAGE="loom:latest"
 N="${1:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-# Build the image on first run (or after code changes: docker build -t tessera .).
+# Build the image on first run (or after code changes: docker build -t loom .).
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "Building $IMAGE (first run — compiles the GTK stack, takes a few minutes)…"
     docker build -t "$IMAGE" "$HERE"

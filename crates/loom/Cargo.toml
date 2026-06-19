@@ -1,14 +1,14 @@
 [package]
-name = "tessera"
+name = "loom"
 edition.workspace = true
 version.workspace = true
 
 [[bin]]
-name = "tessera"
+name = "loom"
 path = "src/main.rs"
 
 [dependencies]
-tessera-core = { path = "../tessera-core" }
+loom-core = { path = "../loom-core" }
 # Versions verified against system GTK 4.14.5 / VTE 0.76.0 (verify-gtk4-vte4-api workflow).
 # The crate version does NOT set the min system GTK — the highest enabled feature does.
 # Cap at v4_14 / v0_76; never enable v4_16+, v0_78+, or vte4's gtk_v4_18.
@@ -23,7 +23,7 @@ async-channel = "2"
 # RFC 4180 CSV/TSV parsing (quoted fields, escapes) for the table viewer.
 # Pure Rust, no system libs.
 csv = "1"
-# Enable cairo's PNG writer (ImageSurface::write_to_png) for BridgeShot export.
+# Enable cairo's PNG writer (ImageSurface::write_to_png) for Frame export.
 # Must match the cairo-rs that gtk4 0.11 re-exports (0.22); only adds `png`.
 cairo-rs = { version = "0.22", features = ["png"] }
 # XDG screenshot portal — capture any window/region on Wayland/COSMIC via the

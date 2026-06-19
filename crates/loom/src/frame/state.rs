@@ -1,4 +1,4 @@
-//! BridgeShot session state: a list of captured documents (each with its own
+//! Frame session state: a list of captured documents (each with its own
 //! annotations) plus the current tool/color and the active canvas transform.
 
 use std::cell::RefCell;

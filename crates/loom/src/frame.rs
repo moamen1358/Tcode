@@ -1,4 +1,4 @@
-//! BridgeShot — integrated screenshot annotator for Tessera's main window.
+//! Frame — integrated screenshot annotator for Loom's main window.
 //!
 //! A persistent panel on the left lists saved screenshots (loaded from the cache
 //! dir, so they survive restarts). Capturing (its Capture button, or Alt+P opens
@@ -32,10 +32,10 @@ use gtk4::{
 use state::{add_doc, Shot, State};
 use tools::{Tool, PALETTE};
 
-/// The integrated BridgeShot UI: a horizontal split of the left screenshots
+/// The integrated Frame UI: a horizontal split of the left screenshots
 /// panel and the (overlay-wrapped) main content. `root` is meant to be the
 /// window's child; `panel_root` is exposed so the host can toggle it.
-pub struct BridgeShot {
+pub struct Frame {
     /// The window's child: the content with the (hidden) annotation overlay.
     pub root: Overlay,
     /// The screenshots gallery — the host embeds this at the sidebar's bottom.
@@ -44,10 +44,10 @@ pub struct BridgeShot {
     pub capture: Rc<dyn Fn()>,
 }
 
-/// Wrap `content` (Tessera's sidebar+center) with the BridgeShot panel and a
+/// Wrap `content` (Loom's sidebar+center) with the Frame panel and a
 /// hidden annotation layer. `main` is the window — hidden during capture so it
 /// isn't in the shot, and the clipboard owner on export.
-pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> BridgeShot {
+pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame {
     let shot: Shot = Rc::new(RefCell::new(State::new()));
     let canvas_ui = canvas::build(&shot);
     let area = canvas_ui.area.clone();
@@ -55,7 +55,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
 
     // Annotation layer: hidden until a capture/open; shown over the content.
     let annot = GtkBox::new(Orientation::Vertical, 0);
-    annot.add_css_class("bridgeshot-window");
+    annot.add_css_class("frame-window");
     annot.set_hexpand(true);
     annot.set_vexpand(true);
     annot.set_visible(false);
@@ -87,7 +87,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         })
     };
 
-    // Capture: keep Tessera visible (so you can capture it too, and so the
+    // Capture: keep Loom visible (so you can capture it too, and so the
     // self-snapshot fallback has a window to snapshot) and run the portal picker;
     // the compositor's picker overlays the desktop and lets you choose any
     // window/region. The result is loaded into the annotation canvas.
@@ -132,7 +132,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
                 }
                 // Keep the annotation canvas open on failure so the user's work
                 // isn't silently discarded (e.g. an image too large for cairo).
-                Err(e) => eprintln!("tessera: screenshot export failed: {e}"),
+                Err(e) => eprintln!("loom: screenshot export failed: {e}"),
             }
         });
     }
@@ -161,7 +161,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         annot.add_controller(key);
     }
 
-    BridgeShot {
+    Frame {
         root: content_overlay,
         panel_root: panel.root.clone(),
         capture: on_capture,
@@ -178,14 +178,14 @@ struct Toolbar {
 /// clear, and Cancel / Save. Tool and color writes go straight to `shot`.
 fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
     let row = CenterBox::new();
-    row.add_css_class("bridgeshot-toolbar");
+    row.add_css_class("frame-toolbar");
     row.set_hexpand(true);
 
     let center = GtkBox::new(Orientation::Horizontal, 8);
-    center.add_css_class("bridgeshot-toolbar-center");
+    center.add_css_class("frame-toolbar-center");
 
     let tool_group = GtkBox::new(Orientation::Horizontal, 0);
-    tool_group.add_css_class("bridgeshot-tool-group");
+    tool_group.add_css_class("frame-tool-group");
 
     let tools_def = [
         (Tool::Move, ToolPreview::Move, "Move image"),
@@ -199,7 +199,7 @@ fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
         .iter()
         .map(|(_, preview, tip)| {
             let b = ToggleButton::new();
-            b.add_css_class("bridgeshot-tool");
+            b.add_css_class("frame-tool");
             b.set_tooltip_text(Some(tip));
             b.set_child(Some(&build_tool_preview(*preview)));
             b
@@ -229,10 +229,10 @@ fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
     center.append(&Separator::new(Orientation::Vertical));
 
     let swatches = GtkBox::new(Orientation::Horizontal, 4);
-    swatches.add_css_class("bridgeshot-swatches");
+    swatches.add_css_class("frame-swatches");
     for (i, color) in PALETTE.iter().enumerate() {
         let sw = Button::new();
-        sw.add_css_class("bridgeshot-swatch");
+        sw.add_css_class("frame-swatch");
         sw.add_css_class(&format!("swatch-{i}"));
         sw.set_tooltip_text(Some("Annotation color"));
         let (c, sb) = (*color, shot.clone());
@@ -257,7 +257,7 @@ fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
     center.append(&Separator::new(Orientation::Vertical));
 
     let undo_btn = Button::from_icon_name("edit-undo-symbolic");
-    undo_btn.add_css_class("bridgeshot-utility");
+    undo_btn.add_css_class("frame-utility");
     undo_btn.set_tooltip_text(Some("Undo last annotation"));
     {
         let (sb, ca) = (shot.clone(), area.clone());
@@ -267,7 +267,7 @@ fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
         });
     }
     let clear_btn = Button::from_icon_name("edit-clear-symbolic");
-    clear_btn.add_css_class("bridgeshot-utility");
+    clear_btn.add_css_class("frame-utility");
     clear_btn.set_tooltip_text(Some("Clear annotations"));
     {
         let (sb, ca) = (shot.clone(), area.clone());
@@ -283,13 +283,13 @@ fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
     start.set_hexpand(true);
 
     let actions = GtkBox::new(Orientation::Horizontal, 6);
-    actions.add_css_class("bridgeshot-actions");
+    actions.add_css_class("frame-actions");
     let cancel_btn = Button::from_icon_name("window-close-symbolic");
-    cancel_btn.add_css_class("bridgeshot-cancel");
+    cancel_btn.add_css_class("frame-cancel");
     cancel_btn.set_tooltip_text(Some("Close without saving"));
     let save_btn = Button::from_icon_name("document-save-symbolic");
     save_btn.add_css_class("suggested-action");
-    save_btn.add_css_class("bridgeshot-save");
+    save_btn.add_css_class("frame-save");
     save_btn.set_tooltip_text(Some("Save annotated image"));
     actions.append(&cancel_btn);
     actions.append(&save_btn);

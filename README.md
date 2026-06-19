@@ -1,4 +1,4 @@
-# Tessera
+# Loom
 
 A minimal, fast, **borderless tiling-terminal workspace** for Linux. Pick a number →
 get that many terminal panes in a balanced grid. Keyboard-driven like neovim.
@@ -8,7 +8,7 @@ Built in Rust with GTK4 + VTE.
 
 - Minimal dark, GPU-composited GUI: a thin titlebar (minimize / maximize / close), and
   `Alt+f` for immersive fullscreen with no header at all.
-- Pick **1–16 panes** (a picker on launch, or `tessera 4`); balanced auto-grid.
+- Pick **1–16 panes** (a picker on launch, or `loom 4`); balanced auto-grid.
 - **Add / remove panes live**: the **`+`** button (or `Alt+n`) adds a terminal; when a
   shell exits, its pane disappears and the rest re-tile (exit the last → the app closes).
 - Each pane is your `$SHELL` (with an optional auto-run startup command).
@@ -18,7 +18,7 @@ Built in Rust with GTK4 + VTE.
   editable, syntax-highlighted editor (`Ctrl+S` saves, `Esc` closes the tab),
   images on a zoom/pan canvas, PDFs and office docs as scrollable zoomable pages,
   and CSV/TSV as a "rainbow" table.
-- **BridgeShot** screenshots: the titlebar camera captures any window/region via
+- **Frame** screenshots: the titlebar camera captures any window/region via
   the desktop portal, opens an annotation canvas (box / arrow / text / pen /
   highlight), and saves to a strip at the bottom of the sidebar you can drag into
   a terminal.
@@ -55,9 +55,9 @@ Rust toolchain (if you don't have it): <https://rustup.rs>
 
 ```bash
 cargo build --release
-./target/release/tessera        # opens the picker
-./target/release/tessera 4      # straight to a 2x2 grid
-cargo install --path crates/tessera   # optional: put `tessera` on your PATH
+./target/release/loom        # opens the picker
+./target/release/loom 4      # straight to a 2x2 grid
+cargo install --path crates/loom   # optional: put `loom` on your PATH
 ```
 
 Optional runtime tools — the file viewer and screenshots degrade gracefully if
@@ -79,7 +79,7 @@ sudo apt install -y poppler-utils libreoffice xdg-desktop-portal
 ```
 
 Builds and `cargo install`s the binary, then drops a `.desktop` launcher + icon
-into `~/.local/share`, so **Tessera** appears in your application menu. No root.
+into `~/.local/share`, so **Loom** appears in your application menu. No root.
 
 ## Run in Docker (display forwarding)
 
@@ -93,7 +93,7 @@ mounted at `/work`, so the panes operate on your real files.
 
 ## Config
 
-Optional `~/.config/tessera/config.toml` — every field has a default, so it works
+Optional `~/.config/loom/config.toml` — every field has a default, so it works
 with no config at all:
 
 ```toml
@@ -111,8 +111,8 @@ accent     = "#7aa2f7"             # active-pane border
 ## Project layout
 
 ```
-crates/tessera-core   pure logic (grid geometry + config), unit-tested, no GTK
-crates/tessera        the GTK4 app: window, panes, grid, picker, keys, sidebar
+crates/loom-core   pure logic (grid geometry + config), unit-tested, no GTK
+crates/loom        the GTK4 app: window, panes, grid, picker, keys, sidebar
 docs/                 design spec, implementation plan, build log
 Dockerfile, run-docker.sh   containerized run with display forwarding
 ```

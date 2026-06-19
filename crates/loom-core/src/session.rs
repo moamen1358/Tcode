@@ -1,10 +1,10 @@
 //! Named workspace sessions. Each session remembers its root folder, the number
 //! of terminal panes, and the open editor files, persisted as a TOML file under
-//! `~/.config/tessera/sessions/` so Tessera can reopen where you left off.
+//! `~/.config/loom/sessions/` so Loom can reopen where you left off.
 //! (Split sizes + per-terminal working dirs are modeled below but not captured
 //! yet — reserved for a later pass.)
 //!
-//! This is pure data + disk I/O (no GTK); the UI lives in the `tessera` crate
+//! This is pure data + disk I/O (no GTK); the UI lives in the `loom` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
 
 use std::path::PathBuf;
@@ -90,7 +90,7 @@ impl Session {
     }
 }
 
-/// Directory holding session files: `~/.config/tessera/sessions/`.
+/// Directory holding session files: `~/.config/loom/sessions/`.
 pub fn sessions_dir() -> PathBuf {
     config_dir().join("sessions")
 }

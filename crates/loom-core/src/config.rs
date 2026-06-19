@@ -1,4 +1,4 @@
-//! User configuration, loaded from `~/.config/tessera/config.toml`.
+//! User configuration, loaded from `~/.config/loom/config.toml`.
 //! Every field has a default, so a missing or partial file is fine.
 
 use serde::Deserialize;
@@ -81,15 +81,15 @@ impl Config {
         match toml::from_str(s) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("tessera: config parse error ({e}); using defaults");
+                eprintln!("loom: config parse error ({e}); using defaults");
                 Config::default()
             }
         }
     }
 }
 
-/// Tessera's base config directory: `$XDG_CONFIG_HOME/tessera` or
-/// `~/.config/tessera`. Shared by the config file and saved sessions.
+/// Loom's base config directory: `$XDG_CONFIG_HOME/loom` or
+/// `~/.config/loom`. Shared by the config file and saved sessions.
 pub fn config_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -99,7 +99,7 @@ pub fn config_dir() -> PathBuf {
                 .unwrap_or_default();
             home.join(".config")
         });
-    base.join("tessera")
+    base.join("loom")
 }
 
 fn config_path() -> PathBuf {

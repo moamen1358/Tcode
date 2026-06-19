@@ -1,5 +1,5 @@
 {
-  "name": "tessera",
+  "name": "loom",
   "version": "0.1.0",
   "private": true,
   "description": "Borderless tiling-terminal workspace (Rust + GTK4). These npm scripts are thin wrappers around cargo for convenience — no Node dependencies.",

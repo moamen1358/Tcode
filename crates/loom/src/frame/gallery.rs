@@ -1,4 +1,4 @@
-//! The persistent left-side screenshots panel in Tessera's main window: a
+//! The persistent left-side screenshots panel in Loom's main window: a
 //! scrollable strip of every saved screenshot (loaded from the cache dir on
 //! startup, so history survives restarts), showing ~3 at a time. Clicking a
 //! thumbnail re-opens it in the annotation canvas; capturing is from the titlebar.
@@ -14,7 +14,7 @@ use gtk4::{Box as GtkBox, Button, DragSource, Orientation, Separator};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
-    glib::user_cache_dir().join("tessera").join("bridgeshot")
+    glib::user_cache_dir().join("loom").join("frame")
 }
 
 /// True for a canonical `shot-<digits>.png` filename (our own exports).
@@ -40,7 +40,7 @@ pub fn build(on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
     root.append(&Separator::new(Orientation::Horizontal));
 
     let list = GtkBox::new(Orientation::Vertical, 6);
-    list.add_css_class("bridgeshot-gallery");
+    list.add_css_class("frame-gallery");
     list.set_margin_top(6);
     list.set_margin_bottom(6);
     list.set_margin_start(6);
@@ -78,7 +78,7 @@ impl Panel {
         let img = gtk4::Image::from_paintable(Some(&texture));
         img.set_pixel_size(84);
         let btn = Button::builder().child(&img).build();
-        btn.add_css_class("bridgeshot-thumb");
+        btn.add_css_class("frame-thumb");
         btn.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
 
         // Drag a thumbnail into any terminal (or other drop target) — it provides

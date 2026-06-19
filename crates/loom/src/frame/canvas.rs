@@ -36,7 +36,7 @@ pub fn build(shot: &Shot) -> CanvasUi {
     let area = DrawingArea::new();
     area.set_hexpand(true);
     area.set_vexpand(true);
-    area.add_css_class("bridgeshot-canvas");
+    area.add_css_class("frame-canvas");
 
     let fixed = Fixed::new();
     fixed.set_can_target(false); // transparent to input until a text entry exists
@@ -432,7 +432,7 @@ fn spawn_text_entry(
 ) {
     let entry = Entry::new();
     entry.set_placeholder_text(Some("type, Enter to place"));
-    entry.add_css_class("bridgeshot-text-entry");
+    entry.add_css_class("frame-text-entry");
     entry.set_width_request(160);
     fixed.set_can_target(true);
     fixed.put(&entry, wx, wy);
