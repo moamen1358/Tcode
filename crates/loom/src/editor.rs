@@ -326,7 +326,10 @@ struct Zoomer {
     state: Rc<Cell<ImgView>>,
     anim: Rc<Cell<Option<Anim>>>,
     running: Rc<Cell<bool>>,
-    area: DrawingArea,
+    // Weak: the gesture controllers that hold a `Zoomer` are themselves owned by
+    // `area`, so a strong ref here would form an area→controller→zoomer→area cycle
+    // and leak the canvas (+ decoded pixbuf) when the image tab is closed.
+    area: glib::WeakRef<DrawingArea>,
 }
 
 impl Zoomer {
@@ -355,11 +358,11 @@ impl Zoomer {
 
     /// Zoom toward the canvas centre (toolbar ± buttons).
     fn zoom_center(&self, factor: f64) {
+        let Some(area) = self.area.upgrade() else {
+            return;
+        };
         // max(1) so a not-yet-allocated canvas zooms toward a sane point, not (0,0).
-        let (w, h) = (
-            self.area.width().max(1) as f64,
-            self.area.height().max(1) as f64,
-        );
+        let (w, h) = (area.width().max(1) as f64, area.height().max(1) as f64);
         self.zoom_to(w / 2.0, h / 2.0, factor);
     }
 
@@ -373,12 +376,16 @@ impl Zoomer {
         if self.running.replace(true) {
             return;
         }
+        let Some(area) = self.area.upgrade() else {
+            self.running.set(false);
+            return;
+        };
         // Capture only the Rc state, NOT the DrawingArea — capturing `self` (which
         // holds `area`) would form an area→tick→area cycle, and a detached
         // widget's frame clock stops ticking, so closing a tab mid-animation would
         // leak the canvas forever. The area arrives as the `a` parameter instead.
         let (state, anim, running) = (self.state.clone(), self.anim.clone(), self.running.clone());
-        self.area.add_tick_callback(move |a, _clock| {
+        area.add_tick_callback(move |a, _clock| {
             let Some(an) = anim.get() else {
                 running.set(false);
                 return glib::ControlFlow::Break;
@@ -440,7 +447,7 @@ fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
         state: state.clone(),
         anim: Rc::new(Cell::new(None)),
         running: Rc::new(Cell::new(false)),
-        area: area.clone(),
+        area: area.downgrade(),
     };
 
     let pct = Label::new(Some("100%"));
@@ -508,18 +515,20 @@ fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
     drag.set_button(gtk4::gdk::BUTTON_PRIMARY);
     let start = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
     {
-        let (state, start, area_c, zoomer) =
-            (state.clone(), start.clone(), area.clone(), zoomer.clone());
+        let (state, start, area_w, zoomer) =
+            (state.clone(), start.clone(), area.downgrade(), zoomer.clone());
         drag.connect_drag_begin(move |g, _x, _y| {
             g.set_state(EventSequenceState::Claimed);
             zoomer.cancel(); // a pan overrides any in-flight zoom animation
             let v = state.get();
             start.set((v.off_x, v.off_y));
-            area_c.set_cursor_from_name(Some("grabbing"));
+            if let Some(area) = area_w.upgrade() {
+                area.set_cursor_from_name(Some("grabbing"));
+            }
         });
     }
     {
-        let (state, start, area_c) = (state.clone(), start.clone(), area.clone());
+        let (state, start, area_w) = (state.clone(), start.clone(), area.downgrade());
         drag.connect_drag_update(move |_g, ox, oy| {
             let (x0, y0) = start.get();
             let mut v = state.get();
@@ -527,12 +536,18 @@ fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
             v.off_y = y0 + oy;
             v.fit = false;
             state.set(v);
-            area_c.queue_draw();
+            if let Some(area) = area_w.upgrade() {
+                area.queue_draw();
+            }
         });
     }
     {
-        let area_c = area.clone();
-        drag.connect_drag_end(move |_g, _ox, _oy| area_c.set_cursor_from_name(Some("grab")));
+        let area_w = area.downgrade();
+        drag.connect_drag_end(move |_g, _ox, _oy| {
+            if let Some(area) = area_w.upgrade() {
+                area.set_cursor_from_name(Some("grab"));
+            }
+        });
     }
     area.add_controller(drag);
     area.set_cursor_from_name(Some("grab"));
@@ -540,14 +555,16 @@ fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
     // Double-click resets to Fit.
     let dbl = GestureClick::new();
     {
-        let (state, area_c, zoomer) = (state.clone(), area.clone(), zoomer.clone());
+        let (state, area_w, zoomer) = (state.clone(), area.downgrade(), zoomer.clone());
         dbl.connect_pressed(move |_g, n, _x, _y| {
             if n == 2 {
                 zoomer.cancel();
                 let mut v = state.get();
                 v.fit = true;
                 state.set(v);
-                area_c.queue_draw();
+                if let Some(area) = area_w.upgrade() {
+                    area.queue_draw();
+                }
             }
         });
     }
