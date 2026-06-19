@@ -236,11 +236,13 @@ fn prune_cache(current: &Path) {
 
 fn cache_dir(path: &Path) -> Result<PathBuf, String> {
     let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    // Nanosecond mtime (not seconds): a same-size edit saved within the same second
+    // as a prior render would otherwise hash to the same key and show stale pages.
     let mtime = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     let key = format!("{}|{}|{}", path.display(), mtime, meta.len());
     Ok(gtk4::glib::user_cache_dir()
