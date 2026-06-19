@@ -38,8 +38,40 @@ fn css_font(s: &str) -> String {
     }
 }
 
-/// Install the application-wide stylesheet for the current display.
-pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
+/// Multiply every `font-size: Npx|pt` in the stylesheet by `scale`, so the whole
+/// UI's text grows/shrinks together (px font-sizes aren't affected by font DPI,
+/// so we scale them ourselves). Units are preserved.
+fn scale_css_fonts(css: &str, scale: f64) -> String {
+    if (scale - 1.0).abs() < f64::EPSILON {
+        return css.to_string();
+    }
+    let mut out = String::with_capacity(css.len() + 64);
+    let mut rest = css;
+    while let Some(i) = rest.find("font-size:") {
+        let after = i + "font-size:".len();
+        out.push_str(&rest[..after]);
+        rest = &rest[after..];
+        let nonspace = rest.find(|c: char| c != ' ').unwrap_or(rest.len());
+        out.push_str(&rest[..nonspace]);
+        rest = &rest[nonspace..];
+        let num_end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        match rest[..num_end].parse::<f64>() {
+            Ok(n) if num_end > 0 => {
+                out.push_str(&((n * scale).round().max(1.0) as i64).to_string());
+                rest = &rest[num_end..];
+            }
+            _ => {}
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Install the application-wide stylesheet for the current display. `scale` is the
+/// whole-UI zoom (1.0 = 100%).
+pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
     let bg = css_color(&theme.background);
     let fg = css_color(&theme.foreground);
     let accent = css_color(&theme.accent);
@@ -55,7 +87,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
          .sidebar {{ background-color: {bg}; border-right: 1px solid {border}; \
-                     font-family: \"Noto Sans\", sans-serif; font-size: 12px; }}\n\
+                     font-family: \"Noto Sans\", sans-serif; font-size: {font_size}pt; }}\n\
          .sidebar-header {{ padding: 8px 10px; color: {fg}; font-weight: bold; }}\n\
          .sidebar label {{ color: {fg}; }}\n\
          .sidebar row {{ padding: 0 4px; min-height: 22px; border-radius: 4px; }}\n\
@@ -209,13 +241,22 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
                        font-weight: bold; }}\n\
          .view-readout {{ color: {fg}; font-size: 12px; }}"
     );
-    let provider = CssProvider::new();
-    provider.load_from_string(&css);
-    if let Some(display) = Display::default() {
-        gtk4::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
+    let css = scale_css_fonts(&css, scale);
+    // Reuse one provider so repeated calls (zoom / font changes) update the
+    // stylesheet in place instead of stacking new providers on the display.
+    PROVIDER.with(|p| p.load_from_string(&css));
+}
+
+thread_local! {
+    static PROVIDER: CssProvider = {
+        let p = CssProvider::new();
+        if let Some(display) = Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &p,
+                STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+        p
+    };
 }

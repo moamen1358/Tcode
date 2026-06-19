@@ -37,8 +37,6 @@ pub struct State {
     pub save_sessions: bool,
     /// Titlebar session switcher: shows the current name, popover lists/creates.
     pub session_btn: gtk4::MenuButton,
-    /// Baseline font DPI (1024ths) captured at startup; the UI scale multiplies it.
-    pub base_dpi: i32,
     /// Readouts in the view-settings popover, kept in sync by font/scale changes.
     pub font_readout: gtk4::Label,
     pub scale_readout: gtk4::Label,
@@ -48,7 +46,7 @@ pub type Shared = Rc<RefCell<State>>;
 
 pub fn build(app: &Application, preset: Option<usize>) {
     let cfg = Config::load();
-    theme::install_css(&cfg.theme, &cfg.font, cfg.font_size);
+    theme::install_css(&cfg.theme, &cfg.font, cfg.font_size, cfg.scale);
 
     let window = ApplicationWindow::builder()
         .application(app)
@@ -105,10 +103,6 @@ pub fn build(app: &Application, preset: Option<usize>) {
     view_btn.set_tooltip_text(Some("Font size & scale"));
     view_btn.add_css_class("flat");
     header.pack_end(&view_btn);
-    // Baseline font DPI captured before any scaling; the UI scale multiplies it.
-    let base_dpi = gtk4::Settings::default()
-        .map(|s| s.gtk_xft_dpi())
-        .unwrap_or(96 * 1024);
 
     // Centered session switcher: shows the current session's name; its popover
     // lists saved sessions (click to switch) and a New-session action.
@@ -135,7 +129,6 @@ pub fn build(app: &Application, preset: Option<usize>) {
         current: None,
         save_sessions: false,
         session_btn: session_btn.clone(),
-        base_dpi,
         font_readout: font_readout.clone(),
         scale_readout: scale_readout.clone(),
     }));
@@ -287,25 +280,19 @@ fn view_row(title: &str, readout: &gtk4::Label, on_step: impl Fn(i32) + 'static)
 /// Apply the current font size + UI scale: scale all widget fonts via the font
 /// DPI, set each terminal's base font and zoom, and refresh the editor CSS.
 pub fn apply_view(state: &Shared) {
-    let (font, size, scale, base_dpi) = {
+    let (font, size, scale) = {
         let s = state.borrow();
-        (s.cfg.font.clone(), s.cfg.font_size, s.cfg.scale, s.base_dpi)
+        (s.cfg.font.clone(), s.cfg.font_size, s.cfg.scale)
     };
-    if let Some(settings) = gtk4::Settings::default() {
-        let dpi = if (scale - 1.0).abs() < f64::EPSILON {
-            base_dpi // leave the system value untouched at 100%
-        } else {
-            let b = if base_dpi > 0 { base_dpi } else { 96 * 1024 };
-            (b as f64 * scale).round() as i32
-        };
-        settings.set_gtk_xft_dpi(dpi);
+    // Chrome (sidebar, editor, picker, clipboard, …) scales via the stylesheet;
+    // terminals scale via VTE's font-scale. Both use the same factor.
+    {
+        let s = state.borrow();
+        theme::install_css(&s.cfg.theme, &s.cfg.font, s.cfg.font_size, s.cfg.scale);
     }
-    // (scale is applied globally via the font DPI above; VTE honors it too)
     if let Some(g) = state.borrow().grid.as_ref() {
-        g.apply_font(&font, size);
+        g.apply_font(&font, size, scale);
     }
-    let s = state.borrow();
-    theme::install_css(&s.cfg.theme, &s.cfg.font, s.cfg.font_size);
 }
 
 /// Sync the popover readouts with the current font size / scale.
