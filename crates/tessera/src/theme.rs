@@ -59,6 +59,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .doc-view {{ background-color: {surface}; }}\n\
          .doc-page {{ background-color: white; box-shadow: 0 1px 8px rgba(0,0,0,0.55); }}\n\
          .csv-table {{ background-color: {bg}; }}\n\
+         .csv-table > listview > row:nth-child(even) {{ background-color: alpha({fg}, 0.04); }}\n\
          .csv-table > header {{ background-color: {surface}; }}\n\
          .csv-table > header button {{ font-weight: bold; color: {fg}; }}\n\
          .csv-cell {{ font-family: \"{font}\", monospace; font-size: {font_size}pt; \
