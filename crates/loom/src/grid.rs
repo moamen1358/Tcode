@@ -94,6 +94,47 @@ fn build_tree(panes: &[Pane]) -> (gtk4::Widget, Vec<PanedInfo>) {
     (root, all)
 }
 
+/// Drop every terminal's scrollback for the duration of a resize drag — so VTE
+/// can't flood/garble the buffer while re-wrapping (and a SIGWINCH-aware prompt
+/// can't stack reprints) — then restore it ~60ms after the drag settles. Shared
+/// by the grid's own dividers and external ones (the editor / sidebar dividers,
+/// which resize the terminals too but aren't part of the grid's paned tree).
+fn suppress_reflow(
+    weak: &Weak<RefCell<GridInner>>,
+    timer: &Rc<Cell<Option<glib::SourceId>>>,
+    resizing: &Rc<Cell<bool>>,
+) {
+    if let Some(id) = timer.take() {
+        id.remove();
+    }
+    if !resizing.replace(true) {
+        if let Some(inner) = weak.upgrade() {
+            // try_borrow: a programmatic position change can fire this while the
+            // grid is mid-borrow_mut (e.g. rebuild).
+            if let Ok(g) = inner.try_borrow() {
+                for p in &g.panes {
+                    p.set_resizing(true);
+                }
+            }
+        }
+    }
+    let weak2 = weak.clone();
+    let timer2 = timer.clone();
+    let resizing2 = resizing.clone();
+    let id = glib::timeout_add_local_once(Duration::from_millis(60), move || {
+        timer2.set(None);
+        resizing2.set(false);
+        if let Some(inner) = weak2.upgrade() {
+            if let Ok(g) = inner.try_borrow() {
+                for p in &g.panes {
+                    p.set_resizing(false);
+                }
+            }
+        }
+    });
+    timer.set(Some(id));
+}
+
 impl GridInner {
     fn refresh_active(&self) {
         for (i, p) in self.panes.iter().enumerate() {
@@ -150,43 +191,12 @@ impl GridInner {
             // a fast drag those partial re-wraps render the prompt garbled over
             // itself. Drop scrollback to 0 for the duration of any drag and restore
             // it shortly after it settles, so neither happens.
-            let weak = self.self_weak.clone();
-            let timer = self.resize_timer.clone();
-            let resizing = self.resizing.clone();
             for (paned, _, _) in &self.paneds {
-                let weak = weak.clone();
-                let timer = timer.clone();
-                let resizing = resizing.clone();
+                let weak = self.self_weak.clone();
+                let timer = self.resize_timer.clone();
+                let resizing = self.resizing.clone();
                 paned.connect_position_notify(move |_| {
-                    if let Some(id) = timer.take() {
-                        id.remove();
-                    }
-                    if !resizing.replace(true) {
-                        if let Some(inner) = weak.upgrade() {
-                            // try_borrow: a programmatic position change can fire this
-                            // notify while the grid is mid-borrow_mut (e.g. rebuild).
-                            if let Ok(g) = inner.try_borrow() {
-                                for p in &g.panes {
-                                    p.set_resizing(true);
-                                }
-                            }
-                        }
-                    }
-                    let weak2 = weak.clone();
-                    let timer2 = timer.clone();
-                    let resizing2 = resizing.clone();
-                    let id = glib::timeout_add_local_once(Duration::from_millis(60), move || {
-                        timer2.set(None);
-                        resizing2.set(false);
-                        if let Some(inner) = weak2.upgrade() {
-                            if let Ok(g) = inner.try_borrow() {
-                                for p in &g.panes {
-                                    p.set_resizing(false);
-                                }
-                            }
-                        }
-                    });
-                    timer.set(Some(id));
+                    suppress_reflow(&weak, &timer, &resizing);
                 });
             }
         }
@@ -420,6 +430,15 @@ impl Grid {
         });
     }
 
+    /// Suppress terminal reflow for a resize driven from outside the grid — the
+    /// editor or sidebar divider, which resizes the terminals (incl. a zoomed one)
+    /// but isn't one of the grid's own paneds. Call on each of their position
+    /// changes; mirrors the grid's internal divider handling.
+    pub fn on_external_resize(&self) {
+        let g = self.inner.borrow();
+        suppress_reflow(&g.self_weak, &g.resize_timer, &g.resizing);
+    }
+
     /// Number of live terminal panes (used to persist the session layout).
     pub fn pane_count(&self) -> usize {
         self.inner.borrow().panes.len()
@@ -427,8 +446,8 @@ impl Grid {
 
     /// Apply the base font (point size) and the UI zoom to every terminal.
     /// Non-destructive (no scrollback touch), so it's safe to re-apply when
-    /// revealing a live session. Open-time garble is handled by the restore poll's
-    /// `begin_restore`/`end_restore`.
+    /// revealing a live session. Open-time garble is avoided by spawning the
+    /// shells only once each pane has its final size (see `spawn_pending`).
     pub fn apply_font(&self, font: &str, size: u32, scale: f64) {
         let desc = FontDescription::from_string(&format!("{font} {size}"));
         for p in &self.inner.borrow().panes {

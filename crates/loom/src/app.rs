@@ -831,6 +831,31 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_end_child(false);
     content.set_position(240);
 
+    // Dragging the editor or sidebar divider resizes the terminals too, but those
+    // dividers aren't part of the grid's paned tree — wire them to the same reflow
+    // suppression so a live resize (including while a pane is zoomed) doesn't
+    // garble the focused terminal.
+    {
+        let weak = Rc::downgrade(state);
+        center.connect_position_notify(move |_| {
+            if let Some(st) = weak.upgrade() {
+                if let Some(g) = st.borrow().grid.as_ref() {
+                    g.on_external_resize();
+                }
+            }
+        });
+    }
+    {
+        let weak = Rc::downgrade(state);
+        content.connect_position_notify(move |_| {
+            if let Some(st) = weak.upgrade() {
+                if let Some(g) = st.borrow().grid.as_ref() {
+                    g.on_external_resize();
+                }
+            }
+        });
+    }
+
     // Wrap the content with Frame's annotation layer (shown over the content
     // only while editing a capture), and embed the screenshots gallery at the
     // bottom of the file sidebar.
