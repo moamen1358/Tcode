@@ -74,19 +74,17 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
         .child(&view)
         .build();
 
-    // Line text kept around so we can compute field boundaries on demand.
-    let lines: Rc<Vec<String>> = Rc::new(text.lines().map(str::to_string).collect());
+    // Track which lines have already been colored so each is tagged once.
     let tagged: Rc<RefCell<HashSet<i32>>> = Rc::new(RefCell::new(HashSet::new()));
 
-    // Color the lines currently visible (plus a small margin), once each.
+    // Color the lines currently visible (plus a small margin), once each. Line
+    // text is read straight from the buffer so field offsets are computed against
+    // the exact line model GTK splits on — this fixes lone-CR / CRLF files where
+    // Rust's str::lines() and GtkTextBuffer disagree, and avoids holding a second
+    // full copy of the file.
     let recolor: Rc<dyn Fn()> = {
-        let (view, buffer, lines, tags, tagged) = (
-            view.clone(),
-            buffer.clone(),
-            lines.clone(),
-            tags.clone(),
-            tagged.clone(),
-        );
+        let (view, buffer, tags, tagged) =
+            (view.clone(), buffer.clone(), tags.clone(), tagged.clone());
         Rc::new(move || {
             let rect = view.visible_rect();
             if rect.height() == 0 {
@@ -94,7 +92,7 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
             }
             let top = view.line_at_y(rect.y()).0.line();
             let bot = view.line_at_y(rect.y() + rect.height()).0.line();
-            let last = lines.len() as i32 - 1;
+            let last = buffer.line_count() - 1;
             let from = (top - 4).max(0);
             let to = (bot + 4).min(last);
             let mut done = tagged.borrow_mut();
@@ -102,10 +100,13 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
                 if !done.insert(line) {
                     continue;
                 }
-                let Some(content) = lines.get(line as usize) else {
+                let Some(start) = buffer.iter_at_line(line) else {
                     continue;
                 };
-                for (col, (s, e)) in field_ranges(content, delim).into_iter().enumerate() {
+                let mut end = start.clone();
+                end.forward_to_line_end(); // stops before the line terminator
+                let content = buffer.text(&start, &end, false).to_string();
+                for (col, (s, e)) in field_ranges(&content, delim).into_iter().enumerate() {
                     if e <= s {
                         continue;
                     }
@@ -167,9 +168,23 @@ fn detect_delimiter(text: &str, path: &Path) -> u8 {
         return b'\t';
     }
     let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    // Count each candidate only outside quoted fields, so a quoted header cell
+    // containing commas can't outvote the real delimiter.
+    let count_outside_quotes = |delim: u8| {
+        let mut n = 0usize;
+        let mut in_quotes = false;
+        for &b in line.as_bytes() {
+            if b == b'"' {
+                in_quotes = !in_quotes;
+            } else if b == delim && !in_quotes {
+                n += 1;
+            }
+        }
+        n
+    };
     [b',', b';', b'\t', b'|']
         .into_iter()
-        .map(|d| (d, line.bytes().filter(|&b| b == d).count()))
+        .map(|d| (d, count_outside_quotes(d)))
         .filter(|&(_, n)| n > 0)
         .max_by_key(|&(_, n)| n)
         .map(|(d, _)| d)

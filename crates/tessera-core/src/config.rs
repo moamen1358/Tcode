@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub font: String,
     pub font_size: u32,
-    pub gap: u32,
     pub startup_command: String,
     pub theme: Theme,
 }
@@ -38,7 +37,6 @@ impl Default for Config {
         Config {
             font: "Martian Mono".into(),
             font_size: 11,
-            gap: 8,
             startup_command: String::new(),
             theme: Theme::default(),
         }
@@ -105,7 +103,6 @@ mod tests {
     fn defaults_are_sane() {
         let c = Config::default();
         assert_eq!(c.font_size, 11);
-        assert_eq!(c.gap, 8);
         assert_eq!(c.theme.palette.len(), 16);
         assert!(c.startup_command.is_empty());
     }
@@ -116,7 +113,6 @@ mod tests {
         assert_eq!(c.font_size, 14);
         assert_eq!(c.startup_command, "claude");
         assert_eq!(c.font, "Martian Mono");
-        assert_eq!(c.gap, 8);
     }
 
     #[test]

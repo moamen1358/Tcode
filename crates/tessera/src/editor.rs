@@ -311,7 +311,9 @@ impl Zoomer {
     /// onto any running animation's target so rapid scrolls accumulate smoothly.
     fn zoom_to(&self, px: f64, py: f64, factor: f64) {
         let v = self.state.get();
-        if v.zoom <= 0.0 {
+        // Guard against a non-finite scroll delta (some kinetic/trackpad backends)
+        // turning the zoom factor into NaN, which would poison the transform.
+        if v.zoom <= 0.0 || !factor.is_finite() || factor <= 0.0 {
             return;
         }
         let base = self.anim.get().map(|a| a.target).unwrap_or(v.zoom);
@@ -650,10 +652,12 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
             if !was_fit && old_z > 0.0 {
                 let ratio = z / old_z;
                 let (ax, ay) = anchor.unwrap_or((ohp / 2.0, ovp / 2.0));
-                hadj.set_upper((ohu * ratio).max(ohp));
-                hadj.set_value((oh + ax) * ratio - ax);
-                vadj.set_upper((ovu * ratio).max(ovp));
-                vadj.set_value((ov + ay) * ratio - ay);
+                let hu = (ohu * ratio).max(ohp);
+                hadj.set_upper(hu);
+                hadj.set_value(((oh + ax) * ratio - ax).clamp(0.0, (hu - ohp).max(0.0)));
+                let vu = (ovu * ratio).max(ovp);
+                vadj.set_upper(vu);
+                vadj.set_value(((ov + ay) * ratio - ay).clamp(0.0, (vu - ovp).max(0.0)));
             }
         })
     };
