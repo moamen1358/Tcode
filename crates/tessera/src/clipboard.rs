@@ -1,7 +1,8 @@
 //! Clipboard-history strip in the sidebar: a CLIPBOARD header with a Clear
 //! button, then a scrollable stack of minimal cards — each just the copied text
-//! in a rounded rectangle (two-line preview) with a delete (×). Click a card to
-//! copy it again. Records every text copied to the system clipboard (from any
+//! in a rectangle (two-line preview) with pin and delete (×) buttons. Click a
+//! card to copy it again; pin keeps an entry at the top, exempt from Clear and
+//! the entry cap. Records every text copied to the system clipboard (from any
 //! app) while Tessera runs, newest on top. In-memory only — nothing on disk.
 
 use std::cell::RefCell;
@@ -81,12 +82,21 @@ pub fn build() -> Rc<Panel> {
             Rc::downgrade(&panel),
         );
         clear.connect_clicked(move |_| {
-            while let Some(c) = list.first_child() {
-                list.remove(&c);
+            // Remove every unpinned card; pinned ones stay.
+            let mut child = list.first_child();
+            while let Some(c) = child {
+                let next = c.next_sibling();
+                if !c.has_css_class("pinned") {
+                    list.remove(&c);
+                }
+                child = next;
             }
             *last.borrow_mut() = String::new();
-            if let Some(p) = panel_w.upgrade() {
-                p.show_hint();
+            // Only show the placeholder if nothing (not even a pin) is left.
+            if list.first_child().is_none() {
+                if let Some(p) = panel_w.upgrade() {
+                    p.show_hint();
+                }
             }
         });
     }
@@ -138,7 +148,7 @@ impl Panel {
             self.list.remove(&h);
         }
 
-        // A minimal card: just the copied text in a rounded rectangle.
+        // A minimal card: just the copied text in a rectangle.
         let card = GtkBox::new(Orientation::Horizontal, 0);
         card.add_css_class("clip-card");
 
@@ -156,10 +166,18 @@ impl Panel {
         copy.set_tooltip_text(Some(text.trim()));
         card.append(&copy);
 
+        // Pin: keeps the entry at the top, exempt from Clear and the cap.
+        let pin = Button::from_icon_name("view-pin-symbolic");
+        pin.add_css_class("clip-pin");
+        pin.set_valign(gtk4::Align::Start);
+        pin.set_tooltip_text(Some("Pin"));
+        card.append(&pin);
+
         // Delete (×).
         let del = Button::from_icon_name("window-close-symbolic");
         del.add_css_class("clip-del");
         del.set_valign(gtk4::Align::Start);
+        del.set_tooltip_text(Some("Remove"));
         card.append(&del);
 
         // Click body → re-copy (update `last` first so the resulting change event
@@ -173,6 +191,26 @@ impl Panel {
                 }
             });
         }
+        // Pin toggle → move into / out of the pinned block at the top.
+        {
+            let (list_w, card_w) = (self.list.downgrade(), card.downgrade());
+            pin.connect_clicked(move |_| {
+                let (Some(list), Some(card)) = (list_w.upgrade(), card_w.upgrade()) else {
+                    return;
+                };
+                let now_pinned = !card.has_css_class("pinned");
+                if now_pinned {
+                    card.add_css_class("pinned");
+                } else {
+                    card.remove_css_class("pinned");
+                }
+                // Pinned cards go to the very top; an unpinned card drops just
+                // below the cards that are still pinned.
+                list.remove(&card);
+                let after = if now_pinned { None } else { last_pinned(&list) };
+                list.insert_child_after(&card, after.as_ref());
+            });
+        }
         // Click × → remove just this card (weak refs avoid a card<->closure cycle).
         {
             let (list_w, card_w) = (self.list.downgrade(), card.downgrade());
@@ -183,20 +221,41 @@ impl Panel {
             });
         }
 
-        self.list.prepend(&card); // newest on top
+        // Insert below any pinned cards (a contiguous block at the top), so a
+        // fresh copy is the newest *unpinned* entry.
+        self.list
+            .insert_child_after(&card, last_pinned(&self.list).as_ref());
 
-        // Trim to the cap (oldest fall off the bottom).
+        // Trim unpinned entries to the cap; pinned cards are exempt.
         let mut n = 0;
         let mut child = self.list.first_child();
         while let Some(c) = child {
             let next = c.next_sibling();
-            n += 1;
-            if n > MAX_ENTRIES {
-                self.list.remove(&c);
+            if !c.has_css_class("pinned") {
+                n += 1;
+                if n > MAX_ENTRIES {
+                    self.list.remove(&c);
+                }
             }
             child = next;
         }
     }
+}
+
+/// The last card of the pinned block (pinned cards form a contiguous prefix at
+/// the top of the list), or None if nothing is pinned. New entries are inserted
+/// after this, so pinned cards always stay above the rest.
+fn last_pinned(list: &GtkBox) -> Option<gtk4::Widget> {
+    let mut last = None;
+    let mut child = list.first_child();
+    while let Some(c) = child {
+        if !c.has_css_class("pinned") {
+            break;
+        }
+        child = c.next_sibling();
+        last = Some(c);
+    }
+    last
 }
 
 /// Preview text for a card: whitespace runs (including newlines) collapsed to

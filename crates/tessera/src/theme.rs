@@ -111,18 +111,22 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .clip-header label {{ color: alpha({fg}, 0.45); font-size: 10px; \
                                font-weight: bold; letter-spacing: 1px; }}\n\
          .clip-clear {{ min-height: 0; min-width: 0; padding: 2px 5px; background: none; \
-                        border: none; box-shadow: none; color: alpha({fg}, 0.4); }}\n\
+                        border: none; box-shadow: none; border-radius: 0; \
+                        color: alpha({fg}, 0.4); }}\n\
          .clip-clear:hover {{ color: alpha({fg}, 0.8); background-color: alpha({fg}, 0.08); }}\n\
-         .clip-card {{ background-color: {surface}; border-radius: 7px; }}\n\
+         .clip-card {{ background-color: {surface}; border-radius: 0; }}\n\
+         .clip-card.pinned {{ background-color: alpha({accent}, 0.10); }}\n\
          .clip-copy {{ padding: 6px 9px; background: none; border: none; \
-                       box-shadow: none; border-radius: 7px 0 0 7px; }}\n\
+                       box-shadow: none; border-radius: 0; }}\n\
          .clip-copy:hover {{ background-color: alpha({fg}, 0.05); }}\n\
          .clip-text {{ color: alpha({fg}, 0.85); font-size: 11px; \
                        font-family: \"{font}\", monospace; }}\n\
-         .clip-del {{ min-height: 0; min-width: 0; padding: 2px; margin: 4px 4px 0 2px; \
-                      background: none; border: none; box-shadow: none; \
-                      color: alpha({fg}, 0.25); }}\n\
-         .clip-del:hover {{ color: alpha({fg}, 0.75); background-color: alpha({fg}, 0.08); }}\n\
+         .clip-pin, .clip-del {{ min-height: 0; min-width: 0; padding: 2px; \
+                                 margin: 4px 2px 0 0; background: none; border: none; \
+                                 box-shadow: none; border-radius: 0; color: alpha({fg}, 0.25); }}\n\
+         .clip-pin:hover, .clip-del:hover {{ color: alpha({fg}, 0.75); \
+                                             background-color: alpha({fg}, 0.08); }}\n\
+         .clip-card.pinned .clip-pin {{ color: {accent}; }}\n\
          .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 11px; }}"
     );
     let provider = CssProvider::new();
