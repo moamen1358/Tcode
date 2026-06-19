@@ -1,19 +1,16 @@
-//! The persistent left-side screenshots panel in Tessera's main window: a strip
-//! of the most recent saved screenshots (loaded from the cache dir on startup,
-//! so history survives restarts). Clicking a thumbnail re-opens it in the
-//! annotation canvas; capturing is triggered from the window titlebar.
+//! The persistent left-side screenshots panel in Tessera's main window: a
+//! scrollable strip of every saved screenshot (loaded from the cache dir on
+//! startup, so history survives restarts), showing ~3 at a time. Clicking a
+//! thumbnail re-opens it in the annotation canvas; capturing is from the titlebar.
 
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk4::gdk::{ContentProvider, DragAction, Texture};
+use gtk4::gdk::{DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{gio, Box as GtkBox, Button, DragSource, Orientation, Separator};
-
-/// Only the most recent N screenshots are kept on screen (no scrolling).
-const MAX_SHOTS: usize = 3;
+use gtk4::{Box as GtkBox, Button, DragSource, Orientation, Separator};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
@@ -41,8 +38,14 @@ pub fn build(on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
     list.set_margin_bottom(6);
     list.set_margin_start(6);
     list.set_margin_end(6);
-    // Only the most recent few screenshots are shown — sized to content, no scroll.
-    root.append(&list);
+    // Show ~3 thumbnails at a time; scroll the strip to reach the rest.
+    let scroll = gtk4::ScrolledWindow::builder()
+        .child(&list)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::Automatic)
+        .height_request(290)
+        .build();
+    root.append(&scroll);
 
     let panel = Rc::new(Panel {
         root,
@@ -75,8 +78,7 @@ impl Panel {
         // the screenshot file, so the terminal inserts its path.
         let drag = DragSource::new();
         drag.set_actions(DragAction::COPY);
-        let file = gio::File::for_path(&path);
-        drag.set_content(Some(&ContentProvider::for_value(&file.to_value())));
+        drag.set_content(Some(&crate::dnd::file_drag_provider(&path)));
         {
             let texture = texture.clone();
             drag.connect_drag_begin(move |d, _| d.set_icon(Some(&texture), 0, 0));
@@ -85,22 +87,9 @@ impl Panel {
 
         let on_pick = self.on_pick.clone();
         btn.connect_clicked(move |_| on_pick(path.clone()));
-        // Newest at the top so a fresh capture is immediately visible.
+        // Newest at the top so a fresh capture is immediately visible; older
+        // captures remain below and are reachable by scrolling the strip.
         self.list.prepend(&btn);
-
-        // Keep only the MAX_SHOTS most recent thumbnails: the prepend above put
-        // the newest first, so drop anything past the limit (older captures stay
-        // on disk, they're just no longer shown).
-        let mut shown = 0;
-        let mut child = self.list.first_child();
-        while let Some(c) = child {
-            let next = c.next_sibling();
-            shown += 1;
-            if shown > MAX_SHOTS {
-                self.list.remove(&c);
-            }
-            child = next;
-        }
     }
 
     /// Scan the cache dir for saved shot-*.png paths, sorted oldest first.
@@ -133,23 +122,24 @@ impl Panel {
         shots.into_iter().map(|(_, p)| p).collect()
     }
 
-    /// Populate the strip with the MAX_SHOTS most recent screenshots, decoded
-    /// after the window presents so startup isn't blocked.
-    ///
-    /// `scan_shots` is oldest-first, so we take the tail (the newest few) and add
-    /// them oldest-first — each prepend in `add_saved` then leaves the newest on top.
+    /// Populate the strip with every saved screenshot, decoding a few per idle
+    /// tick so a large history doesn't block startup. `scan_shots` is oldest-first
+    /// and `add_saved` prepends, so the newest ends up on top.
     fn load_existing_deferred(self: &Rc<Self>) {
-        let mut shots = Self::scan_shots();
-        let start = shots.len().saturating_sub(MAX_SHOTS);
-        let recent = shots.split_off(start);
-        if recent.is_empty() {
+        let shots = Self::scan_shots();
+        if shots.is_empty() {
             return;
         }
         let panel = self.clone();
-        glib::idle_add_local_once(move || {
-            for p in recent {
-                panel.add_saved(p);
+        let mut iter = shots.into_iter();
+        glib::idle_add_local(move || {
+            for _ in 0..4 {
+                match iter.next() {
+                    Some(p) => panel.add_saved(p),
+                    None => return glib::ControlFlow::Break,
+                }
             }
+            glib::ControlFlow::Continue
         });
     }
 }
