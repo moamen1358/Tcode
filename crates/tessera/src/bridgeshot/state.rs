@@ -101,18 +101,22 @@ impl State {
     }
 }
 
-/// Append a new document, make it active, return its index.
+/// Make `pixbuf` the active annotation document, returning its index.
+///
+/// Only the active doc is ever rendered/exported, so we replace rather than
+/// append — otherwise reopening saved shots would pile up full-resolution
+/// pixbufs in memory with no way to reach the older ones.
 pub fn add_doc(shot: &Shot, pixbuf: Pixbuf) -> usize {
     let mut s = shot.borrow_mut();
+    s.docs.clear();
     s.docs.push(Doc {
         pixbuf,
         annos: Vec::new(),
     });
-    let idx = s.docs.len() - 1;
-    s.active = Some(idx);
+    s.active = Some(0);
     s.drag = None;
     s.fit = true;
-    idx
+    0
 }
 
 /// Widget point -> image point using the active transform.

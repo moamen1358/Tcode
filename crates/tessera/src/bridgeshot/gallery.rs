@@ -17,6 +17,13 @@ pub fn shots_dir() -> PathBuf {
     glib::user_cache_dir().join("tessera").join("bridgeshot")
 }
 
+/// True for a canonical `shot-<digits>.png` filename (our own exports).
+fn is_shot_name(name: &str) -> bool {
+    name.strip_prefix("shot-")
+        .and_then(|s| s.strip_suffix(".png"))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 pub struct Panel {
     pub root: GtkBox,
     list: GtkBox,
@@ -104,18 +111,23 @@ impl Panel {
         };
         let mut shots: Vec<(std::time::SystemTime, PathBuf)> = entries
             .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension().and_then(|x| x.to_str()) == Some("png")
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("shot-"))
-            })
-            .map(|p| {
-                let t = std::fs::metadata(&p)
+            .filter_map(|e| {
+                // Regular files only: skip symlinks/dirs so a planted shot-*.png
+                // symlink can't be decoded or dragged out as an arbitrary path.
+                // (DirEntry::file_type doesn't traverse the symlink itself.)
+                if !e.file_type().ok()?.is_file() {
+                    return None;
+                }
+                let p = e.path();
+                // Strict shot-<digits>.png, not just a "shot-" prefix.
+                if !is_shot_name(p.file_name()?.to_str()?) {
+                    return None;
+                }
+                let t = e
+                    .metadata()
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                (t, p)
+                Some((t, p))
             })
             .collect();
         shots.sort_by_key(|(t, _)| *t);

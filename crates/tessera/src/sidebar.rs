@@ -31,13 +31,17 @@ fn file_of(info: &gio::FileInfo) -> Option<gio::File> {
         .and_then(|obj| obj.downcast::<gio::File>().ok())
 }
 
-/// Recursively remove the custom hover class across a widget subtree.
+/// Remove the custom hover class across a widget subtree. Iterative (an explicit
+/// stack) so a deeply nested tree can't overflow the call stack.
 fn clear_hovered(w: &impl IsA<gtk4::Widget>) {
-    w.remove_css_class("hovered");
-    let mut child = w.first_child();
-    while let Some(c) = child {
-        clear_hovered(&c);
-        child = c.next_sibling();
+    let mut stack = vec![w.clone().upcast::<gtk4::Widget>()];
+    while let Some(n) = stack.pop() {
+        n.remove_css_class("hovered");
+        let mut c = n.first_child();
+        while let Some(child) = c {
+            c = child.next_sibling();
+            stack.push(child);
+        }
     }
 }
 

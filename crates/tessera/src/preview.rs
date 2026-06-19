@@ -202,13 +202,18 @@ fn prune_cache(current: &Path) {
     };
     let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
         .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .map(|p| {
-            let t = std::fs::metadata(&p)
+        .filter_map(|e| {
+            // Real directories only — file_type() doesn't follow symlinks, so a
+            // planted symlink here can't send remove_dir_all outside the cache.
+            if !e.file_type().ok()?.is_dir() {
+                return None;
+            }
+            let p = e.path();
+            let t = e
+                .metadata()
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            (t, p)
+            Some((t, p))
         })
         .collect();
     if dirs.len() <= KEEP {

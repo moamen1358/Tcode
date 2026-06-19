@@ -78,6 +78,7 @@ fn cache_dir() -> PathBuf {
 fn recolor(svg: &str, color: &str) -> String {
     let s = svg.as_bytes();
     let mut out = String::with_capacity(svg.len() + 16);
+    let mut last = 0; // start of the run not yet copied
     let mut i = 0;
     while i < s.len() {
         if s[i] == b'#' && (i == 0 || s[i - 1] != b'(') {
@@ -86,14 +87,18 @@ fn recolor(svg: &str, color: &str) -> String {
                 j += 1;
             }
             if matches!(j - (i + 1), 3 | 4 | 6 | 8) {
+                // Copy the verbatim run (byte-accurate; '#'/hex are ASCII, so the
+                // indices are valid char boundaries), then the replacement color.
+                out.push_str(&svg[last..i]);
                 out.push_str(color);
                 i = j;
+                last = j;
                 continue;
             }
         }
-        out.push(s[i] as char);
         i += 1;
     }
+    out.push_str(&svg[last..]);
     out
 }
 

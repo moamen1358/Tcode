@@ -5,9 +5,6 @@ use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::ApplicationWindow;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static CAPTURE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Capture ANY window/region via the desktop portal. COSMIC shows its own
 /// interactive picker; the chosen area comes back as a PNG we load. On any
@@ -109,16 +106,9 @@ fn capture_paintable(
     );
     let node = snapshot.to_node()?;
     let texture = renderer.render_texture(&node, None);
-    let tmp = std::env::temp_dir().join(format!(
-        "tessera-bridgeshot-capture-{}-{}.png",
-        std::process::id(),
-        CAPTURE_SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    if let Err(e) = texture.save_to_png(&tmp) {
-        eprintln!("tessera: snapshot save failed: {e}");
-        return None;
-    }
-    let pb = Pixbuf::from_file(&tmp).ok();
-    let _ = std::fs::remove_file(&tmp);
-    pb
+    // Encode to PNG in memory and decode straight back — no temp file on disk.
+    // A predictable, world-readable /tmp path was both a screenshot-disclosure
+    // and a symlink-clobber risk.
+    let bytes = texture.save_to_png_bytes();
+    Pixbuf::from_read(std::io::Cursor::new(bytes.to_vec())).ok()
 }

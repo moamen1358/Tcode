@@ -268,29 +268,41 @@ fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
         return false;
     }
     if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://") {
-        if let Err(e) = Command::new("xdg-open").arg(s).spawn() {
-            eprintln!("tessera: xdg-open failed for {s}: {e}");
+        // The scheme prefix rules out leading-dash flag injection; keep it bounded
+        // and control-char-free before handing it to the browser.
+        if s.len() <= 4096 && !s.contains(char::is_control) {
+            if let Err(e) = Command::new("xdg-open").arg(s).spawn() {
+                eprintln!("tessera: xdg-open failed for {s}: {e}");
+            }
         }
         return true;
     }
-    // Drop a trailing :line[:col] (rustc/grep style) before resolving the path.
-    let s = strip_line_col(s);
-    let path: Option<PathBuf> = if s.starts_with("file://") {
-        gio::File::for_uri(s).path()
-    } else if let Some(rest) = s.strip_prefix("~/") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest))
-    } else if s.starts_with('/') {
-        Some(PathBuf::from(s))
-    } else {
-        Some(term_cwd(terminal).join(s))
-    };
-    match path {
-        Some(p) if p.exists() => {
-            on_open(&p);
-            true
+    // Resolve a matched token to a path. Try the literal text first, then — only
+    // if that doesn't exist — drop a trailing :line[:col] (compiler/grep style),
+    // so a real file named e.g. "notes:2024" isn't mangled into "notes".
+    let resolve = |cand: &str| -> Option<PathBuf> {
+        if cand.starts_with("file://") {
+            gio::File::for_uri(cand).path()
+        } else if let Some(rest) = cand.strip_prefix("~/") {
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(rest))
+        } else if cand.starts_with('/') {
+            Some(PathBuf::from(cand))
+        } else {
+            Some(term_cwd(terminal).join(cand))
         }
-        _ => false,
+    };
+    if let Some(p) = resolve(s).filter(|p| p.exists()) {
+        on_open(&p);
+        return true;
     }
+    let stripped = strip_line_col(s);
+    if stripped != s {
+        if let Some(p) = resolve(stripped).filter(|p| p.exists()) {
+            on_open(&p);
+            return true;
+        }
+    }
+    false
 }
 
 /// Strip a trailing `:line` or `:line:col` suffix (compiler/grep style) so the

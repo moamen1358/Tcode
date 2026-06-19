@@ -67,36 +67,54 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
     cr.set_source_rgb(BG.0, BG.1, BG.2);
     let _ = cr.paint();
 
-    let mut s = shot.borrow_mut();
-    let Some(doc_idx) = s.active else {
+    // Phase 1: recompute Fit (the only mutation) under a brief mutable borrow.
+    let prepared = {
+        let mut s = shot.borrow_mut();
+        let dims = s.active.and_then(|idx| {
+            s.docs.get(idx).map(|d| {
+                (
+                    idx,
+                    d.pixbuf.width().max(1) as f64,
+                    d.pixbuf.height().max(1) as f64,
+                )
+            })
+        });
+        match dims {
+            Some((doc_idx, iw, ih)) => {
+                if s.fit || s.scale.abs() < 1e-6 {
+                    let scale = (w as f64 / iw).min(h as f64 / ih).min(4.0);
+                    let scale = if scale.is_finite() && scale > 0.0 {
+                        scale
+                    } else {
+                        1.0
+                    };
+                    s.scale = scale;
+                    s.off_x = (w as f64 - iw * scale) / 2.0;
+                    s.off_y = (h as f64 - ih * scale) / 2.0;
+                }
+                Some((doc_idx, s.scale, s.off_x, s.off_y))
+            }
+            None => None,
+        }
+    };
+    let Some((doc_idx, scale, off_x, off_y)) = prepared else {
         draw_hint(cr, w, h);
         return;
     };
-    let Some(doc) = s.docs.get(doc_idx) else {
-        draw_hint(cr, w, h);
-        return;
-    };
-    let pb = doc.pixbuf.clone();
 
+    // Phase 2: render under a *shared* borrow, so a re-entrant read can't abort.
+    let s = shot.borrow();
+    let Some(doc) = s.docs.get(doc_idx) else {
+        return;
+    };
+    let pb = &doc.pixbuf;
     let iw = pb.width().max(1) as f64;
     let ih = pb.height().max(1) as f64;
-    if s.fit || s.scale.abs() < 1e-6 {
-        let scale = (w as f64 / iw).min(h as f64 / ih).min(4.0);
-        let scale = if scale.is_finite() && scale > 0.0 {
-            scale
-        } else {
-            1.0
-        };
-        s.scale = scale;
-        s.off_x = (w as f64 - iw * scale) / 2.0;
-        s.off_y = (h as f64 - ih * scale) / 2.0;
-    }
-    let scale = s.scale;
 
     let _ = cr.save();
-    cr.translate(s.off_x, s.off_y);
+    cr.translate(off_x, off_y);
     cr.scale(scale, scale);
-    cr.set_source_pixbuf(&pb, 0.0, 0.0);
+    cr.set_source_pixbuf(pb, 0.0, 0.0);
     let _ = cr.paint();
 
     // Outline the image so its edge is visible even when the capture's own
@@ -106,9 +124,7 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
     cr.rectangle(0.0, 0.0, iw, ih);
     let _ = cr.stroke();
 
-    if let Some(doc) = s.docs.get(doc_idx) {
-        paint_annotations(cr, &doc.annos, scale);
-    }
+    paint_annotations(cr, &doc.annos, scale);
 
     // In-progress preview in the current color.
     if let Some(drag) = &s.drag {
