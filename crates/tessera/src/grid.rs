@@ -166,7 +166,7 @@ impl GridInner {
                     let weak2 = weak.clone();
                     let timer2 = timer.clone();
                     let resizing2 = resizing.clone();
-                    let id = glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                    let id = glib::timeout_add_local_once(Duration::from_millis(60), move || {
                         timer2.set(None);
                         resizing2.set(false);
                         if let Some(inner) = weak2.upgrade() {
@@ -381,7 +381,7 @@ impl Grid {
             }
         }
         let inner = self.inner.clone();
-        glib::timeout_add_local_once(Duration::from_millis(150), move || {
+        glib::timeout_add_local_once(Duration::from_millis(60), move || {
             for p in &inner.borrow().panes {
                 p.set_resizing(false);
             }
