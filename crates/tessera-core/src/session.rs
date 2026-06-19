@@ -39,9 +39,6 @@ pub struct Session {
     /// the terminals reopen resized exactly how you left them.
     #[serde(default)]
     pub divisors: Vec<f64>,
-    /// Reserved (not captured yet): per-terminal working directories.
-    #[serde(default)]
-    pub cwds: Vec<PathBuf>,
     /// Open editor file paths, in tab order.
     #[serde(default)]
     pub files: Vec<PathBuf>,
@@ -71,7 +68,6 @@ impl Session {
             root,
             panes: 1,
             divisors: Vec::new(),
-            cwds: Vec::new(),
             files: Vec::new(),
             active: None,
             editor_split: None,

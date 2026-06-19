@@ -9,6 +9,3 @@ Screenshot_*.png
 
 # npm wrapper (scripts only; no deps)
 node_modules/
-
-# Generated GUI concept mockups (kept locally, not versioned)
-docs/tessera-gui-concept-*.png
