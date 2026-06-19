@@ -1,11 +1,12 @@
 //! Tabbed universal file viewer beside the terminals (the center `Paned`'s end
 //! child). Each opened file becomes a tab whose content is chosen by file type:
 //! text/code uses GtkSourceView (editable, `Ctrl+S` saves); images use GtkPicture
-//! with a zoom toolbar + Ctrl+scroll; PDFs and office documents are rendered to
-//! page images on a worker thread (see `preview`) and shown as a scrollable,
-//! zoomable column; audio/video play inline via GtkVideo; anything else gets an
-//! info card with "Open externally". `Esc` or a tab's `×` closes it; closing the
-//! last tab hides the panel.
+//! with a zoom toolbar, Ctrl+scroll zoom-to-cursor, and left-drag panning; PDFs
+//! and office documents are rendered to page images on a worker thread (see
+//! `preview`) and shown as a scrollable, zoomable, drag-pannable column;
+//! audio/video play inline via GtkVideo; anything else gets an info card with
+//! "Open externally". `Esc` or a tab's `×` closes it; closing the last tab hides
+//! the panel.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -17,9 +18,10 @@ use gtk4::gdk::{Key, ModifierType};
 use gtk4::glib::{self, Propagation};
 use gtk4::prelude::*;
 use gtk4::{
-    gio, Align, Box as GtkBox, Button, ContentFit, EventControllerKey, EventControllerScroll,
-    EventControllerScrollFlags, Label, Notebook, Orientation, Paned, Picture, PolicyType,
-    PropagationPhase, ScrolledWindow, Video, Widget,
+    gio, Align, Box as GtkBox, Button, ContentFit, EventControllerKey, EventControllerMotion,
+    EventControllerScroll, EventControllerScrollFlags, EventSequenceState, GestureDrag, Label,
+    Notebook, Orientation, Paned, Picture, PolicyType, PropagationPhase, ScrolledWindow, Video,
+    Widget,
 };
 use sourceview5::prelude::*;
 use sourceview5::{Buffer, LanguageManager, StyleSchemeManager, View};
@@ -75,6 +77,10 @@ struct OpenFile {
 }
 
 type OpenFiles = Rc<RefCell<Vec<OpenFile>>>;
+
+/// Apply an absolute zoom, optionally anchored at a viewport point (`None` =
+/// centre). Used by the toolbar, Ctrl+scroll, and keyboard.
+type ZoomFn = Rc<dyn Fn(f64, Option<(f64, f64)>)>;
 
 pub struct Editor {
     pub root: Notebook,
@@ -309,15 +315,17 @@ fn intrinsic_size(pic: &Picture, path: &Path) -> (i32, i32) {
         .unwrap_or((1, 1))
 }
 
-/// Wrap `content` with a thin zoom toolbar (−, live %, +, Fit) and wire Ctrl+
-/// scroll over it. `apply(Some(z))` requests an absolute zoom (1.0 = 100 %);
-/// `apply(None)` requests fit-to-view.
+/// Wrap `content` with a zoom toolbar (−, live %, +, Fit) and full mouse control:
+/// left-drag pans (hand tool), Ctrl+scroll zooms toward the pointer.
+/// `apply(Some(z))` requests an absolute zoom (1.0 = 100 %); `apply(None)` fits.
 fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static) -> Widget {
     content.set_vexpand(true);
     content.set_hexpand(true);
 
     let apply = Rc::new(apply);
     let zoom = Rc::new(Cell::new(1.0_f64));
+    let fit = Rc::new(Cell::new(true));
+    let ptr = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
 
     let bar = GtkBox::new(Orientation::Horizontal, 2);
     bar.add_css_class("viewer-toolbar");
@@ -325,14 +333,42 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
     let pct = Label::new(Some("Fit"));
     pct.add_css_class("viewer-zoom-pct");
 
-    // Set an absolute zoom and update the label.
-    let set_abs: Rc<dyn Fn(f64)> = {
-        let (apply, zoom, pct) = (apply.clone(), zoom.clone(), pct.clone());
-        Rc::new(move |z: f64| {
+    // Apply an absolute zoom, keeping the point under `anchor` (viewport coords,
+    // None = viewport centre) fixed. Anchoring is skipped on the first zoom out
+    // of Fit (there is no prior scale to scale from). We set the adjustment's
+    // upper ourselves from the known scale ratio so the new value isn't clamped
+    // to the stale bounds before the layout pass runs.
+    let zoom_to: ZoomFn = {
+        let (apply, zoom, fit, pct, content) = (
+            apply.clone(),
+            zoom.clone(),
+            fit.clone(),
+            pct.clone(),
+            content.clone(),
+        );
+        Rc::new(move |z: f64, anchor: Option<(f64, f64)>| {
             let z = z.clamp(0.1, 8.0);
+            let old_z = zoom.get();
+            let was_fit = fit.get();
             zoom.set(z);
+            fit.set(false);
             pct.set_text(&format!("{:.0}%", z * 100.0));
+
+            let hadj = content.hadjustment();
+            let vadj = content.vadjustment();
+            let (oh, ohu, ohp) = (hadj.value(), hadj.upper(), hadj.page_size());
+            let (ov, ovu, ovp) = (vadj.value(), vadj.upper(), vadj.page_size());
+
             apply(Some(z));
+
+            if !was_fit && old_z > 0.0 {
+                let ratio = z / old_z;
+                let (ax, ay) = anchor.unwrap_or((ohp / 2.0, ovp / 2.0));
+                hadj.set_upper((ohu * ratio).max(ohp));
+                hadj.set_value((oh + ax) * ratio - ax);
+                vadj.set_upper((ovu * ratio).max(ovp));
+                vadj.set_value((ov + ay) * ratio - ay);
+            }
         })
     };
 
@@ -340,25 +376,26 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
     minus.add_css_class("flat");
     minus.set_tooltip_text(Some("Zoom out"));
     {
-        let (set_abs, zoom) = (set_abs.clone(), zoom.clone());
-        minus.connect_clicked(move |_| set_abs(zoom.get() / 1.25));
+        let (zoom_to, zoom) = (zoom_to.clone(), zoom.clone());
+        minus.connect_clicked(move |_| zoom_to(zoom.get() / 1.25, None));
     }
 
     let plus = Button::from_icon_name("zoom-in-symbolic");
     plus.add_css_class("flat");
     plus.set_tooltip_text(Some("Zoom in"));
     {
-        let (set_abs, zoom) = (set_abs.clone(), zoom.clone());
-        plus.connect_clicked(move |_| set_abs(zoom.get() * 1.25));
+        let (zoom_to, zoom) = (zoom_to.clone(), zoom.clone());
+        plus.connect_clicked(move |_| zoom_to(zoom.get() * 1.25, None));
     }
 
-    let fit = Button::from_icon_name("zoom-fit-best-symbolic");
-    fit.add_css_class("flat");
-    fit.set_tooltip_text(Some("Fit to window"));
+    let fit_btn = Button::from_icon_name("zoom-fit-best-symbolic");
+    fit_btn.add_css_class("flat");
+    fit_btn.set_tooltip_text(Some("Fit to window"));
     {
-        let (apply, zoom, pct) = (apply.clone(), zoom.clone(), pct.clone());
-        fit.connect_clicked(move |_| {
+        let (apply, zoom, fit, pct) = (apply.clone(), zoom.clone(), fit.clone(), pct.clone());
+        fit_btn.connect_clicked(move |_| {
             zoom.set(1.0);
+            fit.set(true);
             pct.set_text("Fit");
             apply(None);
         });
@@ -367,17 +404,25 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
     bar.append(&minus);
     bar.append(&pct);
     bar.append(&plus);
-    bar.append(&fit);
+    bar.append(&fit_btn);
 
-    // Ctrl+scroll zooms (intercept before the ScrolledWindow scrolls).
+    // Track the pointer (viewport coords) so Ctrl+scroll can zoom toward it.
+    let motion = EventControllerMotion::new();
+    {
+        let ptr = ptr.clone();
+        motion.connect_motion(move |_, x, y| ptr.set((x, y)));
+    }
+    content.add_controller(motion);
+
+    // Ctrl+scroll zooms toward the pointer (intercept before the window scrolls).
     let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
     scroll.set_propagation_phase(PropagationPhase::Capture);
     {
-        let (set_abs, zoom) = (set_abs.clone(), zoom.clone());
+        let (zoom_to, zoom, ptr) = (zoom_to.clone(), zoom.clone(), ptr.clone());
         scroll.connect_scroll(move |c, _dx, dy| {
             if c.current_event_state().contains(ModifierType::CONTROL_MASK) {
                 let factor = if dy < 0.0 { 1.1 } else { 1.0 / 1.1 };
-                set_abs(zoom.get() * factor);
+                zoom_to(zoom.get() * factor, Some(ptr.get()));
                 Propagation::Stop
             } else {
                 Propagation::Proceed
@@ -385,6 +430,33 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
         });
     }
     content.add_controller(scroll);
+
+    // Left-drag pans the content (hand tool), with a grab / grabbing cursor.
+    let drag = GestureDrag::new();
+    drag.set_button(gtk4::gdk::BUTTON_PRIMARY);
+    let start = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+    {
+        let (content, start) = (content.clone(), start.clone());
+        drag.connect_drag_begin(move |g, _x, _y| {
+            g.set_state(EventSequenceState::Claimed);
+            start.set((content.hadjustment().value(), content.vadjustment().value()));
+            content.set_cursor_from_name(Some("grabbing"));
+        });
+    }
+    {
+        let (content, start) = (content.clone(), start.clone());
+        drag.connect_drag_update(move |_g, ox, oy| {
+            let (h0, v0) = start.get();
+            content.hadjustment().set_value(h0 - ox);
+            content.vadjustment().set_value(v0 - oy);
+        });
+    }
+    {
+        let content = content.clone();
+        drag.connect_drag_end(move |_g, _ox, _oy| content.set_cursor_from_name(Some("grab")));
+    }
+    content.add_controller(drag);
+    content.set_cursor_from_name(Some("grab"));
 
     let root = GtkBox::new(Orientation::Vertical, 0);
     root.append(&bar);
