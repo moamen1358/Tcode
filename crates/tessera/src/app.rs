@@ -223,7 +223,9 @@ pub fn show_session_picker(state: &Shared) {
 /// Show the "new session" screen: choose a folder + terminal count, then create
 /// and open it. Cancelling returns to the previous session (or the picker).
 fn new_session(state: &Shared) {
-    capture_current(state);
+    // Persist the outgoing session before leaving it, so creating a new session
+    // from inside one doesn't discard its unsaved files/pane changes.
+    save_current(state);
     let window = state.borrow().window.clone();
     let prev = state.borrow().current.clone();
     let st_create = state.clone();
@@ -258,7 +260,8 @@ pub fn open_session(state: &Shared, session: Session) {
     show_grid(state, panes);
 
     for f in &files {
-        if f.exists() {
+        // Skip anything that's gone or is no longer a regular file.
+        if f.is_file() {
             open_file(state, f);
         }
     }
@@ -272,6 +275,15 @@ pub fn open_session(state: &Shared, session: Session) {
 
 /// Switch to another saved session: persist the current one first.
 fn switch_session(state: &Shared, session: Session) {
+    // Clicking the already-open session shouldn't tear it down and rebuild it.
+    if state
+        .borrow()
+        .current
+        .as_ref()
+        .is_some_and(|c| c.id == session.id)
+    {
+        return;
+    }
     save_current(state);
     state.borrow_mut().save_sessions = true;
     open_session(state, session);
@@ -313,6 +325,11 @@ pub fn save_current(state: &Shared) {
 
 /// Rebuild the terminal grid with `n` panes, keeping the session's open files.
 pub fn set_panes(state: &Shared, n: usize) {
+    // Ignore Alt+digit when there's no active session/grid (e.g. on the picker),
+    // so it can't spawn an orphan, session-less grid.
+    if state.borrow().current.is_none() {
+        return;
+    }
     capture_current(state);
     let session = {
         let mut s = state.borrow_mut();
@@ -321,9 +338,8 @@ pub fn set_panes(state: &Shared, n: usize) {
         }
         s.current.clone()
     };
-    match session {
-        Some(s) => open_session(state, s),
-        None => show_grid(state, n),
+    if let Some(s) = session {
+        open_session(state, s);
     }
 }
 
