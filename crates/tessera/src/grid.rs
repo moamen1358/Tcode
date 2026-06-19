@@ -162,8 +162,12 @@ impl GridInner {
                     }
                     if !resizing.replace(true) {
                         if let Some(inner) = weak.upgrade() {
-                            for p in &inner.borrow().panes {
-                                p.set_resizing(true);
+                            // try_borrow: a programmatic position change can fire this
+                            // notify while the grid is mid-borrow_mut (e.g. rebuild).
+                            if let Ok(g) = inner.try_borrow() {
+                                for p in &g.panes {
+                                    p.set_resizing(true);
+                                }
                             }
                         }
                     }
@@ -174,8 +178,10 @@ impl GridInner {
                         timer2.set(None);
                         resizing2.set(false);
                         if let Some(inner) = weak2.upgrade() {
-                            for p in &inner.borrow().panes {
-                                p.set_resizing(false);
+                            if let Ok(g) = inner.try_borrow() {
+                                for p in &g.panes {
+                                    p.set_resizing(false);
+                                }
                             }
                         }
                     });
@@ -247,7 +253,11 @@ impl GridInner {
             self.focus = self.focus.min(self.panes.len().saturating_sub(1));
         }
         if self.panes.is_empty() {
-            self.window.close();
+            // We're inside the grid's borrow_mut here (called from child_exited).
+            // close-request -> save_current -> pane_count() would re-borrow the
+            // same GridInner and panic, so defer the close until the borrow is gone.
+            let win = self.window.clone();
+            glib::idle_add_local_once(move || win.close());
             return;
         }
         self.zoomed = false;

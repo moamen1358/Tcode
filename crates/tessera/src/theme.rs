@@ -10,13 +10,42 @@ pub fn rgba(hex: &str) -> RGBA {
     RGBA::parse(hex).unwrap_or_else(|_| RGBA::new(0.0, 0.0, 0.0, 1.0))
 }
 
+/// Normalize a config color into a CSS-safe `rgba()` literal (opaque black on
+/// anything unparseable). Config strings are interpolated into the global
+/// stylesheet, so a malformed/hostile value must not break parsing or inject CSS.
+fn css_color(s: &str) -> String {
+    let c = rgba(s);
+    format!(
+        "rgba({},{},{},{})",
+        (c.red() * 255.0).round() as u8,
+        (c.green() * 255.0).round() as u8,
+        (c.blue() * 255.0).round() as u8,
+        c.alpha()
+    )
+}
+
+/// Keep only characters legal in a CSS font-family name, so a config font can't
+/// break out of the quoted family or inject declarations.
+fn css_font(s: &str) -> String {
+    let f: String = s
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .collect();
+    if f.trim().is_empty() {
+        "monospace".to_string()
+    } else {
+        f
+    }
+}
+
 /// Install the application-wide stylesheet for the current display.
 pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
-    let bg = &theme.background;
-    let fg = &theme.foreground;
-    let accent = &theme.accent;
-    let surface = &theme.surface;
-    let border = &theme.border;
+    let bg = css_color(&theme.background);
+    let fg = css_color(&theme.foreground);
+    let accent = css_color(&theme.accent);
+    let surface = css_color(&theme.surface);
+    let border = css_color(&theme.border);
+    let font = css_font(font);
     let css = format!(
         ".grid-root {{ background-color: {bg}; }}\n\
          .pane {{ background-color: {bg}; }}\n\

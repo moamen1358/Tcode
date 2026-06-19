@@ -930,7 +930,9 @@ fn fallback_viewer(path: &Path) -> Widget {
 fn open_externally(path: &Path) -> Button {
     let btn = Button::with_label("Open externally");
     btn.add_css_class("fallback-open");
-    let p = path.to_path_buf();
+    // Canonicalize so a path that looks like a flag (e.g. "-x") can't be parsed
+    // as an xdg-open option; fall back to the original if that fails.
+    let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     btn.connect_clicked(move |_| {
         if let Err(e) = std::process::Command::new("xdg-open").arg(&p).spawn() {
             eprintln!("tessera: 'Open externally' failed (xdg-open): {e}");

@@ -325,10 +325,11 @@ impl Panel {
                 break;
             };
             let start = nl + 1;
-            let end = start + len;
-            if end > data.len() {
+            // Checked: a corrupt/hand-edited header with a huge length must not
+            // overflow (debug panic) or wrap past the guard into an invalid slice.
+            let Some(end) = start.checked_add(len).filter(|&e| e <= data.len()) else {
                 break;
-            }
+            };
             let Ok(text) = std::str::from_utf8(&data[start..end]) else {
                 break;
             };
@@ -339,7 +340,7 @@ impl Panel {
                 text: text.to_string(),
                 pinned,
             });
-            i = end + 1; // skip the record's trailing newline
+            i = end.saturating_add(1); // skip the record's trailing newline
         }
         trim_unpinned(&mut entries);
     }
@@ -362,7 +363,15 @@ impl Panel {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(&path, out);
+        if std::fs::write(&path, &out).is_ok() {
+            // History can hold secrets (e.g. a password copied from a manager);
+            // restrict it to the owner.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
 }
 

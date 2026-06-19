@@ -40,6 +40,11 @@ pub fn start_render(path: PathBuf, tx: async_channel::Sender<Msg>, cancel: Arc<A
 }
 
 fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> Result<(), String> {
+    // Canonicalize before anything touches a subprocess: an absolute path can't
+    // be mistaken for a CLI flag by soffice/pdftoppm (a file named e.g. "-x.pdf"
+    // would otherwise be parsed as an option, i.e. argument injection).
+    let canon = path.canonicalize().map_err(|e| e.to_string())?;
+    let path = canon.as_path();
     let cache = cache_dir(path)?;
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
 
