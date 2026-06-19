@@ -3,8 +3,13 @@
 //! to a cache dir at startup, and chosen per file by name/extension, giving the
 //! sidebar Zed/VSCode-style icons independent of the system icon theme.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use gtk4::gdk::Texture;
+use gtk4::gdk_pixbuf::Pixbuf;
 
 macro_rules! icon {
     ($name:literal) => {
@@ -195,7 +200,26 @@ fn icon_name(name: &str, is_dir: bool) -> &'static str {
     }
 }
 
-/// Path to the bundled icon for `name` within icon dir `dir`.
-pub fn icon_path(dir: &Path, name: &str, is_dir: bool) -> PathBuf {
-    dir.join(format!("{}.svg", icon_name(name, is_dir)))
+thread_local! {
+    /// Cache of rasterized icon textures, keyed by (icon name, device px). Only
+    /// ~43 icons at a couple of sizes ever land here, so it stays tiny.
+    static TEXTURES: RefCell<HashMap<(&'static str, i32), Texture>> =
+        RefCell::new(HashMap::new());
+}
+
+/// A crisp icon texture for `name`, rasterized by librsvg at exactly `px` device
+/// pixels (then cached). Rendering the *vector* at the target size — rather than
+/// letting GtkImage scale a fixed natural-size bitmap — keeps the icon sharp at
+/// any DPI. Returns `None` only if the SVG fails to load.
+pub fn icon_texture(dir: &Path, name: &str, is_dir: bool, px: i32) -> Option<Texture> {
+    let icon = icon_name(name, is_dir);
+    let px = px.max(1);
+    if let Some(tex) = TEXTURES.with(|c| c.borrow().get(&(icon, px)).cloned()) {
+        return Some(tex);
+    }
+    let path = dir.join(format!("{icon}.svg"));
+    let pb = Pixbuf::from_file_at_scale(&path, px, px, true).ok()?;
+    let tex = Texture::for_pixbuf(&pb);
+    TEXTURES.with(|c| c.borrow_mut().insert((icon, px), tex.clone()));
+    Some(tex)
 }

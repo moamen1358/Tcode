@@ -217,11 +217,17 @@ impl Sidebar {
 
             if let Some(info) = treerow.item().and_downcast::<gio::FileInfo>() {
                 label.set_label(&info.display_name());
-                // Colored per-type icon from the bundled Material set.
+                // Per-type icon from the bundled Material set, rasterized by
+                // librsvg at the exact device-pixel size (display scale, floored
+                // at 2× so it stays crisp on HiDPI even before the row knows its
+                // monitor) instead of letting GtkImage scale a natural-size bitmap.
                 let is_dir = info.file_type() == gio::FileType::Directory;
                 let name = info.name();
-                let path = crate::icons::icon_path(&icons_dir, &name.to_string_lossy(), is_dir);
-                image.set_from_file(Some(&path));
+                let scale = image.scale_factor().max(2);
+                match crate::icons::icon_texture(&icons_dir, &name.to_string_lossy(), is_dir, 14 * scale) {
+                    Some(tex) => image.set_paintable(Some(&tex)),
+                    None => image.clear(),
+                }
             }
         });
 
