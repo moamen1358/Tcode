@@ -86,23 +86,18 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         })
     };
 
-    // Capture: hide the window so it isn't in the shot, run the portal picker,
-    // then annotate the result and restore the window.
+    // Capture: keep Tessera visible (so you can capture it too, and so the
+    // self-snapshot fallback has a window to snapshot) and run the portal picker;
+    // the compositor's picker overlays the desktop and lets you choose any
+    // window/region. The result is loaded into the annotation canvas.
     let on_capture: Rc<dyn Fn()> = {
         let (main, show_annot) = (main.clone(), show_annot.clone());
         Rc::new(move || {
-            main.set_visible(false);
-            let (main, show_annot) = (main.clone(), show_annot.clone());
-            let w_weak = main.downgrade();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
-                capture::capture_screen(&main, move |pb| {
-                    if let Some(pb) = pb {
-                        show_annot(pb);
-                    }
-                    if let Some(w) = w_weak.upgrade() {
-                        w.present();
-                    }
-                });
+            let show_annot = show_annot.clone();
+            capture::capture_screen(&main, move |pb| {
+                if let Some(pb) = pb {
+                    show_annot(pb);
+                }
             });
         })
     };
