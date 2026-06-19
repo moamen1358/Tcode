@@ -104,8 +104,8 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 Propagation::Stop
             }
             Key::p => {
-                let win = st.borrow().window.clone();
-                crate::bridgeshot::launch(&win);
+                let btn = st.borrow().shots_btn.clone();
+                btn.set_active(!btn.is_active());
                 Propagation::Stop
             }
             _ => Propagation::Proceed,

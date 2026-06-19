@@ -4,17 +4,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk4::gdk_pixbuf::{InterpType, Pixbuf};
+use gtk4::gdk_pixbuf::Pixbuf;
 
-use super::tools::{thumb_dims, Annotation, Rgb, Tool, DEFAULT_COLOR};
-
-const THUMB_W: i32 = 128;
+use super::tools::{Annotation, Rgb, Tool, DEFAULT_COLOR};
 
 /// One captured/opened image and its annotations.
 pub struct Doc {
     pub pixbuf: Pixbuf,
     pub annos: Vec<Annotation>,
-    pub thumb: Pixbuf,
 }
 
 /// An annotation being drawn (not yet committed), in image space.
@@ -33,7 +30,6 @@ pub struct State {
     pub scale: f64,
     pub off_x: f64,
     pub off_y: f64,
-    pub exports: u32,
 }
 
 pub type Shot = Rc<RefCell<State>>;
@@ -49,7 +45,6 @@ impl State {
             scale: 1.0,
             off_x: 0.0,
             off_y: 0.0,
-            exports: 0,
         }
     }
 
@@ -81,19 +76,21 @@ impl State {
             d.annos.clear();
         }
     }
+
+    /// Drop the current annotation document (after save or cancel).
+    pub fn clear_docs(&mut self) {
+        self.docs.clear();
+        self.active = None;
+        self.drag = None;
+    }
 }
 
-/// Append a new document (building its thumbnail), make it active, return index.
+/// Append a new document, make it active, return its index.
 pub fn add_doc(shot: &Shot, pixbuf: Pixbuf) -> usize {
-    let (tw, th) = thumb_dims(pixbuf.width(), pixbuf.height(), THUMB_W);
-    let thumb = pixbuf
-        .scale_simple(tw, th, InterpType::Bilinear)
-        .unwrap_or_else(|| pixbuf.clone());
     let mut s = shot.borrow_mut();
     s.docs.push(Doc {
         pixbuf,
         annos: Vec::new(),
-        thumb,
     });
     let idx = s.docs.len() - 1;
     s.active = Some(idx);

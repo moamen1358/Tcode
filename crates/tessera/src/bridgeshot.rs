@@ -1,8 +1,11 @@
-//! BridgeShot — capture any window/region (via the desktop screenshot portal),
-//! annotate it with boxes, arrows, freehand pen, highlighter, and text in a
-//! chosen color, switch between this session's captures via a toggleable left
-//! thumbnail gallery, then export an annotated PNG (also copied to the
-//! clipboard) to hand to an AI or paste into a chat.
+//! BridgeShot — integrated screenshot annotator for Tessera's main window.
+//!
+//! A persistent panel on the left lists saved screenshots (loaded from the cache
+//! dir, so they survive restarts). Capturing (its Capture button, or Alt+P opens
+//! the panel) grabs any window/region via the desktop screenshot portal and
+//! shows an annotation canvas *in place of the center work area* — draw boxes,
+//! arrows, freehand pen, highlighter, and text in a chosen color — then Save
+//! exports a PNG (also copied to the clipboard) and adds it to the panel.
 
 mod canvas;
 mod capture;
@@ -12,6 +15,7 @@ mod state;
 mod tools;
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gtk4::gdk::Texture;
@@ -20,63 +24,159 @@ use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    ApplicationWindow, Box as GtkBox, Button, DrawingArea, DropTarget, EventControllerKey,
-    HeaderBar, Label, Orientation, Paned, Separator, ToggleButton, Window,
+    ApplicationWindow, Box as GtkBox, Button, DrawingArea, EventControllerKey, Label, Orientation,
+    Overlay, Paned, Separator, ToggleButton, Widget,
 };
 
 use state::{add_doc, Shot, State};
 use tools::{Tool, PALETTE};
 
-/// Open the BridgeShot window. `main` is Tessera's window — used as the capture
-/// fallback when the portal is unavailable.
-pub fn launch(main: &ApplicationWindow) {
+/// The integrated BridgeShot UI: a horizontal split of the left screenshots
+/// panel and the (overlay-wrapped) main content. `root` is meant to be the
+/// window's child; `panel_root` is exposed so the host can toggle it.
+pub struct BridgeShot {
+    pub root: Paned,
+    pub panel_root: GtkBox,
+}
+
+/// Wrap `content` (Tessera's sidebar+center) with the BridgeShot panel and a
+/// hidden annotation layer. `main` is the window — hidden during capture so it
+/// isn't in the shot, and the clipboard owner on export.
+pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> BridgeShot {
     let shot: Shot = Rc::new(RefCell::new(State::new()));
-
-    let win = Window::builder()
-        .title("BridgeShot")
-        .default_width(1180)
-        .default_height(780)
-        .build();
-    win.add_css_class("bridgeshot-window");
-
-    // ----- header -----
-    let header = HeaderBar::new();
-    let gallery_btn = ToggleButton::new();
-    gallery_btn.set_icon_name("sidebar-show-symbolic");
-    gallery_btn.set_active(true);
-    gallery_btn.set_tooltip_text(Some("Toggle gallery (Alt+G)"));
-    gallery_btn.add_css_class("flat");
-    let capture_btn = Button::with_label("Capture");
-    capture_btn.add_css_class("suggested-action");
-    let open_btn = Button::with_label("Open…");
-    let undo_btn = Button::with_label("Undo");
-    let clear_btn = Button::with_label("Clear");
-    let export_btn = Button::with_label("Export");
-    export_btn.add_css_class("suggested-action");
-    header.pack_start(&gallery_btn);
-    header.pack_start(&capture_btn);
-    header.pack_start(&open_btn);
-    header.pack_end(&export_btn);
-    header.pack_end(&clear_btn);
-    header.pack_end(&undo_btn);
-    win.set_titlebar(Some(&header));
-
-    // ----- canvas + gallery -----
     let canvas_ui = canvas::build(&shot);
     let area = canvas_ui.area.clone();
-    let gallery = gallery::new();
+    let toolbar = build_toolbar(&shot, &area);
 
-    let split = Paned::new(Orientation::Horizontal);
-    split.set_start_child(Some(&gallery.root));
-    split.set_end_child(Some(&canvas_ui.overlay));
-    split.set_resize_start_child(false);
-    split.set_shrink_start_child(false);
-    split.set_resize_end_child(true);
-    split.set_position(160);
+    // Annotation layer: hidden until a capture/open; shown over the content.
+    let annot = GtkBox::new(Orientation::Vertical, 0);
+    annot.add_css_class("bridgeshot-window");
+    annot.set_hexpand(true);
+    annot.set_vexpand(true);
+    annot.set_visible(false);
+    annot.append(&toolbar.row);
+    annot.append(&canvas_ui.overlay);
 
-    // ----- toolbar row (tools + colors) -----
-    let toolbar = GtkBox::new(Orientation::Horizontal, 6);
-    toolbar.add_css_class("bridgeshot-toolbar");
+    let content_overlay = Overlay::new();
+    content_overlay.set_child(Some(content));
+    content_overlay.add_overlay(&annot);
+
+    // Show the annotation layer with a freshly captured/opened image.
+    let show_annot: Rc<dyn Fn(Pixbuf)> = {
+        let (shot, annot, area) = (shot.clone(), annot.clone(), area.clone());
+        Rc::new(move |pb: Pixbuf| {
+            add_doc(&shot, pb);
+            annot.set_visible(true);
+            area.set_focusable(true);
+            area.grab_focus();
+            area.queue_draw();
+        })
+    };
+
+    // Close the annotation layer, discarding the current doc.
+    let close_annot: Rc<dyn Fn()> = {
+        let (shot, annot) = (shot.clone(), annot.clone());
+        Rc::new(move || {
+            shot.borrow_mut().clear_docs();
+            annot.set_visible(false);
+        })
+    };
+
+    // Capture: hide the window so it isn't in the shot, run the portal picker,
+    // then annotate the result and restore the window.
+    let on_capture: Rc<dyn Fn()> = {
+        let (main, show_annot) = (main.clone(), show_annot.clone());
+        Rc::new(move || {
+            main.set_visible(false);
+            let (main, show_annot) = (main.clone(), show_annot.clone());
+            glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
+                let restore = main.clone();
+                capture::capture_screen(&main, move |pb| {
+                    if let Some(pb) = pb {
+                        show_annot(pb);
+                    }
+                    restore.present();
+                });
+            });
+        })
+    };
+
+    // Re-open a saved screenshot to annotate further.
+    let on_pick: Rc<dyn Fn(PathBuf)> = {
+        let show_annot = show_annot.clone();
+        Rc::new(move |path: PathBuf| {
+            if let Ok(pb) = Pixbuf::from_file(&path) {
+                show_annot(pb);
+            }
+        })
+    };
+
+    let panel = gallery::build(on_capture, on_pick);
+
+    // Save: export PNG → add to panel → copy image to clipboard → close.
+    {
+        let (shot, panel, main, close_annot) =
+            (shot.clone(), panel.clone(), main.clone(), close_annot.clone());
+        toolbar.save_btn.connect_clicked(move |_| {
+            if let Ok((path, pb)) = export::export_png(&shot) {
+                main.clipboard().set_texture(&Texture::for_pixbuf(&pb));
+                panel.add_saved(path);
+            }
+            close_annot();
+        });
+    }
+    // Cancel: discard and close.
+    {
+        let close_annot = close_annot.clone();
+        toolbar.cancel_btn.connect_clicked(move |_| close_annot());
+    }
+
+    // Annotation-mode keys: Escape cancels, Ctrl+Z undoes.
+    {
+        let key = EventControllerKey::new();
+        let (shot, area, close_annot) = (shot.clone(), area.clone(), close_annot.clone());
+        key.connect_key_pressed(move |_c, keyval, _code, mods| {
+            if keyval == Key::Escape {
+                close_annot();
+                return glib::Propagation::Stop;
+            }
+            if mods.contains(ModifierType::CONTROL_MASK) && keyval == Key::z {
+                shot.borrow_mut().undo();
+                area.queue_draw();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        annot.add_controller(key);
+    }
+
+    let root = Paned::new(Orientation::Horizontal);
+    root.set_start_child(Some(&panel.root));
+    root.set_end_child(Some(&content_overlay));
+    root.set_resize_start_child(false);
+    root.set_shrink_start_child(false);
+    root.set_resize_end_child(true);
+    root.set_shrink_end_child(false);
+    root.set_position(180);
+
+    BridgeShot {
+        root,
+        panel_root: panel.root.clone(),
+    }
+}
+
+struct Toolbar {
+    row: GtkBox,
+    save_btn: Button,
+    cancel_btn: Button,
+}
+
+/// The annotation toolbar: tool selector (radio group), color swatches, undo /
+/// clear, and Cancel / Save. Tool and color writes go straight to `shot`.
+fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
+    let row = GtkBox::new(Orientation::Horizontal, 6);
+    row.add_css_class("bridgeshot-toolbar");
+
     let tools_def = [
         (Tool::Box, "Box"),
         (Tool::Arrow, "Arrow"),
@@ -84,34 +184,30 @@ pub fn launch(main: &ApplicationWindow) {
         (Tool::Pen, "Pen"),
         (Tool::Highlight, "Highlight"),
     ];
-    let tool_btns: Rc<Vec<(Tool, ToggleButton)>> = Rc::new(
-        tools_def
-            .iter()
-            .map(|(tool, label)| {
-                let b = ToggleButton::with_label(label);
-                b.add_css_class("bridgeshot-tool");
-                (*tool, b)
-            })
-            .collect(),
-    );
-    // Radio grouping: exactly one tool active at a time. connect_toggled then
-    // fires reliably for both clicks and keyboard `set_active` shortcuts.
-    let group_leader = tool_btns[0].1.clone();
-    for (_, b) in tool_btns.iter().skip(1) {
-        b.set_group(Some(&group_leader));
+    let tool_btns: Vec<ToggleButton> = tools_def
+        .iter()
+        .map(|(_, label)| {
+            let b = ToggleButton::with_label(label);
+            b.add_css_class("bridgeshot-tool");
+            b
+        })
+        .collect();
+    let leader = tool_btns[0].clone();
+    for b in tool_btns.iter().skip(1) {
+        b.set_group(Some(&leader));
     }
-    for (tool, btn) in tool_btns.iter() {
+    for (i, (tool, _)) in tools_def.iter().enumerate() {
         let (tool, sb) = (*tool, shot.clone());
-        btn.connect_toggled(move |b| {
+        tool_btns[i].connect_toggled(move |b| {
             if b.is_active() {
                 sb.borrow_mut().tool = tool;
             }
         });
-        toolbar.append(btn);
+        row.append(&tool_btns[i]);
     }
-    tool_btns[0].1.set_active(true); // Box default
+    tool_btns[0].set_active(true); // Box default
 
-    toolbar.append(&Separator::new(Orientation::Vertical));
+    row.append(&Separator::new(Orientation::Vertical));
 
     let swatches = GtkBox::new(Orientation::Horizontal, 4);
     swatches.add_css_class("bridgeshot-swatches");
@@ -137,202 +233,42 @@ pub fn launch(main: &ApplicationWindow) {
         }
         swatches.append(&sw);
     }
-    toolbar.append(&swatches);
+    row.append(&swatches);
 
-    // ----- status bar -----
-    let status = Label::new(Some(
-        "Capture anything, Open an image, or drop one here — then pick a tool and draw.",
-    ));
-    status.set_xalign(0.0);
-    status.set_selectable(true);
-    status.set_wrap(true);
-    status.add_css_class("bridgeshot-status");
+    row.append(&Separator::new(Orientation::Vertical));
 
-    // ----- assemble -----
-    let root = GtkBox::new(Orientation::Vertical, 0);
-    root.append(&toolbar);
-    let mid = GtkBox::new(Orientation::Vertical, 0);
-    mid.set_vexpand(true);
-    mid.append(&split);
-    root.append(&mid);
-    root.append(&status);
-    win.set_child(Some(&root));
-
-    let gallery = Rc::new(gallery);
-
-    // Helper to load a Pixbuf as a new doc + thumbnail.
-    let load: Rc<dyn Fn(Pixbuf)> = {
-        let (shot, area, gallery) = (shot.clone(), area.clone(), gallery.clone());
-        Rc::new(move |pb: Pixbuf| {
-            let idx = add_doc(&shot, pb);
-            let thumb = shot.borrow().docs[idx].thumb.clone();
-            gallery.add_thumb(&shot, &area, idx, &thumb);
-            area.queue_draw();
-        })
-    };
-
-    // ----- gallery toggle -----
+    let undo_btn = Button::with_label("Undo");
     {
-        let gr = gallery.root.clone();
-        gallery_btn.connect_toggled(move |b| gr.set_visible(b.is_active()));
-    }
-
-    // ----- capture (portal, window fallback) -----
-    {
-        let (main, win, status, load) = (main.clone(), win.clone(), status.clone(), load.clone());
-        capture_btn.connect_clicked(move |_| {
-            status.set_text("Choose what to capture…");
-            win.set_visible(false);
-            let (win, status, load) = (win.clone(), status.clone(), load.clone());
-            // Let the window hide before the picker appears.
-            let main = main.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
-                capture::capture_screen(&main, move |pb| {
-                    match pb {
-                        Some(pb) => {
-                            load(pb);
-                            status.set_text("Captured — pick a tool and draw, then Export.");
-                        }
-                        None => status.set_text("Capture cancelled or unavailable."),
-                    }
-                    win.present();
-                });
-            });
-        });
-    }
-
-    // ----- open -----
-    {
-        let (win, status, load) = (win.clone(), status.clone(), load.clone());
-        open_btn.connect_clicked(move |_| {
-            let dialog = gtk4::FileDialog::builder().title("Open image").build();
-            let (status, load) = (status.clone(), load.clone());
-            dialog.open(Some(&win), gtk4::gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        if let Ok(pb) = Pixbuf::from_file(&path) {
-                            load(pb);
-                            status.set_text("Loaded image — pick a tool and draw.");
-                        }
-                    }
-                }
-            });
-        });
-    }
-
-    // ----- drop -----
-    {
-        let dt = DropTarget::new(gtk4::gio::File::static_type(), gtk4::gdk::DragAction::COPY);
-        let (status, load) = (status.clone(), load.clone());
-        dt.connect_drop(move |_t, value, _x, _y| {
-            if let Ok(file) = value.get::<gtk4::gio::File>() {
-                if let Some(path) = file.path() {
-                    if let Ok(pb) = Pixbuf::from_file(&path) {
-                        load(pb);
-                        status.set_text("Loaded image — pick a tool and draw.");
-                        return true;
-                    }
-                }
-            }
-            false
-        });
-        area.add_controller(dt);
-    }
-
-    // ----- undo / clear -----
-    {
-        let (shot, area) = (shot.clone(), area.clone());
+        let (sb, ca) = (shot.clone(), area.clone());
         undo_btn.connect_clicked(move |_| {
-            shot.borrow_mut().undo();
-            area.queue_draw();
+            sb.borrow_mut().undo();
+            ca.queue_draw();
         });
     }
+    let clear_btn = Button::with_label("Clear");
     {
-        let (shot, area) = (shot.clone(), area.clone());
+        let (sb, ca) = (shot.clone(), area.clone());
         clear_btn.connect_clicked(move |_| {
-            shot.borrow_mut().clear_active();
-            area.queue_draw();
+            sb.borrow_mut().clear_active();
+            ca.queue_draw();
         });
     }
+    row.append(&undo_btn);
+    row.append(&clear_btn);
 
-    // ----- export (save PNG + copy image to clipboard) -----
-    {
-        let (shot, status, win) = (shot.clone(), status.clone(), win.clone());
-        export_btn.connect_clicked(move |_| match export::export_png(&shot) {
-            Ok((path, pb)) => {
-                let texture = Texture::for_pixbuf(&pb);
-                win.clipboard().set_texture(&texture);
-                status.set_text(&format!(
-                    "Exported → {} (image copied to clipboard)",
-                    path.display()
-                ));
-            }
-            Err(e) => status.set_text(&format!("Export failed: {e}")),
-        });
+    let spacer = Label::new(None);
+    spacer.set_hexpand(true);
+    row.append(&spacer);
+
+    let cancel_btn = Button::with_label("Cancel");
+    let save_btn = Button::with_label("Save");
+    save_btn.add_css_class("suggested-action");
+    row.append(&cancel_btn);
+    row.append(&save_btn);
+
+    Toolbar {
+        row,
+        save_btn,
+        cancel_btn,
     }
-
-    // ----- window-local keys -----
-    install_keys(&win, &shot, &area, &gallery_btn, &tool_btns);
-
-    // ----- auto-capture Tessera on open (self-snapshot, like before) -----
-    {
-        let (status, load, win) = (status.clone(), load.clone(), win.clone());
-        capture::capture_window_async(main, move |pb| {
-            if let Some(pb) = pb {
-                load(pb);
-                status.set_text("Captured Tessera — or Capture anything else.");
-            }
-            win.present();
-        });
-    }
-}
-
-fn install_keys(
-    win: &Window,
-    shot: &Shot,
-    area: &DrawingArea,
-    gallery_btn: &ToggleButton,
-    tool_btns: &Rc<Vec<(Tool, ToggleButton)>>,
-) {
-    let controller = EventControllerKey::new();
-    let (shot, area, gallery_btn, tool_btns) = (
-        shot.clone(),
-        area.clone(),
-        gallery_btn.clone(),
-        tool_btns.clone(),
-    );
-    controller.connect_key_pressed(move |_c, keyval, _code, mods| {
-        let ctrl = mods.contains(ModifierType::CONTROL_MASK);
-        let alt = mods.contains(ModifierType::ALT_MASK);
-
-        // Ctrl+Z -> undo.
-        if ctrl && keyval == Key::z {
-            shot.borrow_mut().undo();
-            area.queue_draw();
-            return glib::Propagation::Stop;
-        }
-        // Alt+G -> toggle gallery.
-        if alt && keyval == Key::g {
-            gallery_btn.set_active(!gallery_btn.is_active());
-            return glib::Propagation::Stop;
-        }
-        // Bare letters -> select tool (skipped automatically while an Entry has
-        // focus, since the Entry consumes the keypress before it bubbles here).
-        let pick = match keyval {
-            Key::b => Some(0),
-            Key::a => Some(1),
-            Key::t => Some(2),
-            Key::p => Some(3),
-            Key::h => Some(4),
-            _ => None,
-        };
-        if let Some(i) = pick {
-            if !ctrl && !alt {
-                tool_btns[i].1.set_active(true); // grouped -> fires toggled -> sets tool
-                return glib::Propagation::Stop;
-            }
-        }
-        glib::Propagation::Proceed
-    });
-    win.add_controller(controller);
 }

@@ -1,14 +1,14 @@
 //! Render the active document (image + annotations) to a PNG and return a
 //! Pixbuf of the result for the clipboard.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gtk4::cairo;
 use gtk4::gdk::prelude::GdkCairoContextExt;
 use gtk4::gdk_pixbuf::Pixbuf;
-use gtk4::glib;
 
 use super::canvas::paint_annotations;
+use super::gallery::shots_dir;
 use super::state::Shot;
 
 pub fn export_png(shot: &Shot) -> Result<(PathBuf, Pixbuf), String> {
@@ -28,17 +28,33 @@ pub fn export_png(shot: &Shot) -> Result<(PathBuf, Pixbuf), String> {
     }
     drop(s);
 
-    let dir = glib::user_cache_dir().join("tessera").join("bridgeshot");
+    let dir = shots_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let n = {
-        let mut s = shot.borrow_mut();
-        s.exports += 1;
-        s.exports
-    };
+    // Number from the highest shot-N.png already on disk so we never overwrite
+    // a screenshot from a previous session (the panel persists across restarts).
+    let n = next_shot_number(&dir);
     let path = dir.join(format!("shot-{n}.png"));
     let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
     surface.write_to_png(&mut file).map_err(|e| e.to_string())?;
 
     let out = Pixbuf::from_file(&path).map_err(|e| e.to_string())?;
     Ok((path, out))
+}
+
+/// Next free `shot-N` index: one past the highest existing on disk (or 1).
+fn next_shot_number(dir: &Path) -> u32 {
+    let max = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()
+                .and_then(|n| n.strip_prefix("shot-"))
+                .and_then(|n| n.strip_suffix(".png"))
+                .and_then(|n| n.parse::<u32>().ok())
+        })
+        .max()
+        .unwrap_or(0);
+    max + 1
 }

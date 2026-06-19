@@ -25,6 +25,8 @@ pub struct State {
     pub sidebar_btn: ToggleButton,
     pub editor: Option<Editor>,
     pub editor_btn: ToggleButton,
+    pub shots_btn: ToggleButton,
+    pub shots_panel: Option<gtk4::Box>,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -64,15 +66,14 @@ pub fn build(app: &Application, preset: Option<usize>) {
     editor_btn.add_css_class("flat");
     header.pack_end(&editor_btn);
 
-    // BridgeShot: capture + annotate a screenshot (also Alt+P).
-    let shot_btn = Button::from_icon_name("camera-photo-symbolic");
-    shot_btn.set_tooltip_text(Some("BridgeShot — annotate a screenshot (Alt+P)"));
-    shot_btn.add_css_class("flat");
-    header.pack_end(&shot_btn);
-    {
-        let win = window.clone();
-        shot_btn.connect_clicked(move |_| crate::bridgeshot::launch(&win));
-    }
+    // Screenshots panel toggle (also bound to Alt+P) — show/hide the left
+    // screenshots panel. Capturing is the panel's own camera button.
+    let shots_btn = ToggleButton::new();
+    shots_btn.set_icon_name("image-x-generic-symbolic");
+    shots_btn.set_active(true);
+    shots_btn.set_tooltip_text(Some("Toggle screenshots panel (Alt+P)"));
+    shots_btn.add_css_class("flat");
+    header.pack_end(&shots_btn);
 
     window.set_titlebar(Some(&header));
 
@@ -84,6 +85,8 @@ pub fn build(app: &Application, preset: Option<usize>) {
         sidebar_btn: sidebar_btn.clone(),
         editor: None,
         editor_btn: editor_btn.clone(),
+        shots_btn: shots_btn.clone(),
+        shots_panel: None,
     }));
 
     // Flip the current sidebar's visibility whenever the button toggles.
@@ -102,6 +105,16 @@ pub fn build(app: &Application, preset: Option<usize>) {
         editor_btn.connect_toggled(move |btn| {
             if let Some(ed) = st.borrow().editor.as_ref() {
                 ed.root.set_visible(btn.is_active());
+            }
+        });
+    }
+
+    // Show/hide the left screenshots panel.
+    {
+        let st = state.clone();
+        shots_btn.connect_toggled(move |btn| {
+            if let Some(p) = st.borrow().shots_panel.as_ref() {
+                p.set_visible(btn.is_active());
             }
         });
     }
@@ -200,30 +213,26 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_resize_end_child(true);
     content.set_shrink_end_child(false);
     content.set_position(240);
-    window.set_child(Some(&content));
+
+    // Wrap the content with BridgeShot: a persistent screenshots panel on the
+    // left, and a hidden annotation layer that appears (over the content) only
+    // while editing a capture.
+    let bridge = crate::bridgeshot::integrate(&window, &content);
+    window.set_child(Some(&bridge.root));
 
     {
         let mut s = state.borrow_mut();
         s.grid = Some(grid);
         s.sidebar = Some(sidebar);
         s.editor = Some(editor);
+        s.shots_panel = Some(bridge.panel_root.clone());
     }
+    // Respect the current toggle state for the freshly built panel.
+    bridge.panel_root.set_visible(state.borrow().shots_btn.is_active());
 
     // Optionally open a file at startup (TESSERA_OPEN=path) — preview/testing aid.
     if let Some(path) = std::env::var_os("TESSERA_OPEN") {
         open_file(state, std::path::Path::new(&path));
-    }
-
-    // TEST aid: launch BridgeShot; if the value is an image path, also export a
-    // sample annotated shot (TESSERA_BRIDGESHOT=1 or =<image-path>).
-    // TEST aid: launch BridgeShot once Tessera is presented + rendering
-    // (TESSERA_BRIDGESHOT=1), mimicking a real Alt+P trigger so the auto-capture
-    // has a live frame clock.
-    if std::env::var_os("TESSERA_BRIDGESHOT").is_some() {
-        let w = window.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || {
-            crate::bridgeshot::launch(&w);
-        });
     }
 
     // Grab keyboard focus once the window is mapped (COSMIC drops a focus

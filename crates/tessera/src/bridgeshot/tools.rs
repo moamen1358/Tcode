@@ -65,17 +65,6 @@ pub fn arrow_head(
     ]
 }
 
-/// Thumbnail size: fit width to `target_w`, preserve aspect, never upscale.
-pub fn thumb_dims(w: i32, h: i32, target_w: i32) -> (i32, i32) {
-    if w <= 0 || h <= 0 {
-        return (1, 1);
-    }
-    let tw = target_w.min(w).max(1);
-    let scale = tw as f64 / w as f64;
-    let th = ((h as f64 * scale).round() as i32).max(1);
-    (tw, th)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,12 +89,5 @@ mod tests {
     fn arrow_head_zero_length_is_degenerate() {
         let pts = arrow_head(3.0, 3.0, 3.0, 3.0, 2.0, 2.0);
         assert_eq!(pts, [(3.0, 3.0), (3.0, 3.0), (3.0, 3.0)]);
-    }
-
-    #[test]
-    fn thumb_dims_preserve_aspect_and_clamp() {
-        assert_eq!(thumb_dims(1000, 500, 128), (128, 64));
-        assert_eq!(thumb_dims(100, 50, 128), (100, 50)); // never upscale
-        assert_eq!(thumb_dims(0, 10, 128), (1, 1)); // degenerate
     }
 }
