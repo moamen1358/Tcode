@@ -20,6 +20,22 @@ use gtk4::{gio, glib, Application};
 const APP_ID: &str = "dev.tessera.Tessera";
 
 fn main() -> glib::ExitCode {
+    // CLI subcommands, handled before any GTK setup.
+    if let Some(arg) = std::env::args().nth(1) {
+        match arg.as_str() {
+            "update" => return cli_update(),
+            "version" | "--version" | "-V" => {
+                println!("tessera {}", env!("CARGO_PKG_VERSION"));
+                return glib::ExitCode::SUCCESS;
+            }
+            "help" | "--help" | "-h" => {
+                print_usage();
+                return glib::ExitCode::SUCCESS;
+            }
+            _ => {}
+        }
+    }
+
     // Carry over data written under the old name so the rename loses nothing.
     migrate_legacy_data();
     // Make the bundled default font available before GTK initializes fontconfig.
@@ -40,6 +56,55 @@ fn main() -> glib::ExitCode {
         .build();
     app.connect_activate(move |app| app::build(app, preset));
     app.run_with_args(&["tessera"])
+}
+
+/// `tessera update`: pull the latest source and reinstall, via the updater the
+/// installer recorded under the data dir.
+fn cli_update() -> glib::ExitCode {
+    let marker = glib::user_data_dir().join("tessera").join("source");
+    let dir = match std::fs::read_to_string(&marker) {
+        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => {
+            eprint!(
+"tessera: don't know where Tessera's source is.
+Reinstall from a clone (it records the path for next time):
+  git clone https://github.com/moamen1358/tessera
+  cd tessera && ./packaging/install.sh
+"
+            );
+            return glib::ExitCode::FAILURE;
+        }
+    };
+    let script = std::path::Path::new(&dir).join("packaging/update.sh");
+    if !script.is_file() {
+        eprintln!("tessera: updater not found at {}", script.display());
+        return glib::ExitCode::FAILURE;
+    }
+    println!("Updating Tessera from {dir} …");
+    match std::process::Command::new("bash").arg(&script).status() {
+        Ok(s) if s.success() => glib::ExitCode::SUCCESS,
+        Ok(_) => glib::ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("tessera: failed to run the updater: {e}");
+            glib::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Usage text for `tessera --help`.
+fn print_usage() {
+    print!(
+"Tessera — a borderless tiling-terminal workspace.
+
+Usage:
+  tessera [N]        open with N panes (1-16); omit N for the session picker
+  tessera update     update to the latest version and reinstall
+  tessera --version  print the version
+  tessera --help     show this help
+
+Keybindings & config: https://github.com/moamen1358/tessera
+"
+    );
 }
 
 /// One-time migration of data written under the old "loom" name into the new
