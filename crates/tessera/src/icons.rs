@@ -13,7 +13,10 @@ use gtk4::gdk_pixbuf::Pixbuf;
 
 macro_rules! icon {
     ($name:literal) => {
-        ($name, include_str!(concat!("../assets/icons/", $name, ".svg")))
+        (
+            $name,
+            include_str!(concat!("../assets/icons/", $name, ".svg")),
+        )
     };
 }
 
@@ -115,7 +118,9 @@ fn cache_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
             home.join(".cache")
         });
     base.join("tessera").join("icons")

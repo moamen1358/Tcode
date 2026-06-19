@@ -40,7 +40,11 @@ struct GridInner {
 
 /// Build a right-nested Paned chain over `items`. Returns the root widget and the
 /// created Paneds tagged with orientation + the equal-split divisor.
-fn chain(orient: Orientation, items: &[gtk4::Widget], divisor: usize) -> (gtk4::Widget, Vec<PanedInfo>) {
+fn chain(
+    orient: Orientation,
+    items: &[gtk4::Widget],
+    divisor: usize,
+) -> (gtk4::Widget, Vec<PanedInfo>) {
     if items.len() == 1 {
         return (items[0].clone(), Vec::new());
     }
@@ -406,5 +410,4 @@ impl Grid {
     pub fn relayout_positions(&self) {
         self.inner.borrow().set_positions();
     }
-
 }

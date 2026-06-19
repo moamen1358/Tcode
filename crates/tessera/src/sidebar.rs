@@ -4,8 +4,8 @@
 
 use std::path::Path;
 
-use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::prelude::*;
 use gtk4::{
     Align, Box as GtkBox, CustomSorter, DirectoryList, EventControllerMotion, GestureClick, Image,
     Label, ListItem, ListView, NoSelection, Ordering, Orientation, PolicyType, ScrolledWindow,
@@ -65,7 +65,11 @@ fn sorted_dir(dir: &gio::File) -> gio::ListModel {
         let adir = a.file_type() == gio::FileType::Directory;
         let bdir = b.file_type() == gio::FileType::Directory;
         if adir != bdir {
-            return if adir { Ordering::Smaller } else { Ordering::Larger };
+            return if adir {
+                Ordering::Smaller
+            } else {
+                Ordering::Larger
+            };
         }
         match a
             .display_name()
@@ -234,7 +238,12 @@ impl Sidebar {
                 let is_dir = info.file_type() == gio::FileType::Directory;
                 let name = info.name();
                 let scale = image.scale_factor().max(2);
-                match crate::icons::icon_texture(&icons_dir, &name.to_string_lossy(), is_dir, 14 * scale) {
+                match crate::icons::icon_texture(
+                    &icons_dir,
+                    &name.to_string_lossy(),
+                    is_dir,
+                    14 * scale,
+                ) {
                     Some(tex) => image.set_paintable(Some(&tex)),
                     None => image.clear(),
                 }

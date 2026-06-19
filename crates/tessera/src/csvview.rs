@@ -80,8 +80,13 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
 
     // Color the lines currently visible (plus a small margin), once each.
     let recolor: Rc<dyn Fn()> = {
-        let (view, buffer, lines, tags, tagged) =
-            (view.clone(), buffer.clone(), lines.clone(), tags.clone(), tagged.clone());
+        let (view, buffer, lines, tags, tagged) = (
+            view.clone(),
+            buffer.clone(),
+            lines.clone(),
+            tags.clone(),
+            tagged.clone(),
+        );
         Rc::new(move || {
             let rect = view.visible_rect();
             if rect.height() == 0 {
@@ -104,9 +109,10 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
                     if e <= s {
                         continue;
                     }
-                    if let (Some(a), Some(b)) =
-                        (buffer.iter_at_line_offset(line, s), buffer.iter_at_line_offset(line, e))
-                    {
+                    if let (Some(a), Some(b)) = (
+                        buffer.iter_at_line_offset(line, s),
+                        buffer.iter_at_line_offset(line, e),
+                    ) {
                         buffer.apply_tag(&tags[col % tags.len()], &a, &b);
                     }
                 }

@@ -134,7 +134,11 @@ impl Pane {
         let argv: Vec<String> = if startup.is_empty() {
             vec![shell.clone(), "-l".into()]
         } else {
-            vec![shell.clone(), "-c".into(), format!("{startup}; exec {shell}")]
+            vec![
+                shell.clone(),
+                "-c".into(),
+                format!("{startup}; exec {shell}"),
+            ]
         };
         let argv_ref: Vec<&str> = argv.iter().map(String::as_str).collect();
 
@@ -271,9 +275,7 @@ fn strip_line_col(s: &str) -> &str {
     let mut s = s;
     for _ in 0..2 {
         match s.rsplit_once(':') {
-            Some((head, tail))
-                if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) =>
-            {
+            Some((head, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => {
                 s = head;
             }
             _ => break,

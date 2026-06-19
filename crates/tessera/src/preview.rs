@@ -99,7 +99,10 @@ fn office_to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
     let profile = cache.join("soffice-profile");
     let status = Command::new("soffice")
         .args(["--headless", "--norestore", "--invisible", "--nologo"])
-        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .arg(format!(
+            "-env:UserInstallation=file://{}",
+            profile.display()
+        ))
         .args(["--convert-to", "pdf", "--outdir"])
         .arg(cache)
         .arg(path)
@@ -148,7 +151,9 @@ fn cache_dir(path: &Path) -> Result<PathBuf, String> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
             home.join(".cache")
         });
     Ok(base.join("tessera").join("preview").join(fnv1a(&key)))

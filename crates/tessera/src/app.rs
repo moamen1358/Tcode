@@ -229,7 +229,9 @@ pub fn show_grid(state: &Shared, n: usize) {
 
     let sidebar = Sidebar::new(&cwd, state);
     // Respect the current toggle state for the freshly built sidebar.
-    sidebar.root.set_visible(state.borrow().sidebar_btn.is_active());
+    sidebar
+        .root
+        .set_visible(state.borrow().sidebar_btn.is_active());
 
     // Resizable split between the sidebar and the rest (drag to set its width).
     let content = Paned::new(Orientation::Horizontal);
@@ -257,7 +259,9 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.shots_capture = Some(bridge.capture.clone());
     }
     // Respect the current toggle state for the freshly built panel.
-    bridge.panel_root.set_visible(state.borrow().shots_btn.is_active());
+    bridge
+        .panel_root
+        .set_visible(state.borrow().shots_btn.is_active());
 
     // Optionally open a file at startup (TESSERA_OPEN=path) — preview/testing aid.
     if let Some(path) = std::env::var_os("TESSERA_OPEN") {

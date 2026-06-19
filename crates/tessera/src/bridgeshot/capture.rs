@@ -99,7 +99,11 @@ fn capture_paintable(
         return None;
     }
     let snapshot = gtk4::Snapshot::new();
-    paintable.snapshot(snapshot.upcast_ref::<gtk4::gdk::Snapshot>(), pw as f64, ph as f64);
+    paintable.snapshot(
+        snapshot.upcast_ref::<gtk4::gdk::Snapshot>(),
+        pw as f64,
+        ph as f64,
+    );
     let node = snapshot.to_node()?;
     let texture = renderer.render_texture(&node, None);
     let tmp = std::env::temp_dir().join(format!(

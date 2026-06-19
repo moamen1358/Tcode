@@ -24,10 +24,28 @@ pub const PALETTE: [Rgb; 6] = [
 pub const DEFAULT_COLOR: Rgb = PALETTE[1];
 
 pub enum Shape {
-    Box { x: f64, y: f64, w: f64, h: f64 },
-    Arrow { x0: f64, y0: f64, x1: f64, y1: f64 },
-    Text { x: f64, y: f64, content: String, size: f64 },
-    Stroke { points: Vec<(f64, f64)>, highlight: bool },
+    Box {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    },
+    Arrow {
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+    },
+    Text {
+        x: f64,
+        y: f64,
+        content: String,
+        size: f64,
+    },
+    Stroke {
+        points: Vec<(f64, f64)>,
+        highlight: bool,
+    },
 }
 
 pub struct Annotation {

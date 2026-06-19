@@ -143,7 +143,12 @@ pub fn paint_annotations(cr: &cairo::Context, annos: &[Annotation], scale: f64) 
             }
             Shape::Arrow { x0, y0, x1, y1 } => paint_arrow(cr, *x0, *y0, *x1, *y1, c, scale),
             Shape::Stroke { points, highlight } => paint_stroke(cr, points, *highlight, c, scale),
-            Shape::Text { x, y, content, size } => {
+            Shape::Text {
+                x,
+                y,
+                content,
+                size,
+            } => {
                 cr.set_source_rgb(c.0, c.1, c.2);
                 cr.select_font_face("sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
                 cr.set_font_size(*size);

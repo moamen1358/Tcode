@@ -331,7 +331,10 @@ impl Zoomer {
     /// Zoom toward the canvas centre (toolbar ± buttons).
     fn zoom_center(&self, factor: f64) {
         // max(1) so a not-yet-allocated canvas zooms toward a sane point, not (0,0).
-        let (w, h) = (self.area.width().max(1) as f64, self.area.height().max(1) as f64);
+        let (w, h) = (
+            self.area.width().max(1) as f64,
+            self.area.height().max(1) as f64,
+        );
         self.zoom_to(w / 2.0, h / 2.0, factor);
     }
 
@@ -799,7 +802,10 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
         while let Ok(msg) = rx.recv().await {
             match msg {
                 preview::Msg::Pages(n) => {
-                    st.set_text(&format!("Rendering {n} page{}…", if n == 1 { "" } else { "s" }));
+                    st.set_text(&format!(
+                        "Rendering {n} page{}…",
+                        if n == 1 { "" } else { "s" }
+                    ));
                 }
                 preview::Msg::Page(page) => {
                     if !page.exists() {

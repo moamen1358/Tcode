@@ -116,8 +116,12 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
 
     // Save: export PNG → add to panel → copy image to clipboard → close.
     {
-        let (shot, panel, main, close_annot) =
-            (shot.clone(), panel.clone(), main.clone(), close_annot.clone());
+        let (shot, panel, main, close_annot) = (
+            shot.clone(),
+            panel.clone(),
+            main.clone(),
+            close_annot.clone(),
+        );
         toolbar.save_btn.connect_clicked(move |_| {
             match export::export_png(&shot) {
                 Ok((path, pb)) => {

@@ -16,8 +16,16 @@ pub struct Doc {
 
 /// An annotation being drawn (not yet committed), in image space.
 pub enum Drag {
-    Rect { x0: f64, y0: f64, x1: f64, y1: f64 },
-    Stroke { points: Vec<(f64, f64)>, highlight: bool },
+    Rect {
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+    },
+    Stroke {
+        points: Vec<(f64, f64)>,
+        highlight: bool,
+    },
 }
 
 pub struct State {
