@@ -27,15 +27,16 @@ pub struct Panel {
 /// `on_pick` runs when a thumbnail is clicked (with that shot's path).
 pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
     let root = GtkBox::new(Orientation::Vertical, 0);
-    root.add_css_class("bridgeshot-panel");
+    // Reuse the file-sidebar styling (background + right border) for a consistent
+    // look without adding new CSS.
+    root.add_css_class("sidebar");
     root.set_width_request(168);
 
     let header = GtkBox::new(Orientation::Horizontal, 6);
-    header.add_css_class("bridgeshot-panel-header");
+    header.add_css_class("sidebar-header");
     let title = Label::new(Some("Screenshots"));
     title.set_xalign(0.0);
     title.set_hexpand(true);
-    title.add_css_class("bridgeshot-panel-title");
     let capture = Button::from_icon_name("camera-photo-symbolic");
     capture.set_tooltip_text(Some("Capture a screenshot"));
     capture.add_css_class("flat");
