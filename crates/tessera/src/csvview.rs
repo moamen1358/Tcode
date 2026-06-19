@@ -1,28 +1,36 @@
-//! CSV / TSV table viewer — the VS Code "Rainbow CSV" experience: parse with the
-//! `csv` crate (RFC 4180 quoting + escapes), then show the rows in a scrollable,
-//! virtualized `GtkColumnView` with a header row, resizable columns, and
-//! rainbow-colored columns for readability. Returns `None` for binary / non-UTF-8
-//! input so the caller can fall back to the plain text viewer or info card.
+//! CSV / TSV "rainbow" viewer — VS Code Rainbow-CSV style: the raw text with line
+//! numbers and no wrapping (scroll left/right to read a whole wide row), where
+//! each delimiter-separated field is tinted by its column index so columns stay
+//! visually distinct. Returns `None` for binary / non-UTF-8 input so the caller
+//! can fall back to the plain text viewer or info card.
+//!
+//! Coloring is applied lazily to the lines currently in view (re-applied on
+//! scroll) so even a 17k-row × 41-column file opens instantly instead of
+//! tagging hundreds of thousands of fields up front.
 
-use std::cell::Ref;
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::Path;
+use std::rc::Rc;
 
-use gtk4::glib::BoxedAnyObject;
-use gtk4::pango::EllipsizeMode;
 use gtk4::prelude::*;
-use gtk4::{
-    gio, Box as GtkBox, ColumnView, ColumnViewColumn, Label, ListItem, NoSelection, Orientation,
-    PolicyType, ScrolledWindow, SignalListItemFactory, Widget,
-};
+use gtk4::{PolicyType, ScrolledWindow, TextTag, Widget, WrapMode};
+use sourceview5::prelude::*;
+use sourceview5::{Buffer, View};
 
-/// Cap rows materialized into the model; ColumnView is virtualized so this only
-/// guards pathological files (the note tells the user when it kicks in).
-const MAX_ROWS: usize = 100_000;
-/// Number of distinct column colors to cycle through.
-const COLORS: usize = 8;
+/// Don't load multi-GB files into the editor synchronously.
+const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Build a table viewer for `path`, or `None` if it isn't decodable CSV-ish text.
+/// Per-column foreground colors (cycled). Readable on the dark theme.
+const COLORS: [&str; 8] = [
+    "#e06c75", "#98c379", "#61afef", "#e5c07b", "#c678dd", "#56b6c2", "#d19a66", "#d7dae0",
+];
+
+/// Build a rainbow CSV/TSV viewer for `path`, or `None` if it isn't decodable text.
 pub fn csv_viewer(path: &Path) -> Option<Widget> {
+    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_BYTES {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
     if bytes.contains(&0) {
         return None; // binary → caller falls back
@@ -31,123 +39,115 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
     if text.trim().is_empty() {
         return None;
     }
+    let delim = detect_delimiter(&text, path) as char;
 
-    let delim = detect_delimiter(&text, path);
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(false)
-        .flexible(true)
-        .from_reader(text.as_bytes());
-
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut truncated = false;
-    for rec in rdr.records() {
-        let Ok(rec) = rec else { continue };
-        rows.push(rec.iter().map(|s| s.to_string()).collect());
-        if rows.len() >= MAX_ROWS {
-            truncated = true;
-            break;
-        }
+    let buffer = Buffer::new(None);
+    if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme("Adwaita-dark") {
+        buffer.set_style_scheme(Some(&scheme));
     }
-    if rows.is_empty() {
-        return None;
-    }
+    buffer.set_text(&text);
 
-    // A real table needs >1 column or >1 row to be worth a grid; otherwise let
-    // the caller show it as text (avoids a one-cell "table" for prose .txt).
-    let ncols = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
-    if ncols < 2 && rows.len() < 2 {
-        return None;
-    }
+    // One color tag per column slot, cycled.
+    let tags: Vec<TextTag> = COLORS
+        .iter()
+        .map(|c| {
+            let tag = TextTag::builder().foreground(*c).build();
+            buffer.tag_table().add(&tag);
+            tag
+        })
+        .collect();
 
-    let headers: Vec<String> = rows.first().cloned().unwrap_or_default();
-    let data: Vec<Vec<String>> = if rows.len() > 1 {
-        rows.split_off(1)
-    } else {
-        Vec::new()
-    };
-
-    let store = gio::ListStore::new::<BoxedAnyObject>();
-    for row in data {
-        store.append(&BoxedAnyObject::new(row));
-    }
-    let selection = NoSelection::new(Some(store));
-    let column_view = ColumnView::new(Some(selection));
-    column_view.add_css_class("csv-table");
-    column_view.set_show_row_separators(true);
-    column_view.set_show_column_separators(true);
-
-    for c in 0..ncols {
-        let title = headers
-            .get(c)
-            .map(|h| h.trim())
-            .filter(|h| !h.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("#{}", c + 1));
-
-        let color_class = format!("csv-col-{}", c % COLORS);
-        let factory = SignalListItemFactory::new();
-        factory.connect_setup(move |_, item| {
-            let Some(item) = item.downcast_ref::<ListItem>() else {
-                return;
-            };
-            let label = Label::new(None);
-            label.set_xalign(0.0);
-            label.set_ellipsize(EllipsizeMode::End);
-            label.set_margin_start(8);
-            label.set_margin_end(8);
-            label.add_css_class("csv-cell");
-            label.add_css_class(&color_class);
-            item.set_child(Some(&label));
-        });
-        factory.connect_bind(move |_, item| {
-            let Some(item) = item.downcast_ref::<ListItem>() else {
-                return;
-            };
-            let Some(obj) = item.item() else { return };
-            let Ok(boxed) = obj.downcast::<BoxedAnyObject>() else {
-                return;
-            };
-            let row: Ref<Vec<String>> = boxed.borrow();
-            let text = row.get(c).map(String::as_str).unwrap_or("");
-            if let Some(label) = item.child().and_downcast::<Label>() {
-                label.set_text(text);
-            }
-        });
-
-        let column = ColumnViewColumn::new(Some(&title), Some(factory));
-        column.set_resizable(true);
-        // Few columns: expand to share the panel width. Many columns: a fixed
-        // width + horizontal scroll keeps each one readable instead of crushing
-        // them to a sliver. Either way the user can drag-resize.
-        if ncols <= 6 {
-            column.set_expand(true);
-        } else {
-            column.set_fixed_width(160);
-        }
-        column_view.append_column(&column);
-    }
+    let view = View::with_buffer(&buffer);
+    view.set_show_line_numbers(true);
+    view.set_monospace(true);
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_wrap_mode(WrapMode::None); // no wrap → horizontal scroll for wide rows
+    view.set_left_margin(8);
+    view.add_css_class("editor-view");
 
     let scroller = ScrolledWindow::builder()
         .hscrollbar_policy(PolicyType::Automatic)
         .vscrollbar_policy(PolicyType::Automatic)
         .vexpand(true)
         .hexpand(true)
-        .child(&column_view)
+        .child(&view)
         .build();
 
-    if !truncated {
-        return Some(scroller.upcast());
+    // Line text kept around so we can compute field boundaries on demand.
+    let lines: Rc<Vec<String>> = Rc::new(text.lines().map(str::to_string).collect());
+    let tagged: Rc<RefCell<HashSet<i32>>> = Rc::new(RefCell::new(HashSet::new()));
+
+    // Color the lines currently visible (plus a small margin), once each.
+    let recolor: Rc<dyn Fn()> = {
+        let (view, buffer, lines, tags, tagged) =
+            (view.clone(), buffer.clone(), lines.clone(), tags.clone(), tagged.clone());
+        Rc::new(move || {
+            let rect = view.visible_rect();
+            if rect.height() == 0 {
+                return;
+            }
+            let top = view.line_at_y(rect.y()).0.line();
+            let bot = view.line_at_y(rect.y() + rect.height()).0.line();
+            let last = lines.len() as i32 - 1;
+            let from = (top - 4).max(0);
+            let to = (bot + 4).min(last);
+            let mut done = tagged.borrow_mut();
+            for line in from..=to {
+                if !done.insert(line) {
+                    continue;
+                }
+                let Some(content) = lines.get(line as usize) else {
+                    continue;
+                };
+                for (col, (s, e)) in field_ranges(content, delim).into_iter().enumerate() {
+                    if e <= s {
+                        continue;
+                    }
+                    if let (Some(a), Some(b)) =
+                        (buffer.iter_at_line_offset(line, s), buffer.iter_at_line_offset(line, e))
+                    {
+                        buffer.apply_tag(&tags[col % tags.len()], &a, &b);
+                    }
+                }
+            }
+        })
+    };
+
+    // Recolor on scroll and when the view first gets a size (adjustment changes).
+    let vadj = scroller.vadjustment();
+    {
+        let recolor = recolor.clone();
+        vadj.connect_value_changed(move |_| recolor());
     }
-    let root = GtkBox::new(Orientation::Vertical, 0);
-    let note = Label::new(Some(&format!(
-        "Large file — showing the first {MAX_ROWS} rows."
-    )));
-    note.add_css_class("csv-note");
-    note.set_xalign(0.0);
-    root.append(&note);
-    root.append(&scroller);
-    Some(root.upcast())
+    {
+        let recolor = recolor.clone();
+        vadj.connect_changed(move |_| recolor());
+    }
+    // Initial pass once laid out.
+    gtk4::glib::idle_add_local_once(move || recolor());
+
+    Some(scroller.upcast())
+}
+
+/// Character-offset `(start, end)` ranges of each field in `line` (quote-aware,
+/// so a delimiter inside `"…"` doesn't split a field).
+fn field_ranges(line: &str, delim: char) -> Vec<(i32, i32)> {
+    let mut ranges = Vec::new();
+    let mut start = 0i32;
+    let mut idx = 0i32;
+    let mut in_quotes = false;
+    for ch in line.chars() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if ch == delim && !in_quotes {
+            ranges.push((start, idx));
+            start = idx + 1;
+        }
+        idx += 1;
+    }
+    ranges.push((start, idx));
+    ranges
 }
 
 /// Pick the delimiter: `.tsv` is always tab; otherwise the most frequent of

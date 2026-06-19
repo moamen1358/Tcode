@@ -58,18 +58,6 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
                              padding: 0 4px; font-size: 12px; }}\n\
          .doc-view {{ background-color: {surface}; }}\n\
          .doc-page {{ background-color: white; box-shadow: 0 1px 8px rgba(0,0,0,0.55); }}\n\
-         .csv-table {{ background-color: {bg}; }}\n\
-         .csv-table > listview > row:nth-child(even) {{ background-color: alpha({fg}, 0.04); }}\n\
-         .csv-table > header {{ background-color: {surface}; }}\n\
-         .csv-table > header button {{ font-weight: bold; color: {fg}; }}\n\
-         .csv-cell {{ font-family: \"{font}\", monospace; font-size: {font_size}pt; \
-                      padding: 2px 0; }}\n\
-         .csv-note {{ color: alpha({fg}, 0.6); background-color: {surface}; \
-                      padding: 4px 10px; font-size: 11px; }}\n\
-         .csv-col-0 {{ color: #e06c75; }} .csv-col-1 {{ color: #98c379; }}\n\
-         .csv-col-2 {{ color: #61afef; }} .csv-col-3 {{ color: #e5c07b; }}\n\
-         .csv-col-4 {{ color: #c678dd; }} .csv-col-5 {{ color: #56b6c2; }}\n\
-         .csv-col-6 {{ color: #d19a66; }} .csv-col-7 {{ color: #abb2bf; }}\n\
          .fallback-card {{ padding: 28px; }}\n\
          .fallback-title {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
          .fallback-meta {{ color: alpha({fg}, 0.55); }}\n\
