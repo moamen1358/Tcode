@@ -251,6 +251,16 @@ fn new_session(state: &Shared) {
 /// pane count, then reopen its files.
 pub fn open_session(state: &Shared, session: Session) {
     let root = session.root.clone();
+    // If the saved root is gone, don't silently open in a stale cwd — send the
+    // user back to the picker to pick/recreate instead.
+    if !root.is_dir() {
+        eprintln!(
+            "tessera: session root {} is missing; returning to picker",
+            root.display()
+        );
+        show_session_picker(state);
+        return;
+    }
     let panes = session.panes.max(1);
     let files = session.files.clone();
     let active = session.active;
@@ -489,7 +499,8 @@ pub fn show_grid(state: &Shared, n: usize) {
     let clip = {
         let mut s = state.borrow_mut();
         if s.clipboard.is_none() {
-            s.clipboard = Some(crate::clipboard::build());
+            let persist = s.cfg.clipboard_persist;
+            s.clipboard = Some(crate::clipboard::build(persist));
         }
         s.clipboard.clone().unwrap()
     };

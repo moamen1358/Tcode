@@ -36,13 +36,17 @@ if [ -n "${WAYLAND_DISPLAY:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/${WAYLAND_DISPLAY
         "$IMAGE" ${N:+$N}
 else
     echo "Launching on X11 ($DISPLAY)…"
+    # Grant X access only for the container's lifetime, then revoke — narrower than
+    # leaving `xhost +local:docker` enabled afterwards. (The Wayland path needs no
+    # such grant; for stricter isolation use an XAUTHORITY cookie instead.)
     xhost +local:docker >/dev/null 2>&1 || true
-    exec docker run --rm -it \
+    docker run --rm -it \
         -e DISPLAY="$DISPLAY" \
         -e GDK_BACKEND=x11 \
         -e GSK_RENDERER="${GSK_RENDERER:-}" \
         -v /tmp/.X11-unix:/tmp/.X11-unix \
         -v "${WORK}:/work" -w /work \
         "${DRI[@]}" \
-        "$IMAGE" ${N:+$N}
+        "$IMAGE" ${N:+$N} || true
+    xhost -local:docker >/dev/null 2>&1 || true
 fi

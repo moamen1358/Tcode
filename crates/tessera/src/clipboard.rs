@@ -45,6 +45,9 @@ pub struct Panel {
     /// the one our own re-copy triggers).
     last: RefCell<String>,
     next_id: Cell<u64>,
+    /// Whether to read/write the on-disk history (config `clipboard_persist`).
+    /// When false, history is kept only for the running session.
+    persist: bool,
 }
 
 /// Path of the on-disk history (user data dir, so it persists across restarts).
@@ -55,7 +58,9 @@ fn history_path() -> PathBuf {
 }
 
 /// Build the clipboard-history section and start watching the system clipboard.
-pub fn build() -> Rc<Panel> {
+/// `persist` mirrors the config flag: when false, nothing is read from or written
+/// to disk (history lives only for this session).
+pub fn build(persist: bool) -> Rc<Panel> {
     let root = GtkBox::new(Orientation::Vertical, 0);
     root.add_css_class("shots-section");
     root.append(&Separator::new(Orientation::Horizontal));
@@ -94,6 +99,7 @@ pub fn build() -> Rc<Panel> {
         entries: RefCell::new(Vec::new()),
         last: RefCell::new(String::new()),
         next_id: Cell::new(0),
+        persist,
     });
 
     // Clear-all asks first, so the history isn't wiped by a stray click.
@@ -127,7 +133,9 @@ pub fn build() -> Rc<Panel> {
         });
     }
 
-    panel.load_from_disk();
+    if persist {
+        panel.load_from_disk();
+    }
     panel.rebuild();
     panel.monitor();
     panel
@@ -348,6 +356,9 @@ impl Panel {
     /// Persist the history: one record per entry as `{P|U} {byte_len}\n{text}\n`,
     /// which round-trips arbitrary text (including newlines) without escaping.
     fn save(&self) {
+        if !self.persist {
+            return; // session-only history; never touch disk
+        }
         let mut out: Vec<u8> = Vec::new();
         for e in self.entries.borrow().iter() {
             let bytes = e.text.as_bytes();

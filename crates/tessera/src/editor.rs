@@ -406,6 +406,15 @@ impl Zoomer {
 /// zooms toward the cursor, left-drag pans it anywhere, double-click resets to
 /// Fit. A toolbar mirrors the zoom controls. Fit is recomputed on resize.
 fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
+    // Guard against decompression bombs before decoding on the UI thread:
+    // `file_info` reads only the header, so we can reject an absurd pixel count
+    // (a tiny file can declare e.g. 30000x30000 → gigabytes once decoded).
+    const MAX_PIXELS: i64 = 100_000_000; // ~100 MP
+    if let Some((_, w, h)) = Pixbuf::file_info(path) {
+        if w as i64 * h as i64 > MAX_PIXELS {
+            return fallback_viewer(path);
+        }
+    }
     let pixbuf = Pixbuf::from_file(path).ok();
     let (iw, ih) = pixbuf
         .as_ref()

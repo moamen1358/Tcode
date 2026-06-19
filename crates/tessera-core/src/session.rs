@@ -1,7 +1,8 @@
-//! Named workspace sessions. Each session remembers its root folder, terminal
-//! layout (pane count + split sizes + per-terminal working dirs), and the open
-//! editor files, persisted as a TOML file under `~/.config/tessera/sessions/` so
-//! Tessera can reopen exactly where you left off.
+//! Named workspace sessions. Each session remembers its root folder, the number
+//! of terminal panes, and the open editor files, persisted as a TOML file under
+//! `~/.config/tessera/sessions/` so Tessera can reopen where you left off.
+//! (Split sizes + per-terminal working dirs are modeled below but not captured
+//! yet — reserved for a later pass.)
 //!
 //! This is pure data + disk I/O (no GTK); the UI lives in the `tessera` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
@@ -25,11 +26,10 @@ pub struct Session {
     pub root: PathBuf,
     /// Number of terminal panes.
     pub panes: usize,
-    /// Split divider ratios in paned order, for restoring exact split sizes.
+    /// Reserved (not captured yet): split divider ratios for exact split sizes.
     #[serde(default)]
     pub divisors: Vec<f64>,
-    /// Per-terminal working directories (index = pane index); may be shorter
-    /// than `panes` if some couldn't be determined.
+    /// Reserved (not captured yet): per-terminal working directories.
     #[serde(default)]
     pub cwds: Vec<PathBuf>,
     /// Open editor file paths, in tab order.
@@ -73,7 +73,15 @@ impl Session {
         };
         let dir = sessions_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(self.path(), text);
+        let path = self.path();
+        if std::fs::write(&path, text).is_ok() {
+            // Session files record the open-file paths; keep them owner-only.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
 
     /// Remove this session's file.

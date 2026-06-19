@@ -107,12 +107,21 @@ fn run_cancellable(
     mut cmd: Command,
     cancel: &AtomicBool,
 ) -> Result<Option<std::process::ExitStatus>, String> {
+    // Cap wall-clock time so a hung or pathological document can't pin a render
+    // worker (and a soffice/pdftoppm process) indefinitely.
+    const MAX_RENDER: std::time::Duration = std::time::Duration::from_secs(120);
+    let start = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     loop {
         if cancel.load(Ordering::Acquire) {
             let _ = child.kill();
             let _ = child.wait();
             return Ok(None);
+        }
+        if start.elapsed() > MAX_RENDER {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("render timed out".into());
         }
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(status) => return Ok(Some(status)),
@@ -164,8 +173,10 @@ fn office_to_pdf(
 fn rasterize(pdf: &Path, cache: &Path, cancel: &AtomicBool) -> Result<bool, String> {
     // 200 DPI keeps pages crisp when zoomed in (150 visibly pixelates) while
     // staying light enough to cache and load quickly.
+    // Cap rendered pages so a document with tens of thousands of pages can't
+    // exhaust CPU/disk (and memory when each PNG is later loaded as a widget).
     let mut cmd = Command::new("pdftoppm");
-    cmd.args(["-png", "-r", "200"])
+    cmd.args(["-png", "-r", "200", "-l", "300"])
         .arg(pdf)
         .arg(cache.join("page"));
     let status =

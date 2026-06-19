@@ -16,6 +16,9 @@ pub(crate) fn shell_quote(p: &Path) -> String {
     format!("'{}'", cleaned.replace('\'', "'\\''"))
 }
 
+/// Cap on paths accepted from a single drop, so one drop can't flood the shell.
+const MAX_DROP_PATHS: usize = 100;
+
 pub(crate) fn shell_join_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -66,7 +69,13 @@ pub(crate) fn file_drag_provider(path: &Path) -> ContentProvider {
 
 fn paths_from_drop_value(value: &glib::Value) -> Option<Vec<PathBuf>> {
     if let Ok(list) = value.get::<FileList>() {
-        return Some(list.files().into_iter().filter_map(|f| f.path()).collect());
+        return Some(
+            list.files()
+                .into_iter()
+                .filter_map(|f| f.path())
+                .take(MAX_DROP_PATHS)
+                .collect(),
+        );
     }
     if let Ok(file) = value.get::<gio::File>() {
         return Some(file.path().into_iter().collect());
@@ -83,13 +92,17 @@ fn paths_from_drop_value(value: &glib::Value) -> Option<Vec<PathBuf>> {
 fn paths_from_text(text: &str) -> Vec<PathBuf> {
     text.lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && line.len() <= 4096)
         .filter_map(|line| {
-            if line.starts_with("file://") {
-                gio::File::for_uri(line).path()
+            let p = if line.starts_with("file://") {
+                gio::File::for_uri(line).path()?
             } else {
-                Some(PathBuf::from(line))
-            }
+                PathBuf::from(line)
+            };
+            // Only accept text that names a real local path — don't turn arbitrary
+            // dropped text into a bogus "path" fed to the shell.
+            p.exists().then_some(p)
         })
+        .take(MAX_DROP_PATHS)
         .collect()
 }

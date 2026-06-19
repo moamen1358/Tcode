@@ -10,6 +10,10 @@ pub struct Config {
     pub font: String,
     pub font_size: u32,
     pub startup_command: String,
+    /// Persist clipboard history to disk across restarts. On by default; set to
+    /// `false` to keep history only for the running session (nothing written to
+    /// disk) — useful if you don't want copied secrets stored.
+    pub clipboard_persist: bool,
     pub theme: Theme,
 }
 
@@ -38,6 +42,7 @@ impl Default for Config {
             font: "Martian Mono".into(),
             font_size: 11,
             startup_command: String::new(),
+            clipboard_persist: true,
             theme: Theme::default(),
         }
     }
@@ -111,6 +116,7 @@ mod tests {
         assert_eq!(c.font_size, 11);
         assert_eq!(c.theme.palette.len(), 16);
         assert!(c.startup_command.is_empty());
+        assert!(c.clipboard_persist); // on by default
     }
 
     #[test]
