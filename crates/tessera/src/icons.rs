@@ -67,63 +67,17 @@ const ICONS: &[(&str, &str)] = &[
     icon!("key"),
 ];
 
-/// Convert a hex color (the digits after `#`) to its luminance-equivalent gray.
-fn gray_of(hex: &str) -> Option<String> {
-    let (r, g, b) = match hex.len() {
-        3 | 4 => (
-            u8::from_str_radix(&hex[0..1], 16).ok()? * 17,
-            u8::from_str_radix(&hex[1..2], 16).ok()? * 17,
-            u8::from_str_radix(&hex[2..3], 16).ok()? * 17,
-        ),
-        6 | 8 => (
-            u8::from_str_radix(&hex[0..2], 16).ok()?,
-            u8::from_str_radix(&hex[2..4], 16).ok()?,
-            u8::from_str_radix(&hex[4..6], 16).ok()?,
-        ),
-        _ => return None,
-    };
-    let lum = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8;
-    Some(format!("#{lum:02x}{lum:02x}{lum:02x}"))
-}
-
-/// Desaturate every fill/stroke color in an SVG to a luminance gray, so the
-/// icons render as simple monochrome (shapes kept, color removed). `url(#id)`
-/// references are left untouched.
-fn grayscale(svg: &str) -> String {
-    let s = svg.as_bytes();
-    let mut out = String::with_capacity(svg.len());
-    let mut i = 0;
-    while i < s.len() {
-        if s[i] == b'#' && (i == 0 || s[i - 1] != b'(') {
-            let mut j = i + 1;
-            while j < s.len() && s[j].is_ascii_hexdigit() {
-                j += 1;
-            }
-            let digits = &svg[i + 1..j];
-            if matches!(digits.len(), 3 | 4 | 6 | 8) {
-                if let Some(gray) = gray_of(digits) {
-                    out.push_str(&gray);
-                    i = j;
-                    continue;
-                }
-            }
-        }
-        out.push(s[i] as char);
-        i += 1;
-    }
-    out
-}
-
 fn cache_dir() -> PathBuf {
     gtk4::glib::user_cache_dir().join("tessera").join("icons")
 }
 
 /// Write the embedded icons to the cache dir (idempotent). Returns that dir.
+/// The SVGs are written verbatim so they keep their original Material colors.
 pub fn ensure() -> PathBuf {
     let dir = cache_dir();
     let _ = fs::create_dir_all(&dir);
     for (name, svg) in ICONS {
-        let _ = fs::write(dir.join(format!("{name}.svg")), grayscale(svg));
+        let _ = fs::write(dir.join(format!("{name}.svg")), svg);
     }
     dir
 }
