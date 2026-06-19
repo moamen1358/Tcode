@@ -14,7 +14,8 @@ use gtk4::{
 use super::state::{to_image, Drag, Shot};
 use super::tools::{arrow_head, norm, Annotation, Shape, Tool};
 
-const BG: (f64, f64, f64) = (0.102, 0.106, 0.149); // #1a1b26
+const BG: (f64, f64, f64) = (0.043, 0.047, 0.067); // #0b0c11 — darker than the app so a capture stands out
+const FRAME: (f64, f64, f64) = (0.34, 0.37, 0.54); // #565f89 — outline around the image edge
 const PEN_W: f64 = 3.0; // image-space px
 const HL_W: f64 = 16.0;
 const TEXT_SIZE: f64 = 22.0; // image-space px
@@ -82,6 +83,13 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
     cr.scale(scale, scale);
     cr.set_source_pixbuf(&pb, 0.0, 0.0);
     let _ = cr.paint();
+
+    // Outline the image so its edge is visible even when the capture's own
+    // background matches the canvas (screen only — not baked into the export).
+    cr.set_source_rgb(FRAME.0, FRAME.1, FRAME.2);
+    cr.set_line_width(1.5 / scale);
+    cr.rectangle(0.0, 0.0, iw, ih);
+    let _ = cr.stroke();
 
     if let Some(doc) = s.docs.get(doc_idx) {
         paint_annotations(cr, &doc.annos, scale);
