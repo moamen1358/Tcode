@@ -107,12 +107,29 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .bridgeshot-text-entry {{ background-color: {bg}; color: {fg}; \
                                    box-shadow: inset 0 0 0 1px {accent}; }}\n\
          .bridgeshot-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}\n\
-         .clip-list {{ background-color: {surface}; }}\n\
-         .clip-entry {{ padding: 3px 7px; border-radius: 4px; background: none; \
-                        border: none; box-shadow: none; color: alpha({fg}, 0.82); \
-                        font-size: 11px; }}\n\
-         .clip-entry:hover {{ background-color: alpha({fg}, 0.09); color: {fg}; }}\n\
-         .clip-empty {{ color: alpha({fg}, 0.4); padding: 6px 7px; font-size: 11px; }}"
+         .clip-header {{ padding: 5px 8px 3px 10px; }}\n\
+         .clip-header label {{ color: alpha({fg}, 0.5); font-size: 10px; \
+                               font-weight: bold; letter-spacing: 1px; }}\n\
+         .clip-clear {{ min-height: 0; min-width: 0; padding: 2px 5px; background: none; \
+                        border: none; box-shadow: none; color: alpha({fg}, 0.45); }}\n\
+         .clip-clear:hover {{ color: #e84d5b; background-color: alpha(#e84d5b, 0.14); }}\n\
+         .clip-card {{ background-color: {surface}; border-radius: 7px; }}\n\
+         .clip-bar {{ min-width: 3px; border-radius: 7px 0 0 7px; }}\n\
+         .clip-bar-url {{ background-color: #7aa2f7; }}\n\
+         .clip-bar-path {{ background-color: #7dcfff; }}\n\
+         .clip-bar-code {{ background-color: #9ece6a; }}\n\
+         .clip-bar-text {{ background-color: alpha({fg}, 0.28); }}\n\
+         .clip-copy {{ padding: 5px 8px; background: none; border: none; \
+                       box-shadow: none; border-radius: 0 7px 7px 0; }}\n\
+         .clip-copy:hover {{ background-color: alpha({fg}, 0.06); }}\n\
+         .clip-meta {{ color: alpha({fg}, 0.45); font-size: 9px; letter-spacing: 0.6px; }}\n\
+         .clip-text {{ color: alpha({fg}, 0.88); font-size: 11px; \
+                       font-family: \"{font}\", monospace; }}\n\
+         .clip-del {{ min-height: 0; min-width: 0; padding: 2px; margin: 4px 3px; \
+                      background: none; border: none; box-shadow: none; \
+                      color: alpha({fg}, 0.3); }}\n\
+         .clip-del:hover {{ color: #e84d5b; background-color: alpha(#e84d5b, 0.14); }}\n\
+         .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 11px; }}"
     );
     let provider = CssProvider::new();
     provider.load_from_string(&css);
