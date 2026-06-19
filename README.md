@@ -12,12 +12,21 @@ Built in Rust with GTK4 + VTE.
 - **Add / remove panes live**: the **`+`** button (or `Alt+n`) adds a terminal; when a
   shell exits, its pane disappears and the rest re-tile (exit the last → the app closes).
 - Each pane is your `$SHELL` (with an optional auto-run startup command).
-- **File sidebar** (left): click a folder to `cd` the focused pane into it; click a
-  file to insert its path. `..` goes up. Toggle with the **sidebar button** in the titlebar or `Alt+b`.
+- **File sidebar** (left): a VS Code-style tree; click a folder to expand it, click
+  a file to open it. Toggle with the **sidebar button** in the titlebar or `Alt+b`.
+- **Universal file viewer** (right): a tabbed panel that opens code/text in an
+  editable, syntax-highlighted editor (`Ctrl+S` saves, `Esc` closes the tab),
+  images on a zoom/pan canvas, PDFs and office docs as scrollable zoomable pages,
+  and CSV/TSV as a "rainbow" table.
+- **BridgeShot** screenshots: the titlebar camera captures any window/region via
+  the desktop portal, opens an annotation canvas (box / arrow / text / pen /
+  highlight), and saves to a strip at the bottom of the sidebar you can drag into
+  a terminal.
+- **Ctrl+click** a path or URL in any terminal to open it (files in the viewer,
+  URLs in the browser); **right-click** for Copy / Paste / Select All.
 - **Drag-and-drop** a file/image onto the grid → its path is inserted into the
   focused pane (handy for passing an image to a CLI agent).
-- **Zoom** the focused pane to fullscreen and back.
-- Fully keyboard-driven; click also works.
+- **Zoom** the focused pane to fullscreen and back. Fully keyboard-driven.
 
 ## Keybindings
 
@@ -29,14 +38,17 @@ Built in Rust with GTK4 + VTE.
 | `Alt+b`        | Toggle the file sidebar             |
 | `Alt+f`        | Toggle fullscreen (no titlebar)     |
 | `Alt+1`..`Alt+9` | Rebuild the grid with N panes     |
+| `Alt+p`        | Toggle the screenshots strip        |
 | `Alt+q`        | Quit                                |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste in the focused terminal |
 
 ## Build & run (native)
 
 System dependencies (Ubuntu / Pop!_OS 24.04):
 
 ```bash
-sudo apt install -y build-essential libgtk-4-dev libvte-2.91-gtk4-dev pkg-config
+sudo apt install -y build-essential libgtk-4-dev libvte-2.91-gtk4-dev \
+  libgtksourceview-5-dev pkg-config
 ```
 
 Rust toolchain (if you don't have it): <https://rustup.rs>
@@ -47,6 +59,18 @@ cargo build --release
 ./target/release/tessera 4      # straight to a 2x2 grid
 cargo install --path crates/tessera   # optional: put `tessera` on your PATH
 ```
+
+Optional runtime tools — the file viewer and screenshots degrade gracefully if
+these are missing:
+
+```bash
+sudo apt install -y poppler-utils libreoffice xdg-desktop-portal
+```
+
+- `poppler-utils` (`pdftoppm`) — render **PDF** previews
+- `libreoffice` (`soffice`) — render **office** docs (docx / xlsx / pptx / odt …)
+- `xdg-desktop-portal` (+ a backend, e.g. `xdg-desktop-portal-gnome` or
+  `…-cosmic`) — **screenshot** capture
 
 ## Run in Docker (display forwarding)
 
@@ -64,15 +88,14 @@ Optional `~/.config/tessera/config.toml` — every field has a default, so it wo
 with no config at all:
 
 ```toml
-font            = "monospace"   # generic = your system mono; or any installed font name
+font            = "Martian Mono"   # ships bundled; or any installed font name
 font_size       = 11
-gap             = 8
-startup_command = ""        # e.g. "claude" to auto-launch in every pane
+startup_command = ""               # e.g. "claude" to auto-launch in every pane
 
-[theme]
-background = "#1e1e2e"
-foreground = "#cdd6f4"
-accent     = "#89b4fa"      # active-pane border
+[theme]                            # defaults are Tokyo Night
+background = "#1a1b26"
+foreground = "#c0caf5"
+accent     = "#7aa2f7"             # active-pane border
 # palette  = [ ... 16 ANSI hex colors ... ]
 ```
 
