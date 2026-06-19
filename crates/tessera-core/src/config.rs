@@ -36,7 +36,7 @@ const DEFAULT_PALETTE: [&str; 16] = [
 impl Default for Config {
     fn default() -> Self {
         Config {
-            font: "monospace".into(),
+            font: "Martian Mono".into(),
             font_size: 11,
             gap: 8,
             startup_command: String::new(),
@@ -113,7 +113,7 @@ mod tests {
         let c = Config::from_str_or_default("font_size = 14\nstartup_command = \"claude\"");
         assert_eq!(c.font_size, 14);
         assert_eq!(c.startup_command, "claude");
-        assert_eq!(c.font, "monospace");
+        assert_eq!(c.font, "Martian Mono");
         assert_eq!(c.gap, 8);
     }
 
