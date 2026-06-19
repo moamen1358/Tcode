@@ -15,6 +15,26 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
 
     let st = state.clone();
     controller.connect_key_pressed(move |_c, keyval, _code, mods| {
+        // Ctrl+Shift+C / Ctrl+Shift+V: copy / paste in the focused terminal
+        // (plain Ctrl+C must stay SIGINT, so copy/paste take the Shift variant).
+        if mods.contains(ModifierType::CONTROL_MASK) && mods.contains(ModifierType::SHIFT_MASK) {
+            match keyval {
+                Key::C | Key::c => {
+                    if let Some(g) = st.borrow().grid.as_ref() {
+                        g.copy_focused();
+                    }
+                    return Propagation::Stop;
+                }
+                Key::V | Key::v => {
+                    if let Some(g) = st.borrow().grid.as_ref() {
+                        g.paste_focused();
+                    }
+                    return Propagation::Stop;
+                }
+                _ => {}
+            }
+        }
+
         if !mods.contains(ModifierType::ALT_MASK) {
             return Propagation::Proceed;
         }

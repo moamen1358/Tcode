@@ -6,16 +6,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
-use gtk4::gdk::{ModifierType, BUTTON_PRIMARY, RGBA};
+use gtk4::gdk::{ModifierType, BUTTON_PRIMARY, BUTTON_SECONDARY, RGBA};
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
 use gtk4::{
-    gio, Box as GtkBox, EventSequenceState, GestureClick, Orientation, Overlay, PropagationPhase,
+    gio, Box as GtkBox, EventSequenceState, GestureClick, Orientation, Overlay, PopoverMenu,
+    PropagationPhase,
 };
 use tessera_core::config::Config;
 use vte4::prelude::*;
-use vte4::{PtyFlags, Regex, Terminal};
+use vte4::{Format, PtyFlags, Regex, Terminal};
 
 use crate::theme::rgba;
 
@@ -69,6 +70,8 @@ impl Pane {
 
         // Ctrl+click a URL or file path to follow it (VS Code-style).
         install_links(&terminal, on_open);
+        // Right-click context menu (Copy / Paste / Select All).
+        install_context_menu(&terminal);
 
         let root = Overlay::new();
         root.add_css_class("pane");
@@ -145,6 +148,19 @@ impl Pane {
     /// Type text into the terminal's child as if entered at the keyboard.
     pub fn feed_text(&self, text: &str) {
         self.terminal.feed_child(text.as_bytes());
+    }
+
+    /// Copy the current selection to the clipboard (no-op without a selection,
+    /// so it never clobbers the clipboard).
+    pub fn copy(&self) {
+        if self.terminal.has_selection() {
+            self.terminal.copy_clipboard_format(Format::Text);
+        }
+    }
+
+    /// Paste the clipboard into the terminal's child.
+    pub fn paste(&self) {
+        self.terminal.paste_clipboard();
     }
 
     /// Drop scrollback to 0 while a divider is being dragged so VTE can't pull
@@ -236,4 +252,63 @@ fn term_cwd(terminal: &Terminal) -> PathBuf {
         .current_directory_uri()
         .and_then(|uri| gio::File::for_uri(&uri).path())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
+}
+
+/// Right-click context menu: Copy / Paste / Select All — the standard terminal
+/// mouse affordance VTE doesn't provide itself. (Selection-drag, scroll, and
+/// middle-click paste of the primary selection are handled by VTE directly.)
+fn install_context_menu(terminal: &Terminal) {
+    let menu = gio::Menu::new();
+    menu.append(Some("Copy"), Some("term.copy"));
+    menu.append(Some("Paste"), Some("term.paste"));
+    menu.append(Some("Select All"), Some("term.select-all"));
+
+    let popover = PopoverMenu::from_model(Some(&menu));
+    popover.set_parent(terminal);
+    popover.set_has_arrow(false);
+
+    let actions = gio::SimpleActionGroup::new();
+
+    let copy = gio::SimpleAction::new("copy", None);
+    {
+        let t = terminal.clone();
+        copy.connect_activate(move |_, _| {
+            if t.has_selection() {
+                t.copy_clipboard_format(Format::Text);
+            }
+        });
+    }
+    actions.add_action(&copy);
+
+    let paste = gio::SimpleAction::new("paste", None);
+    {
+        let t = terminal.clone();
+        paste.connect_activate(move |_, _| t.paste_clipboard());
+    }
+    actions.add_action(&paste);
+
+    let select_all = gio::SimpleAction::new("select-all", None);
+    {
+        let t = terminal.clone();
+        select_all.connect_activate(move |_, _| t.select_all());
+    }
+    actions.add_action(&select_all);
+
+    terminal.insert_action_group("term", Some(&actions));
+
+    // Right-click pops the menu at the pointer. Capture phase + claim so it shows
+    // reliably instead of VTE's own right-button handling.
+    let click = GestureClick::new();
+    click.set_button(BUTTON_SECONDARY);
+    click.set_propagation_phase(PropagationPhase::Capture);
+    {
+        let (t, pop) = (terminal.clone(), popover.clone());
+        click.connect_pressed(move |g, _n, x, y| {
+            copy.set_enabled(t.has_selection());
+            pop.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            pop.popup();
+            g.set_state(EventSequenceState::Claimed);
+        });
+    }
+    terminal.add_controller(click);
 }

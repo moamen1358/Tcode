@@ -382,6 +382,22 @@ impl Grid {
         }
     }
 
+    /// Copy the focused terminal's selection to the clipboard.
+    pub fn copy_focused(&self) {
+        let g = self.inner.borrow();
+        if let Some(p) = g.panes.get(g.focus) {
+            p.copy();
+        }
+    }
+
+    /// Paste the clipboard into the focused terminal.
+    pub fn paste_focused(&self) {
+        let g = self.inner.borrow();
+        if let Some(p) = g.panes.get(g.focus) {
+            p.paste();
+        }
+    }
+
     /// Apply equal split positions once the container has a real size (after map).
     pub fn relayout_positions(&self) {
         self.inner.borrow().set_positions();
