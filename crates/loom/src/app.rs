@@ -698,6 +698,9 @@ pub fn show_grid(state: &Shared, n: usize) {
     gtk4::glib::idle_add_local_once(move || {
         let s = st.borrow();
         if let Some(g) = s.grid.as_ref() {
+            // Suppress reflow garble across all the split changes below (the shell
+            // has already printed its prompt at the default size).
+            g.suppress_reflow_briefly();
             let ratios = s
                 .current
                 .as_ref()

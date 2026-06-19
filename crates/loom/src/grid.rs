@@ -475,6 +475,29 @@ impl Grid {
         self.inner.borrow().set_positions();
     }
 
+    /// Drop every terminal's scrollback briefly while an upcoming resize reflows
+    /// them (session restore changes the grid / editor / sidebar splits at once,
+    /// after the shell has already printed its prompt — otherwise the prompt is
+    /// re-wrapped over itself). Restored shortly after.
+    pub fn suppress_reflow_briefly(&self) {
+        let weak = {
+            let g = self.inner.borrow();
+            for p in &g.panes {
+                p.set_resizing(true);
+            }
+            g.self_weak.clone()
+        };
+        glib::timeout_add_local_once(Duration::from_millis(160), move || {
+            if let Some(inner) = weak.upgrade() {
+                if let Ok(g) = inner.try_borrow() {
+                    for p in &g.panes {
+                        p.set_resizing(false);
+                    }
+                }
+            }
+        });
+    }
+
     /// Current divider positions as ratios of the container dimension (in paned
     /// order), so a session can restore exactly how the terminals were resized.
     pub fn split_ratios(&self) -> Vec<f64> {
