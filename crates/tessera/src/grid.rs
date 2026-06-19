@@ -143,17 +143,16 @@ impl GridInner {
             self.paneds = paneds;
             self.set_positions();
 
-            // Horizontal (left/right, width) dividers resize fine natively. But a
-            // VERTICAL (up/down, height) divider makes VTE pull scrollback up to
-            // fill the growing pane, flooding it with old output — so only for
-            // those, drop scrollback to 0 for the drag and restore once it settles.
+            // Resizing terminals live has two artifacts: a height grow makes VTE
+            // pull scrollback up to fill the pane (floods it with old output), and
+            // a width change makes VTE re-wrap the whole scrollback buffer — during
+            // a fast drag those partial re-wraps render the prompt garbled over
+            // itself. Drop scrollback to 0 for the duration of any drag and restore
+            // it shortly after it settles, so neither happens.
             let weak = self.self_weak.clone();
             let timer = self.resize_timer.clone();
             let resizing = self.resizing.clone();
-            for (paned, is_h, _) in &self.paneds {
-                if *is_h {
-                    continue; // width resize is fine without the scrollback drop
-                }
+            for (paned, _, _) in &self.paneds {
                 let weak = weak.clone();
                 let timer = timer.clone();
                 let resizing = resizing.clone();
