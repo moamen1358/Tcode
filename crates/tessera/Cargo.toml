@@ -23,3 +23,9 @@ async-channel = "2"
 # Enable cairo's PNG writer (ImageSurface::write_to_png) for BridgeShot export.
 # Must match the cairo-rs that gtk4 0.11 re-exports (0.22); only adds `png`.
 cairo-rs = { version = "0.22", features = ["png"] }
+# XDG screenshot portal — capture any window/region on Wayland/COSMIC via the
+# compositor's own picker. Pure Rust (zbus over D-Bus); no new system libs.
+# The `gtk4` feature is intentionally OMITTED: it would pull a second gtk4
+# version and break the build. We pass no WindowIdentifier (picker is
+# compositor-driven), so we don't need it.
+ashpd = "0.13"
