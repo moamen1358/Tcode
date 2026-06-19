@@ -40,6 +40,10 @@ pub struct State {
     /// Readouts in the view-settings popover, kept in sync by font/scale changes.
     pub font_readout: gtk4::Label,
     pub scale_readout: gtk4::Label,
+    /// Center split (terminals | editor) and outer split (sidebar | rest), kept so
+    /// their drag positions can be saved into the session and restored.
+    pub center_paned: Option<Paned>,
+    pub content_paned: Option<Paned>,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -131,6 +135,8 @@ pub fn build(app: &Application, preset: Option<usize>) {
         session_btn: session_btn.clone(),
         font_readout: font_readout.clone(),
         scale_readout: scale_readout.clone(),
+        center_paned: None,
+        content_paned: None,
     }));
 
     // Build the view-settings popover: font-size + scale steppers + reset.
@@ -432,11 +438,21 @@ fn switch_session(state: &Shared, session: Session) {
 /// Snapshot the live UI (open files, active tab, pane count, split sizes) into
 /// `current`.
 fn capture_current(state: &Shared) {
-    let (files, active, panes, divisors) = {
+    let (files, active, panes, divisors, editor_split, sidebar_width) = {
         let s = state.borrow();
         if s.current.is_none() {
             return;
         }
+        // Editor split only when the editor is actually shown (a file is open).
+        let editor_split = s.center_paned.as_ref().and_then(|c| {
+            (c.end_child().is_some() && c.width() > 1)
+                .then(|| c.position() as f64 / c.width() as f64)
+        });
+        let sidebar_width = s
+            .content_paned
+            .as_ref()
+            .map(|c| c.position())
+            .filter(|&p| p > 0);
         (
             s.editor
                 .as_ref()
@@ -448,6 +464,8 @@ fn capture_current(state: &Shared) {
                 .as_ref()
                 .map(|g| g.split_ratios())
                 .unwrap_or_default(),
+            editor_split,
+            sidebar_width,
         )
     };
     if let Some(cur) = state.borrow_mut().current.as_mut() {
@@ -455,6 +473,8 @@ fn capture_current(state: &Shared) {
         cur.active = active;
         cur.panes = panes;
         cur.divisors = divisors;
+        cur.editor_split = editor_split;
+        cur.sidebar_width = sidebar_width;
     }
 }
 
@@ -655,6 +675,8 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.editor = Some(editor);
         s.shots_panel = Some(bridge.panel_root.clone());
         s.shots_capture = Some(bridge.capture.clone());
+        s.center_paned = Some(center.clone());
+        s.content_paned = Some(content.clone());
     }
     // Respect the current toggle state for the freshly built panel.
     bridge
@@ -687,6 +709,22 @@ pub fn show_grid(state: &Shared, n: usize) {
                 g.apply_split_ratios(&ratios);
             }
             g.grab_focused();
+        }
+        // Restore the editor split (terminals | editor) and the sidebar width.
+        if let (Some(center), Some(ratio)) = (
+            s.center_paned.as_ref(),
+            s.current.as_ref().and_then(|c| c.editor_split),
+        ) {
+            let w = center.width();
+            if center.end_child().is_some() && w > 1 {
+                center.set_position((ratio * w as f64).round() as i32);
+            }
+        }
+        if let (Some(content), Some(sw)) = (
+            s.content_paned.as_ref(),
+            s.current.as_ref().and_then(|c| c.sidebar_width),
+        ) {
+            content.set_position(sw);
         }
     });
 }

@@ -39,6 +39,13 @@ pub struct Session {
     /// Index into `files` of the active tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<usize>,
+    /// Terminals' share (0..1) of the center split (terminals | editor), so a
+    /// resized editor reopens at the same width. `None` when no file was open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_split: Option<f64>,
+    /// Sidebar width in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_width: Option<i32>,
 }
 
 impl Session {
@@ -58,6 +65,8 @@ impl Session {
             cwds: Vec::new(),
             files: Vec::new(),
             active: None,
+            editor_split: None,
+            sidebar_width: None,
         }
     }
 
