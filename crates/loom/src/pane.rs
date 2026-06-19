@@ -11,7 +11,7 @@ use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
 use gtk4::{
-    gio, Box as GtkBox, EventSequenceState, GestureClick, Orientation, Overlay, PopoverMenu,
+    gio, Box as GtkBox, Entry, EventSequenceState, GestureClick, Orientation, Overlay, PopoverMenu,
     PropagationPhase,
 };
 use loom_core::config::Config;
@@ -84,13 +84,35 @@ impl Pane {
         // Right-click context menu (Copy / Paste / Select All).
         install_context_menu(&terminal);
 
+        // Per-pane label: a small editable bar above the terminal so you can tag
+        // what each one is doing. Enter hands focus back to the terminal.
+        let label = Entry::new();
+        label.add_css_class("pane-label");
+        label.set_has_frame(false);
+        label.set_placeholder_text(Some("label…"));
+        {
+            let term = terminal.downgrade();
+            label.connect_activate(move |_| {
+                if let Some(t) = term.upgrade() {
+                    t.grab_focus();
+                }
+            });
+        }
+
+        // Stack the label over the terminal; the terminal fills the rest.
+        let body = GtkBox::new(Orientation::Vertical, 0);
+        terminal.set_hexpand(true);
+        terminal.set_vexpand(true);
+        body.append(&label);
+        body.append(&terminal);
+
         let root = Overlay::new();
         root.add_css_class("pane");
-        root.set_child(Some(&terminal));
+        root.set_child(Some(&body));
 
-        // Focus ring: an overlay child drawn on top of the terminal. Because it's
-        // an overlay it adds no layout space and never reflows the terminal; CSS
-        // turns its border cyan only when the pane is active.
+        // Focus ring: an overlay child drawn on top of the pane. Because it's an
+        // overlay it adds no layout space and never reflows the terminal; CSS
+        // turns its border on only when the pane is active.
         let ring = GtkBox::new(Orientation::Horizontal, 0);
         ring.add_css_class("focus-ring");
         ring.set_can_target(false); // clicks pass through to the terminal
