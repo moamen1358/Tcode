@@ -487,11 +487,15 @@ impl Grid {
             }
             g.self_weak.clone()
         };
-        glib::timeout_add_local_once(Duration::from_millis(160), move || {
+        glib::timeout_add_local_once(Duration::from_millis(250), move || {
             if let Some(inner) = weak.upgrade() {
                 if let Ok(g) = inner.try_borrow() {
                     for p in &g.panes {
                         p.set_resizing(false);
+                        // After the reflow settles, send the shell a clear-screen so
+                        // it repaints one clean prompt instead of the wrapped mess.
+                        // Safe: these are freshly-spawned shells at their prompt.
+                        p.terminal.feed_child(b"\x0c");
                     }
                 }
             }
