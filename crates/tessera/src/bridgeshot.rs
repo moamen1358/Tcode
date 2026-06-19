@@ -112,7 +112,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         })
     };
 
-    let panel = gallery::build(on_capture.clone(), on_pick);
+    let panel = gallery::build(on_pick);
 
     // Save: export PNG → add to panel → copy image to clipboard → close.
     {

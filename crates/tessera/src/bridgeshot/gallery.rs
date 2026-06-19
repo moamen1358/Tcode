@@ -1,7 +1,7 @@
-//! The persistent left-side screenshots panel in Tessera's main window. Shows a
-//! Capture button plus a thumbnail per saved screenshot (loaded from the cache
-//! dir on startup, so history survives restarts). Clicking a thumbnail re-opens
-//! it in the annotation canvas.
+//! The persistent left-side screenshots panel in Tessera's main window: a strip
+//! of the most recent saved screenshots (loaded from the cache dir on startup,
+//! so history survives restarts). Clicking a thumbnail re-opens it in the
+//! annotation canvas; capturing is triggered from the window titlebar.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -10,7 +10,7 @@ use gtk4::gdk::{ContentProvider, DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{gio, Box as GtkBox, Button, DragSource, Label, Orientation, Separator};
+use gtk4::{gio, Box as GtkBox, Button, DragSource, Orientation, Separator};
 
 /// Only the most recent N screenshots are kept on screen (no scrolling).
 const MAX_SHOTS: usize = 3;
@@ -26,27 +26,14 @@ pub struct Panel {
     on_pick: Rc<dyn Fn(PathBuf)>,
 }
 
-/// Build the panel. `on_capture` runs when the Capture button is clicked;
-/// `on_pick` runs when a thumbnail is clicked (with that shot's path).
-pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
-    // A compact section embedded at the bottom of the file sidebar (a divider
-    // sets it off from the file tree above).
+/// Build the panel. `on_pick` runs when a thumbnail is clicked (with that
+/// shot's path). Capturing is started from the window titlebar, not here.
+pub fn build(on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
+    // A compact strip of recent screenshots at the bottom of the file sidebar,
+    // set off from the file tree above by a divider.
     let root = GtkBox::new(Orientation::Vertical, 0);
     root.add_css_class("shots-section");
     root.append(&Separator::new(Orientation::Horizontal));
-
-    let header = GtkBox::new(Orientation::Horizontal, 6);
-    header.add_css_class("sidebar-header");
-    let title = Label::new(Some("Screenshots"));
-    title.set_xalign(0.0);
-    title.set_hexpand(true);
-    let capture = Button::from_icon_name("camera-photo-symbolic");
-    capture.set_tooltip_text(Some("Capture a screenshot"));
-    capture.add_css_class("flat");
-    capture.connect_clicked(move |_| on_capture());
-    header.append(&title);
-    header.append(&capture);
-    root.append(&header);
 
     let list = GtkBox::new(Orientation::Vertical, 6);
     list.add_css_class("bridgeshot-gallery");
