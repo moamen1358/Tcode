@@ -37,6 +37,8 @@ use tools::{Tool, PALETTE};
 pub struct BridgeShot {
     pub root: Paned,
     pub panel_root: GtkBox,
+    /// Start a capture (region-select → annotate). Wired to the titlebar camera.
+    pub capture: Rc<dyn Fn()>,
 }
 
 /// Wrap `content` (Tessera's sidebar+center) with the BridgeShot panel and a
@@ -113,7 +115,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         })
     };
 
-    let panel = gallery::build(on_capture, on_pick);
+    let panel = gallery::build(on_capture.clone(), on_pick);
 
     // Save: export PNG → add to panel → copy image to clipboard → close.
     {
@@ -164,6 +166,7 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
     BridgeShot {
         root,
         panel_root: panel.root.clone(),
+        capture: on_capture,
     }
 }
 

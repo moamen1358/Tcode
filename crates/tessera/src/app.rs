@@ -27,6 +27,9 @@ pub struct State {
     pub editor_btn: ToggleButton,
     pub shots_btn: ToggleButton,
     pub shots_panel: Option<gtk4::Box>,
+    /// BridgeShot capture action (region-select → annotate), set once the grid
+    /// is built; the titlebar camera button invokes it.
+    pub shots_capture: Option<Rc<dyn Fn()>>,
 }
 
 pub type Shared = Rc<RefCell<State>>;
@@ -77,6 +80,12 @@ pub fn build(app: &Application, preset: Option<usize>) {
     shots_btn.add_css_class("flat");
     header.pack_end(&shots_btn);
 
+    // BridgeShot capture: region-select a screenshot, annotate, save to the panel.
+    let capture_btn = Button::from_icon_name("camera-photo-symbolic");
+    capture_btn.set_tooltip_text(Some("Capture a screenshot"));
+    capture_btn.add_css_class("flat");
+    header.pack_end(&capture_btn);
+
     window.set_titlebar(Some(&header));
 
     let state: Shared = Rc::new(RefCell::new(State {
@@ -89,6 +98,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
         editor_btn: editor_btn.clone(),
         shots_btn: shots_btn.clone(),
         shots_panel: None,
+        shots_capture: None,
     }));
 
     // Flip the current sidebar's visibility whenever the button toggles.
@@ -117,6 +127,22 @@ pub fn build(app: &Application, preset: Option<usize>) {
         shots_btn.connect_toggled(move |btn| {
             if let Some(p) = st.borrow().shots_panel.as_ref() {
                 p.set_visible(btn.is_active());
+            }
+        });
+    }
+
+    // Camera button: reveal the screenshots panel, then start a capture
+    // (region-select → annotate → save lands in the panel).
+    {
+        let st = state.clone();
+        capture_btn.connect_clicked(move |_| {
+            let cap = {
+                let s = st.borrow();
+                s.shots_btn.set_active(true); // reveal the panel so the result shows
+                s.shots_capture.clone()
+            };
+            if let Some(cap) = cap {
+                cap();
             }
         });
     }
@@ -228,6 +254,7 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.sidebar = Some(sidebar);
         s.editor = Some(editor);
         s.shots_panel = Some(bridge.panel_root.clone());
+        s.shots_capture = Some(bridge.capture.clone());
     }
     // Respect the current toggle state for the freshly built panel.
     bridge.panel_root.set_visible(state.borrow().shots_btn.is_active());

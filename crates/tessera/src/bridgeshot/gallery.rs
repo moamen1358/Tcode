@@ -7,11 +7,11 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk4::gdk::Texture;
+use gtk4::gdk::{ContentProvider, DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Button, Label, Orientation, PolicyType, ScrolledWindow};
+use gtk4::{gio, Box as GtkBox, Button, DragSource, Label, Orientation, PolicyType, ScrolledWindow};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
@@ -80,6 +80,18 @@ impl Panel {
         let btn = Button::builder().child(&pic).build();
         btn.add_css_class("bridgeshot-thumb");
         btn.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
+
+        // Drag a thumbnail into any terminal (or other drop target) — it provides
+        // the screenshot file, so the terminal inserts its path.
+        let drag = DragSource::new();
+        drag.set_actions(DragAction::COPY);
+        let file = gio::File::for_path(&path);
+        drag.set_content(Some(&ContentProvider::for_value(&file.to_value())));
+        {
+            let texture = texture.clone();
+            drag.connect_drag_begin(move |d, _| d.set_icon(Some(&texture), 0, 0));
+        }
+        btn.add_controller(drag);
 
         let on_pick = self.on_pick.clone();
         btn.connect_clicked(move |_| on_pick(path.clone()));
