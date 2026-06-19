@@ -1,0 +1,6 @@
+{
+  "app": "Tessera",
+  "supports": ["images", "pdf", "office", "text"],
+  "panes": 4,
+  "accent": "#e0af68"
+}

@@ -1,0 +1,2 @@
+This is a plain text file.
+Tessera renders it in the editor with line numbers.

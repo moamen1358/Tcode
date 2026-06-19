@@ -46,11 +46,16 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
          .editor-view gutter {{ background-color: {bg}; }}\n\
          .image-view {{ background-color: {surface}; }}\n\
          .media-view {{ background-color: #000; }}\n\
-         .viewer-toolbar {{ background-color: {surface}; padding: 3px 6px; \
+         .viewer-toolbar {{ background-color: {bg}; padding: 0 6px; \
                             border-bottom: 1px solid {border}; }}\n\
-         .viewer-toolbar button {{ min-height: 0; min-width: 0; padding: 2px 6px; }}\n\
-         .viewer-zoom-pct {{ color: alpha({fg}, 0.7); min-width: 44px; \
-                             padding: 0 4px; font-size: 11px; }}\n\
+         .viewer-toolbar button {{ min-height: 0; min-width: 0; padding: 1px 6px; \
+                                   background: none; border: none; box-shadow: none; \
+                                   color: alpha({fg}, 0.7); }}\n\
+         .viewer-toolbar button:hover {{ background: alpha({fg}, 0.1); color: {fg}; }}\n\
+         .viewer-zoom-btn {{ font-size: 15px; font-weight: 600; \
+                             padding: 0 9px; min-width: 22px; }}\n\
+         .viewer-zoom-pct {{ color: alpha({fg}, 0.7); min-width: 48px; \
+                             padding: 0 4px; font-size: 12px; }}\n\
          .doc-view {{ background-color: {surface}; }}\n\
          .doc-page {{ background-color: white; box-shadow: 0 1px 8px rgba(0,0,0,0.55); }}\n\
          .fallback-card {{ padding: 28px; }}\n\

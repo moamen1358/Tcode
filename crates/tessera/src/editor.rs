@@ -1,9 +1,11 @@
 //! Tabbed universal file viewer beside the terminals (the center `Paned`'s end
 //! child). Each opened file becomes a tab whose content is chosen by file type:
-//! text/code uses GtkSourceView (editable, `Ctrl+S` saves); images use GtkPicture
-//! with a zoom toolbar, Ctrl+scroll zoom-to-cursor, and left-drag panning; PDFs
-//! and office documents are rendered to page images on a worker thread (see
-//! `preview`) and shown as a scrollable, zoomable, drag-pannable column;
+//! text/code uses GtkSourceView (editable, `Ctrl+S` saves); images render on a
+//! free canvas (a `DrawingArea` with a manual transform) — scroll to zoom toward
+//! the cursor, left-drag to pan the image freely anywhere, double-click to reset
+//! to Fit, plus a zoom toolbar; PDFs and office documents are rendered to page
+//! images on a worker thread (see `preview`) and shown as a scrollable, zoomable,
+//! drag-pannable column;
 //! audio/video play inline via GtkVideo; anything else gets an info card with
 //! "Open externally". `Esc` or a tab's `×` closes it; closing the last tab hides
 //! the panel.
@@ -14,14 +16,16 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use gtk4::gdk::prelude::GdkCairoContextExt; // cr.set_source_pixbuf
 use gtk4::gdk::{Key, ModifierType};
+use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib::{self, Propagation};
 use gtk4::prelude::*;
 use gtk4::{
-    gio, Align, Box as GtkBox, Button, ContentFit, EventControllerKey, EventControllerMotion,
-    EventControllerScroll, EventControllerScrollFlags, EventSequenceState, GestureDrag, Label,
-    Notebook, Orientation, Paned, Picture, PolicyType, PropagationPhase, ScrolledWindow, Video,
-    Widget,
+    gio, Align, Box as GtkBox, Button, CenterBox, ContentFit, DrawingArea, EventControllerKey,
+    EventControllerMotion, EventControllerScroll, EventControllerScrollFlags, EventSequenceState,
+    GestureClick, GestureDrag, Label, Notebook, Orientation, Paned, Picture, PolicyType,
+    PropagationPhase, ScrolledWindow, Video, Widget,
 };
 use sourceview5::prelude::*;
 use sourceview5::{Buffer, LanguageManager, StyleSchemeManager, View};
@@ -86,10 +90,12 @@ pub struct Editor {
     pub root: Notebook,
     paned: Paned,
     open: OpenFiles,
+    /// Backdrop painted behind images, from the theme `surface` color.
+    backdrop: (f64, f64, f64),
 }
 
 impl Editor {
-    pub fn new(paned: &Paned) -> Editor {
+    pub fn new(paned: &Paned, surface: &str) -> Editor {
         let notebook = Notebook::new();
         notebook.set_scrollable(true);
         notebook.add_css_class("editor");
@@ -126,10 +132,12 @@ impl Editor {
             notebook.add_controller(kc);
         }
 
+        let c = crate::theme::rgba(surface);
         Editor {
             root: notebook,
             paned: paned.clone(),
             open,
+            backdrop: (c.red() as f64, c.green() as f64, c.blue() as f64),
         }
     }
 
@@ -155,7 +163,7 @@ impl Editor {
                     Some((w, b)) => (w, Some(b), None),
                     None => (fallback_viewer(path), None, None),
                 },
-                Kind::Image => (image_viewer(path), None, None),
+                Kind::Image => (image_viewer(path, self.backdrop), None, None),
                 Kind::Pdf | Kind::Office => {
                     let cancel = Arc::new(AtomicBool::new(false));
                     (build_pages(path, cancel.clone()), None, Some(cancel))
@@ -239,40 +247,295 @@ fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
     Some((scroller.upcast(), buffer))
 }
 
-/// Image viewer: fit-to-view by default, with a zoom toolbar and Ctrl+scroll to
-/// zoom in/out (scrollable once zoomed past the viewport).
-fn image_viewer(path: &Path) -> Widget {
-    let pic = Picture::for_filename(path);
-    pic.set_content_fit(ContentFit::Contain);
-    pic.set_can_shrink(true);
-    pic.set_halign(Align::Center);
-    pic.set_valign(Align::Center);
-    pic.set_vexpand(true);
-    pic.set_hexpand(true);
-    pic.add_css_class("image-view");
-    let (iw, ih) = intrinsic_size(&pic, path);
+/// Lower/upper bounds for the free image canvas zoom (1.0 = 100 %).
+const MIN_ZOOM: f64 = 0.05;
+const MAX_ZOOM: f64 = 20.0;
 
-    let scroller = ScrolledWindow::builder()
-        .hscrollbar_policy(PolicyType::Automatic)
-        .vscrollbar_policy(PolicyType::Automatic)
-        .vexpand(true)
-        .hexpand(true)
-        .child(&pic)
-        .build();
+/// The image canvas transform: `zoom` plus a free top-left offset in widget px.
+/// `fit` means "recompute zoom+offset to fit-and-centre on every draw" (so it
+/// tracks window resizing) until the user zooms or pans.
+#[derive(Clone, Copy)]
+struct ImgView {
+    zoom: f64,
+    off_x: f64,
+    off_y: f64,
+    fit: bool,
+}
 
-    let pic2 = pic.clone();
-    wrap_zoomable(&scroller, move |z| match z {
-        // Fit: let the picture shrink to the viewport (aspect preserved).
-        None => {
-            pic2.set_size_request(-1, -1);
-            pic2.set_content_fit(ContentFit::Contain);
+/// An in-flight zoom animation: ease `zoom` toward `target` while pinning the
+/// image pixel (`ix`,`iy`) under the fixed widget anchor (`ax`,`ay`).
+#[derive(Clone, Copy)]
+struct Anim {
+    target: f64,
+    ax: f64,
+    ay: f64,
+    ix: f64,
+    iy: f64,
+}
+
+/// Per-image-viewer animation handles, grouped to keep closures tidy.
+#[derive(Clone)]
+struct Zoomer {
+    state: Rc<Cell<ImgView>>,
+    anim: Rc<Cell<Option<Anim>>>,
+    running: Rc<Cell<bool>>,
+    area: DrawingArea,
+}
+
+impl Zoomer {
+    /// Request a smooth zoom by `factor` toward widget point (`px`,`py`). Chains
+    /// onto any running animation's target so rapid scrolls accumulate smoothly.
+    fn zoom_to(&self, px: f64, py: f64, factor: f64) {
+        let v = self.state.get();
+        if v.zoom <= 0.0 {
+            return;
         }
-        // Explicit zoom: render at intrinsic_size * z and let the window scroll.
-        Some(z) => {
-            pic2.set_content_fit(ContentFit::Fill);
-            pic2.set_size_request((iw as f64 * z).round() as i32, (ih as f64 * z).round() as i32);
+        let base = self.anim.get().map(|a| a.target).unwrap_or(v.zoom);
+        let target = (base * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        let ix = (px - v.off_x) / v.zoom;
+        let iy = (py - v.off_y) / v.zoom;
+        self.anim.set(Some(Anim {
+            target,
+            ax: px,
+            ay: py,
+            ix,
+            iy,
+        }));
+        self.start();
+    }
+
+    /// Zoom toward the canvas centre (toolbar ± buttons).
+    fn zoom_center(&self, factor: f64) {
+        let (w, h) = (self.area.width() as f64, self.area.height() as f64);
+        self.zoom_to(w / 2.0, h / 2.0, factor);
+    }
+
+    /// Cancel any running zoom animation (e.g. when a pan or Fit takes over).
+    fn cancel(&self) {
+        self.anim.set(None);
+    }
+
+    /// Ensure the per-frame easing tick is running (one at a time).
+    fn start(&self) {
+        if self.running.replace(true) {
+            return;
         }
-    })
+        let z = self.clone();
+        self.area.add_tick_callback(move |a, _clock| {
+            let Some(an) = z.anim.get() else {
+                z.running.set(false);
+                return glib::ControlFlow::Break;
+            };
+            let mut v = z.state.get();
+            // Frame-rate-stable enough easing toward the target (~50 ms settle).
+            let next = v.zoom + (an.target - v.zoom) * 0.30;
+            let done = (an.target - next).abs() <= an.target * 0.002;
+            v.zoom = if done { an.target } else { next };
+            v.off_x = an.ax - an.ix * v.zoom;
+            v.off_y = an.ay - an.iy * v.zoom;
+            v.fit = false;
+            z.state.set(v);
+            a.queue_draw();
+            if done {
+                z.anim.set(None);
+                z.running.set(false);
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+}
+
+/// Image viewer: a free canvas (no scroll clamping). The image floats — scroll
+/// zooms toward the cursor, left-drag pans it anywhere, double-click resets to
+/// Fit. A toolbar mirrors the zoom controls. Fit is recomputed on resize.
+fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
+    let pixbuf = Pixbuf::from_file(path).ok();
+    let (iw, ih) = pixbuf
+        .as_ref()
+        .map(|p| (p.width().max(1) as f64, p.height().max(1) as f64))
+        .unwrap_or((1.0, 1.0));
+
+    let area = DrawingArea::new();
+    area.set_hexpand(true);
+    area.set_vexpand(true);
+    area.set_focusable(true);
+    area.add_css_class("image-view");
+
+    let state = Rc::new(Cell::new(ImgView {
+        zoom: 1.0,
+        off_x: 0.0,
+        off_y: 0.0,
+        fit: true,
+    }));
+    let ptr = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+    let zoomer = Zoomer {
+        state: state.clone(),
+        anim: Rc::new(Cell::new(None)),
+        running: Rc::new(Cell::new(false)),
+        area: area.clone(),
+    };
+
+    let pct = Label::new(Some("100%"));
+    pct.add_css_class("viewer-zoom-pct");
+
+    // Draw: fill the backdrop, then paint the image under the current transform.
+    // In Fit mode the transform is (re)derived here from the live widget size, so
+    // resizing the panel keeps the image fitted and centred for free.
+    {
+        let (state, pct, pb) = (state.clone(), pct.clone(), pixbuf.clone());
+        area.set_draw_func(move |_a, cr, w, h| {
+            cr.set_source_rgb(backdrop.0, backdrop.1, backdrop.2); // theme surface
+            let _ = cr.paint();
+            let Some(pb) = pb.as_ref() else {
+                cr.set_source_rgb(0.55, 0.6, 0.75);
+                cr.set_font_size(15.0);
+                let msg = "Could not load image";
+                let tw = cr.text_extents(msg).map(|e| e.width()).unwrap_or(0.0);
+                cr.move_to((w as f64 - tw) / 2.0, h as f64 / 2.0);
+                let _ = cr.show_text(msg);
+                return;
+            };
+            let mut v = state.get();
+            if v.fit {
+                let z = (w as f64 / iw).min(h as f64 / ih);
+                v.zoom = if z.is_finite() && z > 0.0 { z } else { 1.0 };
+                v.off_x = (w as f64 - iw * v.zoom) / 2.0;
+                v.off_y = (h as f64 - ih * v.zoom) / 2.0;
+                state.set(v); // write back so pan/zoom continue from here
+            }
+            pct.set_text(&format!("{:.0}%", v.zoom * 100.0));
+
+            let _ = cr.save();
+            cr.translate(v.off_x, v.off_y);
+            cr.scale(v.zoom, v.zoom);
+            cr.set_source_pixbuf(pb, 0.0, 0.0);
+            let _ = cr.paint();
+            let _ = cr.restore();
+        });
+    }
+
+    // Track the pointer (widget coords) so scroll can zoom toward it.
+    let motion = EventControllerMotion::new();
+    {
+        let ptr = ptr.clone();
+        motion.connect_motion(move |_, x, y| ptr.set((x, y)));
+    }
+    area.add_controller(motion);
+
+    // Scroll (no modifier needed) zooms smoothly toward the pointer. The factor
+    // tracks the delta magnitude, so a trackpad gives fine-grained, fluid zoom.
+    let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+    {
+        let (zoomer, ptr) = (zoomer.clone(), ptr.clone());
+        scroll.connect_scroll(move |_c, _dx, dy| {
+            let (px, py) = ptr.get();
+            zoomer.zoom_to(px, py, 1.15_f64.powf(-dy));
+            Propagation::Stop
+        });
+    }
+    area.add_controller(scroll);
+
+    // Left-drag pans the image freely (no clamping — it can float off any edge).
+    let drag = GestureDrag::new();
+    drag.set_button(gtk4::gdk::BUTTON_PRIMARY);
+    let start = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+    {
+        let (state, start, area_c, zoomer) =
+            (state.clone(), start.clone(), area.clone(), zoomer.clone());
+        drag.connect_drag_begin(move |g, _x, _y| {
+            g.set_state(EventSequenceState::Claimed);
+            zoomer.cancel(); // a pan overrides any in-flight zoom animation
+            let v = state.get();
+            start.set((v.off_x, v.off_y));
+            area_c.set_cursor_from_name(Some("grabbing"));
+        });
+    }
+    {
+        let (state, start, area_c) = (state.clone(), start.clone(), area.clone());
+        drag.connect_drag_update(move |_g, ox, oy| {
+            let (x0, y0) = start.get();
+            let mut v = state.get();
+            v.off_x = x0 + ox;
+            v.off_y = y0 + oy;
+            v.fit = false;
+            state.set(v);
+            area_c.queue_draw();
+        });
+    }
+    {
+        let area_c = area.clone();
+        drag.connect_drag_end(move |_g, _ox, _oy| area_c.set_cursor_from_name(Some("grab")));
+    }
+    area.add_controller(drag);
+    area.set_cursor_from_name(Some("grab"));
+
+    // Double-click resets to Fit.
+    let dbl = GestureClick::new();
+    {
+        let (state, area_c, zoomer) = (state.clone(), area.clone(), zoomer.clone());
+        dbl.connect_pressed(move |_g, n, _x, _y| {
+            if n == 2 {
+                zoomer.cancel();
+                let mut v = state.get();
+                v.fit = true;
+                state.set(v);
+                area_c.queue_draw();
+            }
+        });
+    }
+    area.add_controller(dbl);
+
+    // Toolbar: −, live %, +, Fit — flat text glyphs, matching the reference style.
+    // The bar fills the full width (one uniform dark strip); the cluster centres.
+    let cluster = GtkBox::new(Orientation::Horizontal, 2);
+
+    let minus = Button::with_label("\u{2212}"); // − (minus sign)
+    minus.add_css_class("flat");
+    minus.add_css_class("viewer-zoom-btn");
+    minus.set_tooltip_text(Some("Zoom out"));
+    {
+        let zoomer = zoomer.clone();
+        minus.connect_clicked(move |_| zoomer.zoom_center(1.0 / 1.25));
+    }
+
+    let plus = Button::with_label("+");
+    plus.add_css_class("flat");
+    plus.add_css_class("viewer-zoom-btn");
+    plus.set_tooltip_text(Some("Zoom in"));
+    {
+        let zoomer = zoomer.clone();
+        plus.connect_clicked(move |_| zoomer.zoom_center(1.25));
+    }
+
+    let fit_btn = Button::from_icon_name("view-fullscreen-symbolic");
+    fit_btn.add_css_class("flat");
+    fit_btn.set_tooltip_text(Some("Fit to window"));
+    {
+        let (state, area_c, zoomer) = (state.clone(), area.clone(), zoomer.clone());
+        fit_btn.connect_clicked(move |_| {
+            zoomer.cancel();
+            let mut v = state.get();
+            v.fit = true;
+            state.set(v);
+            area_c.queue_draw();
+        });
+    }
+
+    cluster.append(&minus);
+    cluster.append(&pct);
+    cluster.append(&plus);
+    cluster.append(&fit_btn);
+
+    let bar = CenterBox::new();
+    bar.add_css_class("viewer-toolbar");
+    bar.set_center_widget(Some(&cluster));
+
+    let root = GtkBox::new(Orientation::Vertical, 0);
+    root.append(&bar);
+    root.append(&area);
+    root.upcast()
 }
 
 /// Inline audio/video player (GtkVideo over the GStreamer backend) with built-in
@@ -304,15 +567,6 @@ fn media_viewer(path: &Path) -> Widget {
     root.append(&bar);
     root.append(&video);
     root.upcast()
-}
-
-/// Natural pixel size of a loaded picture, falling back to a decoded texture.
-fn intrinsic_size(pic: &Picture, path: &Path) -> (i32, i32) {
-    pic.paintable()
-        .filter(|p| p.intrinsic_width() > 0 && p.intrinsic_height() > 0)
-        .map(|p| (p.intrinsic_width(), p.intrinsic_height()))
-        .or_else(|| gtk4::gdk::Texture::from_filename(path).ok().map(|t| (t.width(), t.height())))
-        .unwrap_or((1, 1))
 }
 
 /// Wrap `content` with a zoom toolbar (−, live %, +, Fit) and full mouse control:

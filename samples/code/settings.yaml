@@ -1,0 +1,5 @@
+window:
+  title: Tessera
+  panes: 4
+theme:
+  accent: "#e0af68"
