@@ -190,6 +190,13 @@ impl Pane {
         self.terminal.paste_clipboard();
     }
 
+    /// Drop scrollback to 0 during a height resize / zoom so VTE can't flood the
+    /// growing pane with pulled-up history; restore it once the change settles.
+    pub fn set_resizing(&self, on: bool) {
+        self.terminal
+            .set_scrollback_lines(if on { 0 } else { SCROLLBACK_LINES });
+    }
+
     pub fn set_active(&self, active: bool) {
         if active {
             self.root.add_css_class("active-pane");
