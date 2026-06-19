@@ -43,7 +43,16 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
     let cache = cache_dir(path)?;
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
 
-    let mut pages = collect_pages(&cache);
+    // Only trust the cache if a previous render finished completely. Without this
+    // marker, a render killed part-way (OOM, tab closed, crash) would leave a few
+    // page-*.png behind that look like a full cache, so the document would show
+    // permanently truncated and never re-render.
+    let done = cache.join(".done");
+    let mut pages = if done.exists() {
+        collect_pages(&cache)
+    } else {
+        Vec::new()
+    };
     if pages.is_empty() {
         let pdf = if is_office(path) {
             office_to_pdf(path, &cache)?
@@ -55,6 +64,9 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
         }
         rasterize(&pdf, &cache)?;
         pages = collect_pages(&cache);
+        if !pages.is_empty() {
+            let _ = std::fs::write(&done, b""); // cache is now complete
+        }
     }
     if pages.is_empty() {
         return Err("no pages were produced".into());

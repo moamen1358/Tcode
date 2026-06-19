@@ -218,12 +218,18 @@ impl Editor {
     }
 
     fn reveal(&self) {
-        if self.root.parent().is_none() {
+        // Set the split position only on the very first reveal; otherwise opening a
+        // second file would snap the divider back to 50%, discarding the width the
+        // user dragged.
+        let first = self.root.parent().is_none();
+        if first {
             self.paned.set_end_child(Some(&self.root));
         }
         self.root.set_visible(true);
-        let w = self.paned.width();
-        self.paned.set_position(if w > 200 { w / 2 } else { 700 });
+        if first {
+            let w = self.paned.width();
+            self.paned.set_position(if w > 200 { w / 2 } else { 700 });
+        }
     }
 }
 

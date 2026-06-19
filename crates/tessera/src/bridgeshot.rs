@@ -119,11 +119,16 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         let (shot, panel, main, close_annot) =
             (shot.clone(), panel.clone(), main.clone(), close_annot.clone());
         toolbar.save_btn.connect_clicked(move |_| {
-            if let Ok((path, pb)) = export::export_png(&shot) {
-                main.clipboard().set_texture(&Texture::for_pixbuf(&pb));
-                panel.add_saved(path);
+            match export::export_png(&shot) {
+                Ok((path, pb)) => {
+                    main.clipboard().set_texture(&Texture::for_pixbuf(&pb));
+                    panel.add_saved(path);
+                    close_annot();
+                }
+                // Keep the annotation canvas open on failure so the user's work
+                // isn't silently discarded (e.g. an image too large for cairo).
+                Err(e) => eprintln!("tessera: screenshot export failed: {e}"),
             }
-            close_annot();
         });
     }
     // Cancel: discard and close.

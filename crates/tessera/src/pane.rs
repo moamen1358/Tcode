@@ -60,7 +60,14 @@ impl Pane {
         // Cell colors come from the VTE API, not CSS.
         let fg = rgba(&cfg.theme.foreground);
         let bg = rgba(&cfg.theme.background);
+        // VTE only accepts a palette of 0, 8, 16, 232, or 256 colors; coerce any
+        // other length (a mis-sized config) to 16 by cycling, so a bad config
+        // can't trip a GLib g_return_if_fail critical / abort.
         let palette: Vec<RGBA> = cfg.theme.palette.iter().map(|c| rgba(c)).collect();
+        let palette: Vec<RGBA> = match palette.len() {
+            0 | 8 | 16 | 232 | 256 => palette,
+            n => (0..16).map(|i| palette[i % n]).collect(),
+        };
         let palette_refs: Vec<&RGBA> = palette.iter().collect();
         terminal.set_colors(Some(&fg), Some(&bg), &palette_refs);
 
