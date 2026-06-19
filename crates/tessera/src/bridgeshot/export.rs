@@ -9,7 +9,6 @@ use gtk4::cairo;
 use gtk4::gdk::prelude::GdkCairoContextExt;
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
-use gtk4::prelude::*;
 
 use super::canvas::paint_annotations;
 use super::state::Shot;

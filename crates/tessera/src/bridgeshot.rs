@@ -1,241 +1,218 @@
-//! BridgeShot — capture an image (a snapshot of Tessera's own window, or a
-//! dropped/opened image), draw numbered boxes with text labels on it, then
-//! export an annotated PNG whose path is copied to the clipboard. The result can
-//! be handed to an AI to point at specific regions.
-//!
-//! Capture uses GTK's own renderer to snapshot Tessera's window — reliable on
-//! COSMIC/Wayland, where external screenshot tools are blocked.
+//! BridgeShot — capture any window/region (via the desktop screenshot portal),
+//! annotate it with boxes, arrows, freehand pen, highlighter, and text in a
+//! chosen color, switch between this session's captures via a toggleable left
+//! thumbnail gallery, then export an annotated PNG (also copied to the
+//! clipboard) to hand to an AI or paste into a chat.
+
+mod canvas;
+mod capture;
+mod export;
+mod gallery;
+mod state;
+mod tools;
 
 use std::cell::RefCell;
-use std::f64::consts::TAU;
-use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk4::cairo;
-use gtk4::gdk::prelude::GdkCairoContextExt; // cr.set_source_pixbuf
+use gtk4::gdk::Texture;
+use gtk4::gdk::{Key, ModifierType};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    ApplicationWindow, Box as GtkBox, Button, DrawingArea, DropTarget, Entry, GestureDrag,
-    HeaderBar, Label, ListBox, ListBoxRow, Orientation, Paned, ScrolledWindow, Window,
+    ApplicationWindow, Box as GtkBox, Button, DrawingArea, DropTarget, EventControllerKey,
+    HeaderBar, Label, Orientation, Paned, Separator, ToggleButton, Window,
 };
 
-mod tools;
-mod state;
-mod capture;
-mod canvas;
-mod export;
-mod gallery;
+use state::{add_doc, Shot, State};
+use tools::{Tool, PALETTE};
 
-const ACCENT: (f64, f64, f64) = (0.478, 0.635, 0.969); // #7aa2f7
-const YELLOW: (f64, f64, f64) = (0.878, 0.686, 0.408); // #e0af68
-const BG: (f64, f64, f64) = (0.102, 0.106, 0.149); // #1a1b26
-
-struct Anno {
-    n: u32,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    label: String,
-}
-
-struct State {
-    pixbuf: Option<Pixbuf>,
-    boxes: Vec<Anno>,
-    next_n: u32,
-    drag: Option<(f64, f64, f64, f64)>, // image-space x0,y0,x1,y1
-    scale: f64,
-    off_x: f64,
-    off_y: f64,
-    exports: u32,
-}
-
-type Shot = Rc<RefCell<State>>;
-
-/// Open the BridgeShot window. `main` is Tessera's window — its self-snapshot is
-/// the default capture source.
+/// Open the BridgeShot window. `main` is Tessera's window — used as the capture
+/// fallback when the portal is unavailable.
 pub fn launch(main: &ApplicationWindow) {
-    let shot: Shot = Rc::new(RefCell::new(State {
-        pixbuf: None,
-        boxes: Vec::new(),
-        next_n: 0,
-        drag: None,
-        scale: 1.0,
-        off_x: 0.0,
-        off_y: 0.0,
-        exports: 0,
-    }));
+    let shot: Shot = Rc::new(RefCell::new(State::new()));
 
     let win = Window::builder()
         .title("BridgeShot")
-        .default_width(1120)
-        .default_height(760)
+        .default_width(1180)
+        .default_height(780)
         .build();
     win.add_css_class("bridgeshot-window");
 
+    // ----- header -----
     let header = HeaderBar::new();
-    let capture = Button::with_label("Capture");
-    let open = Button::with_label("Open…");
-    let undo = Button::with_label("Undo");
-    let clear = Button::with_label("Clear");
-    let export = Button::with_label("Export");
-    export.add_css_class("suggested-action");
-    header.pack_start(&capture);
-    header.pack_start(&open);
-    header.pack_start(&undo);
-    header.pack_start(&clear);
-    header.pack_end(&export);
+    let gallery_btn = ToggleButton::new();
+    gallery_btn.set_icon_name("sidebar-show-symbolic");
+    gallery_btn.set_active(true);
+    gallery_btn.set_tooltip_text(Some("Toggle gallery (Alt+G)"));
+    gallery_btn.add_css_class("flat");
+    let capture_btn = Button::with_label("Capture");
+    capture_btn.add_css_class("suggested-action");
+    let open_btn = Button::with_label("Open…");
+    let undo_btn = Button::with_label("Undo");
+    let clear_btn = Button::with_label("Clear");
+    let export_btn = Button::with_label("Export");
+    export_btn.add_css_class("suggested-action");
+    header.pack_start(&gallery_btn);
+    header.pack_start(&capture_btn);
+    header.pack_start(&open_btn);
+    header.pack_end(&export_btn);
+    header.pack_end(&clear_btn);
+    header.pack_end(&undo_btn);
     win.set_titlebar(Some(&header));
 
-    let canvas = DrawingArea::new();
-    canvas.set_hexpand(true);
-    canvas.set_vexpand(true);
-    canvas.add_css_class("bridgeshot-canvas");
-
-    let list = ListBox::new();
-    list.add_css_class("bridgeshot-list");
-    let list_scroll = ScrolledWindow::builder()
-        .child(&list)
-        .width_request(250)
-        .build();
+    // ----- canvas + gallery -----
+    let canvas_ui = canvas::build(&shot);
+    let area = canvas_ui.area.clone();
+    let gallery = gallery::new();
 
     let split = Paned::new(Orientation::Horizontal);
-    split.set_start_child(Some(&canvas));
-    split.set_end_child(Some(&list_scroll));
-    split.set_resize_start_child(true);
-    split.set_resize_end_child(false);
-    split.set_position(840);
+    split.set_start_child(Some(&gallery.root));
+    split.set_end_child(Some(&canvas_ui.overlay));
+    split.set_resize_start_child(false);
+    split.set_shrink_start_child(false);
+    split.set_resize_end_child(true);
+    split.set_position(160);
 
+    // ----- toolbar row (tools + colors) -----
+    let toolbar = GtkBox::new(Orientation::Horizontal, 6);
+    toolbar.add_css_class("bridgeshot-toolbar");
+    let tools_def = [
+        (Tool::Box, "Box"),
+        (Tool::Arrow, "Arrow"),
+        (Tool::Text, "Text"),
+        (Tool::Pen, "Pen"),
+        (Tool::Highlight, "Highlight"),
+    ];
+    let tool_btns: Rc<Vec<(Tool, ToggleButton)>> = Rc::new(
+        tools_def
+            .iter()
+            .map(|(tool, label)| {
+                let b = ToggleButton::with_label(label);
+                b.add_css_class("bridgeshot-tool");
+                (*tool, b)
+            })
+            .collect(),
+    );
+    // Radio grouping: exactly one tool active at a time. connect_toggled then
+    // fires reliably for both clicks and keyboard `set_active` shortcuts.
+    let group_leader = tool_btns[0].1.clone();
+    for (_, b) in tool_btns.iter().skip(1) {
+        b.set_group(Some(&group_leader));
+    }
+    for (tool, btn) in tool_btns.iter() {
+        let (tool, sb) = (*tool, shot.clone());
+        btn.connect_toggled(move |b| {
+            if b.is_active() {
+                sb.borrow_mut().tool = tool;
+            }
+        });
+        toolbar.append(btn);
+    }
+    tool_btns[0].1.set_active(true); // Box default
+
+    toolbar.append(&Separator::new(Orientation::Vertical));
+
+    let swatches = GtkBox::new(Orientation::Horizontal, 4);
+    swatches.add_css_class("bridgeshot-swatches");
+    for (i, color) in PALETTE.iter().enumerate() {
+        let sw = Button::new();
+        sw.add_css_class("bridgeshot-swatch");
+        sw.add_css_class(&format!("swatch-{i}"));
+        sw.set_tooltip_text(Some("Annotation color"));
+        let (c, sb) = (*color, shot.clone());
+        sw.connect_clicked(move |b| {
+            sb.borrow_mut().color = c;
+            if let Some(p) = b.parent() {
+                let mut ch = p.first_child();
+                while let Some(w) = ch {
+                    w.remove_css_class("selected");
+                    ch = w.next_sibling();
+                }
+            }
+            b.add_css_class("selected");
+        });
+        if i == 1 {
+            sw.add_css_class("selected"); // default blue
+        }
+        swatches.append(&sw);
+    }
+    toolbar.append(&swatches);
+
+    // ----- status bar -----
     let status = Label::new(Some(
-        "Capture Tessera, Open an image, or drop one here — then drag on the image to add a labeled box.",
+        "Capture anything, Open an image, or drop one here — then pick a tool and draw.",
     ));
     status.set_xalign(0.0);
     status.set_selectable(true);
     status.set_wrap(true);
     status.add_css_class("bridgeshot-status");
 
+    // ----- assemble -----
     let root = GtkBox::new(Orientation::Vertical, 0);
-    let split_box = GtkBox::new(Orientation::Vertical, 0);
-    split_box.set_vexpand(true);
-    split_box.append(&split);
-    root.append(&split_box);
+    root.append(&toolbar);
+    let mid = GtkBox::new(Orientation::Vertical, 0);
+    mid.set_vexpand(true);
+    mid.append(&split);
+    root.append(&mid);
     root.append(&status);
     win.set_child(Some(&root));
 
-    // Draw the image + boxes.
+    let gallery = Rc::new(gallery);
+
+    // Helper to load a Pixbuf as a new doc + thumbnail.
+    let load: Rc<dyn Fn(Pixbuf)> = {
+        let (shot, area, gallery) = (shot.clone(), area.clone(), gallery.clone());
+        Rc::new(move |pb: Pixbuf| {
+            let idx = add_doc(&shot, pb);
+            let thumb = shot.borrow().docs[idx].thumb.clone();
+            gallery.add_thumb(&shot, &area, idx, &thumb);
+            area.queue_draw();
+        })
+    };
+
+    // ----- gallery toggle -----
     {
-        let shot = shot.clone();
-        canvas.set_draw_func(move |_a, cr, w, h| draw(cr, w, h, &shot));
+        let gr = gallery.root.clone();
+        gallery_btn.connect_toggled(move |b| gr.set_visible(b.is_active()));
     }
 
-    // Drag to add a box.
+    // ----- capture (portal, window fallback) -----
     {
-        let drag = GestureDrag::new();
-        let (sb, cb) = (shot.clone(), canvas.clone());
-        drag.connect_drag_begin(move |_g, x, y| {
-            let mut s = sb.borrow_mut();
-            if s.pixbuf.is_none() {
-                return;
-            }
-            let (ix, iy) = to_image(&s, x, y);
-            s.drag = Some((ix, iy, ix, iy));
-            drop(s);
-            cb.queue_draw();
-        });
-        let (su, cu) = (shot.clone(), canvas.clone());
-        drag.connect_drag_update(move |g, dx, dy| {
-            let Some((sx, sy)) = g.start_point() else {
-                return;
-            };
-            let mut s = su.borrow_mut();
-            if s.drag.is_none() {
-                return;
-            }
-            let (ix, iy) = to_image(&s, sx + dx, sy + dy);
-            if let Some(d) = &mut s.drag {
-                d.2 = ix;
-                d.3 = iy;
-            }
-            drop(s);
-            cu.queue_draw();
-        });
-        let (se, ce, le) = (shot.clone(), canvas.clone(), list.clone());
-        drag.connect_drag_end(move |_g, _dx, _dy| {
-            let mut s = se.borrow_mut();
-            if let Some((x0, y0, x1, y1)) = s.drag.take() {
-                let (x, y, w, h) = norm(x0, y0, x1, y1);
-                if w > 4.0 && h > 4.0 {
-                    s.next_n += 1;
-                    let n = s.next_n;
-                    s.boxes.push(Anno {
-                        n,
-                        x,
-                        y,
-                        w,
-                        h,
-                        label: String::new(),
-                    });
-                    drop(s);
-                    add_row(&le, &se, &ce, n);
-                    ce.queue_draw();
-                    return;
-                }
-            }
-            drop(s);
-            ce.queue_draw();
-        });
-        canvas.add_controller(drag);
-    }
-
-    // Re-capture Tessera's window. Hide BridgeShot first so the target window is
-    // un-occluded and its frame clock is live, then capture and re-show.
-    {
-        let (m, sc, cc, stc) = (main.clone(), shot.clone(), canvas.clone(), status.clone());
-        let (lc, wc) = (list.clone(), win.clone());
-        capture.connect_clicked(move |_| {
-            stc.set_text("Capturing Tessera…");
-            wc.set_visible(false);
-            let (m, sc, cc, stc, lc, wc) = (
-                m.clone(),
-                sc.clone(),
-                cc.clone(),
-                stc.clone(),
-                lc.clone(),
-                wc.clone(),
-            );
-            // Let the compositor un-occlude Tessera before snapshotting.
-            glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
-                capture_window_async(&m, move |pb| {
+        let (main, win, status, load) = (main.clone(), win.clone(), status.clone(), load.clone());
+        capture_btn.connect_clicked(move |_| {
+            status.set_text("Choose what to capture…");
+            win.set_visible(false);
+            let (win, status, load) = (win.clone(), status.clone(), load.clone());
+            // Let the window hide before the picker appears.
+            let main = main.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(120), move || {
+                capture::capture_screen(&main, move |pb| {
                     match pb {
                         Some(pb) => {
-                            load_pixbuf(&sc, &lc, pb);
-                            cc.queue_draw();
-                            stc.set_text("Captured Tessera — drag to add boxes, then Export.");
+                            load(pb);
+                            status.set_text("Captured — pick a tool and draw, then Export.");
                         }
-                        None => stc.set_text("Capture failed (window not ready)."),
+                        None => status.set_text("Capture cancelled or unavailable."),
                     }
-                    wc.present();
+                    win.present();
                 });
             });
         });
     }
 
-    // Open an image file.
+    // ----- open -----
     {
-        let (sc, cc, stc, lc) = (shot.clone(), canvas.clone(), status.clone(), list.clone());
-        let w = win.clone();
-        open.connect_clicked(move |_| {
+        let (win, status, load) = (win.clone(), status.clone(), load.clone());
+        open_btn.connect_clicked(move |_| {
             let dialog = gtk4::FileDialog::builder().title("Open image").build();
-            let (sc, cc, stc, lc) = (sc.clone(), cc.clone(), stc.clone(), lc.clone());
-            dialog.open(Some(&w), gtk4::gio::Cancellable::NONE, move |res| {
+            let (status, load) = (status.clone(), load.clone());
+            dialog.open(Some(&win), gtk4::gio::Cancellable::NONE, move |res| {
                 if let Ok(file) = res {
                     if let Some(path) = file.path() {
                         if let Ok(pb) = Pixbuf::from_file(&path) {
-                            load_pixbuf(&sc, &lc, pb);
-                            cc.queue_draw();
-                            stc.set_text("Loaded image — drag to add boxes.");
+                            load(pb);
+                            status.set_text("Loaded image — pick a tool and draw.");
                         }
                     }
                 }
@@ -243,309 +220,119 @@ pub fn launch(main: &ApplicationWindow) {
         });
     }
 
-    // Drop an image onto the canvas.
+    // ----- drop -----
     {
         let dt = DropTarget::new(gtk4::gio::File::static_type(), gtk4::gdk::DragAction::COPY);
-        let (sc, cc, stc, lc) = (shot.clone(), canvas.clone(), status.clone(), list.clone());
+        let (status, load) = (status.clone(), load.clone());
         dt.connect_drop(move |_t, value, _x, _y| {
             if let Ok(file) = value.get::<gtk4::gio::File>() {
                 if let Some(path) = file.path() {
                     if let Ok(pb) = Pixbuf::from_file(&path) {
-                        load_pixbuf(&sc, &lc, pb);
-                        cc.queue_draw();
-                        stc.set_text("Loaded image — drag to add boxes.");
+                        load(pb);
+                        status.set_text("Loaded image — pick a tool and draw.");
                         return true;
                     }
                 }
             }
             false
         });
-        canvas.add_controller(dt);
+        area.add_controller(dt);
     }
 
-    // Undo last box.
+    // ----- undo / clear -----
     {
-        let (sc, cc, lc) = (shot.clone(), canvas.clone(), list.clone());
-        undo.connect_clicked(move |_| {
-            let mut s = sc.borrow_mut();
-            s.boxes.pop();
-            drop(s);
-            if let Some(row) = lc.last_child() {
-                lc.remove(&row);
-            }
-            cc.queue_draw();
+        let (shot, area) = (shot.clone(), area.clone());
+        undo_btn.connect_clicked(move |_| {
+            shot.borrow_mut().undo();
+            area.queue_draw();
+        });
+    }
+    {
+        let (shot, area) = (shot.clone(), area.clone());
+        clear_btn.connect_clicked(move |_| {
+            shot.borrow_mut().clear_active();
+            area.queue_draw();
         });
     }
 
-    // Clear all boxes.
+    // ----- export (save PNG + copy image to clipboard) -----
     {
-        let (sc, cc, lc) = (shot.clone(), canvas.clone(), list.clone());
-        clear.connect_clicked(move |_| {
-            let mut s = sc.borrow_mut();
-            s.boxes.clear();
-            s.next_n = 0;
-            drop(s);
-            while let Some(row) = lc.last_child() {
-                lc.remove(&row);
+        let (shot, status, win) = (shot.clone(), status.clone(), win.clone());
+        export_btn.connect_clicked(move |_| match export::export_png(&shot) {
+            Ok((path, pb)) => {
+                let texture = Texture::for_pixbuf(&pb);
+                win.clipboard().set_texture(&texture);
+                status.set_text(&format!(
+                    "Exported → {} (image copied to clipboard)",
+                    path.display()
+                ));
             }
-            cc.queue_draw();
+            Err(e) => status.set_text(&format!("Export failed: {e}")),
         });
     }
 
-    // Export annotated PNG.
-    {
-        let (sc, stc) = (shot.clone(), status.clone());
-        let w = win.clone();
-        export.connect_clicked(move |_| match export_png(&sc) {
-            Ok(path) => {
-                w.clipboard().set_text(&path.to_string_lossy());
-                stc.set_text(&format!("Exported → {} (path copied to clipboard)", path.display()));
-            }
-            Err(e) => stc.set_text(&format!("Export failed: {e}")),
-        });
-    }
+    // ----- window-local keys -----
+    install_keys(&win, &shot, &area, &gallery_btn, &tool_btns);
 
-    // Auto-capture Tessera on open — while it is still the live, focused window,
-    // before BridgeShot is presented on top of it — then show BridgeShot.
+    // ----- auto-capture Tessera on open (self-snapshot, like before) -----
     {
-        let (sc, cc, stc, lc, w) = (
-            shot.clone(),
-            canvas.clone(),
-            status.clone(),
-            list.clone(),
-            win.clone(),
-        );
-        capture_window_async(main, move |pb| {
+        let (status, load, win) = (status.clone(), load.clone(), win.clone());
+        capture::capture_window_async(main, move |pb| {
             if let Some(pb) = pb {
-                load_pixbuf(&sc, &lc, pb);
-                cc.queue_draw();
-                stc.set_text("Captured Tessera — drag to add boxes, then Export.");
+                load(pb);
+                status.set_text("Captured Tessera — or Capture anything else.");
             }
-            w.present();
+            win.present();
         });
     }
 }
 
-fn load_pixbuf(shot: &Shot, list: &ListBox, pb: Pixbuf) {
-    let mut s = shot.borrow_mut();
-    s.pixbuf = Some(pb);
-    s.boxes.clear();
-    s.next_n = 0;
-    s.drag = None;
-    drop(s);
-    while let Some(row) = list.last_child() {
-        list.remove(&row);
-    }
-}
+fn install_keys(
+    win: &Window,
+    shot: &Shot,
+    area: &DrawingArea,
+    gallery_btn: &ToggleButton,
+    tool_btns: &Rc<Vec<(Tool, ToggleButton)>>,
+) {
+    let controller = EventControllerKey::new();
+    let (shot, area, gallery_btn, tool_btns) = (
+        shot.clone(),
+        area.clone(),
+        gallery_btn.clone(),
+        tool_btns.clone(),
+    );
+    controller.connect_key_pressed(move |_c, keyval, _code, mods| {
+        let ctrl = mods.contains(ModifierType::CONTROL_MASK);
+        let alt = mods.contains(ModifierType::ALT_MASK);
 
-fn to_image(s: &State, wx: f64, wy: f64) -> (f64, f64) {
-    let sc = if s.scale.abs() < 1e-6 { 1.0 } else { s.scale };
-    ((wx - s.off_x) / sc, (wy - s.off_y) / sc)
-}
-
-fn norm(x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64, f64, f64) {
-    (x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs())
-}
-
-fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
-    cr.set_source_rgb(BG.0, BG.1, BG.2);
-    let _ = cr.paint();
-
-    let mut s = shot.borrow_mut();
-    let Some(pb) = s.pixbuf.clone() else {
-        cr.set_source_rgb(0.55, 0.6, 0.75);
-        cr.select_font_face("sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
-        cr.set_font_size(15.0);
-        let msg = "Capture Tessera, Open an image, or drop one here";
-        let tw = cr.text_extents(msg).map(|e| e.width()).unwrap_or(0.0);
-        cr.move_to((w as f64 - tw) / 2.0, h as f64 / 2.0);
-        let _ = cr.show_text(msg);
-        return;
-    };
-
-    let iw = pb.width() as f64;
-    let ih = pb.height() as f64;
-    let scale = (w as f64 / iw).min(h as f64 / ih).min(4.0);
-    s.scale = scale;
-    s.off_x = (w as f64 - iw * scale) / 2.0;
-    s.off_y = (h as f64 - ih * scale) / 2.0;
-
-    let _ = cr.save();
-    cr.translate(s.off_x, s.off_y);
-    cr.scale(scale, scale);
-    cr.set_source_pixbuf(&pb, 0.0, 0.0);
-    let _ = cr.paint();
-
-    cr.set_line_width(2.0 / scale);
-    for b in &s.boxes {
-        cr.set_source_rgb(ACCENT.0, ACCENT.1, ACCENT.2);
-        cr.rectangle(b.x, b.y, b.w, b.h);
-        let _ = cr.stroke();
-        draw_badge(cr, b.x, b.y, b.n, scale);
-    }
-    if let Some((x0, y0, x1, y1)) = s.drag {
-        let (x, y, bw, bh) = norm(x0, y0, x1, y1);
-        cr.set_dash(&[6.0 / scale, 4.0 / scale], 0.0);
-        cr.set_source_rgb(ACCENT.0, ACCENT.1, ACCENT.2);
-        cr.rectangle(x, y, bw, bh);
-        let _ = cr.stroke();
-        cr.set_dash(&[], 0.0);
-    }
-    let _ = cr.restore();
-}
-
-fn draw_badge(cr: &cairo::Context, x: f64, y: f64, n: u32, scale: f64) {
-    let r = 11.0 / scale;
-    cr.set_source_rgb(BG.0, BG.1, BG.2);
-    cr.arc(x + r, y + r, r, 0.0, TAU);
-    let _ = cr.fill_preserve();
-    cr.set_source_rgb(ACCENT.0, ACCENT.1, ACCENT.2);
-    cr.set_line_width(1.5 / scale);
-    let _ = cr.stroke();
-    cr.set_source_rgb(YELLOW.0, YELLOW.1, YELLOW.2);
-    cr.select_font_face("sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    cr.set_font_size(13.0 / scale);
-    let t = n.to_string();
-    if let Ok(e) = cr.text_extents(&t) {
-        cr.move_to(
-            x + r - e.width() / 2.0 - e.x_bearing(),
-            y + r - e.height() / 2.0 - e.y_bearing(),
-        );
-        let _ = cr.show_text(&t);
-    }
-}
-
-fn add_row(list: &ListBox, shot: &Shot, canvas: &DrawingArea, n: u32) {
-    let row = ListBoxRow::new();
-    let hbox = GtkBox::new(Orientation::Horizontal, 8);
-    hbox.set_margin_top(4);
-    hbox.set_margin_bottom(4);
-    hbox.set_margin_start(6);
-    hbox.set_margin_end(6);
-    let badge = Label::new(Some(&format!("#{n}")));
-    badge.add_css_class("bridgeshot-badge");
-    let entry = Entry::new();
-    entry.set_placeholder_text(Some("describe this box…"));
-    entry.set_hexpand(true);
-    entry.add_css_class("bridgeshot-entry");
-    let (sc, cc) = (shot.clone(), canvas.clone());
-    entry.connect_changed(move |e| {
-        let text = e.text().to_string();
-        let mut s = sc.borrow_mut();
-        if let Some(b) = s.boxes.iter_mut().find(|b| b.n == n) {
-            b.label = text;
+        // Ctrl+Z -> undo.
+        if ctrl && keyval == Key::z {
+            shot.borrow_mut().undo();
+            area.queue_draw();
+            return glib::Propagation::Stop;
         }
-        drop(s);
-        cc.queue_draw();
+        // Alt+G -> toggle gallery.
+        if alt && keyval == Key::g {
+            gallery_btn.set_active(!gallery_btn.is_active());
+            return glib::Propagation::Stop;
+        }
+        // Bare letters -> select tool (skipped automatically while an Entry has
+        // focus, since the Entry consumes the keypress before it bubbles here).
+        let pick = match keyval {
+            Key::b => Some(0),
+            Key::a => Some(1),
+            Key::t => Some(2),
+            Key::p => Some(3),
+            Key::h => Some(4),
+            _ => None,
+        };
+        if let Some(i) = pick {
+            if !ctrl && !alt {
+                tool_btns[i].1.set_active(true); // grouped -> fires toggled -> sets tool
+                return glib::Propagation::Stop;
+            }
+        }
+        glib::Propagation::Proceed
     });
-    hbox.append(&badge);
-    hbox.append(&entry);
-    row.set_child(Some(&hbox));
-    list.append(&row);
-    entry.grab_focus();
-}
-
-/// Snapshot the live window into a `Pixbuf`, asynchronously.
-///
-/// `WidgetPaintable` only records a render node on the widget's *next* snapshot
-/// after it is attached — so a synchronous capture of an already-drawn, static
-/// widget yields an empty node. Instead we attach the paintable, force a
-/// redraw, and read back two frame-clock ticks later. A timeout backstop avoids
-/// hanging if the frame clock is idle (e.g. the window is fully occluded).
-fn capture_window_async<F: Fn(Option<Pixbuf>) + 'static>(window: &ApplicationWindow, done: F) {
-    // The content child snapshots more reliably than the CSD toplevel.
-    let target: gtk4::Widget = window
-        .child()
-        .unwrap_or_else(|| window.clone().upcast::<gtk4::Widget>());
-    let renderer = match window.renderer() {
-        Some(r) => r,
-        None => {
-            done(None);
-            return;
-        }
-    };
-    let paintable = gtk4::WidgetPaintable::new(Some(&target));
-    target.queue_draw();
-
-    let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
-    let ticks = std::cell::Cell::new(0u32);
-    {
-        let done = done.clone();
-        target.add_tick_callback(move |w, _clock| {
-            let n = ticks.get() + 1;
-            ticks.set(n);
-            if n < 2 {
-                return glib::ControlFlow::Continue;
-            }
-            let pb = capture_paintable(&paintable, &renderer, w);
-            if let Some(cb) = done.borrow_mut().take() {
-                cb(pb);
-            }
-            glib::ControlFlow::Break
-        });
-    }
-
-    let done2 = done;
-    glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || {
-        if let Some(cb) = done2.borrow_mut().take() {
-            cb(None);
-        }
-    });
-}
-
-/// Render the paintable's current node to a `Pixbuf` via the window renderer.
-fn capture_paintable(
-    paintable: &gtk4::WidgetPaintable,
-    renderer: &gtk4::gsk::Renderer,
-    w: &gtk4::Widget,
-) -> Option<Pixbuf> {
-    let (pw, ph) = (w.width(), w.height());
-    if pw <= 0 || ph <= 0 {
-        return None;
-    }
-    let snapshot = gtk4::Snapshot::new();
-    paintable.snapshot(snapshot.upcast_ref::<gtk4::gdk::Snapshot>(), pw as f64, ph as f64);
-    let node = snapshot.to_node()?;
-    let texture = renderer.render_texture(&node, None);
-    let tmp = std::env::temp_dir().join("tessera-bridgeshot-capture.png");
-    texture.save_to_png(&tmp).ok()?;
-    Pixbuf::from_file(&tmp).ok()
-}
-
-fn export_png(shot: &Shot) -> Result<PathBuf, String> {
-    let mut s = shot.borrow_mut();
-    let pb = s.pixbuf.clone().ok_or("nothing to export")?;
-    let (iw, ih) = (pb.width(), pb.height());
-
-    let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, iw, ih)
-        .map_err(|e| e.to_string())?;
-    {
-        let cr = cairo::Context::new(&surface).map_err(|e| e.to_string())?;
-        cr.set_source_pixbuf(&pb, 0.0, 0.0);
-        let _ = cr.paint();
-        cr.set_line_width(3.0);
-        for b in &s.boxes {
-            cr.set_source_rgb(ACCENT.0, ACCENT.1, ACCENT.2);
-            cr.rectangle(b.x, b.y, b.w, b.h);
-            let _ = cr.stroke();
-            draw_badge(&cr, b.x, b.y, b.n, 1.0);
-            if !b.label.is_empty() {
-                cr.set_source_rgb(YELLOW.0, YELLOW.1, YELLOW.2);
-                cr.select_font_face("sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-                cr.set_font_size(16.0);
-                cr.move_to(b.x + 2.0, (b.y - 6.0).max(14.0));
-                let _ = cr.show_text(&format!("{}. {}", b.n, b.label));
-            }
-        }
-    }
-
-    let dir = glib::user_cache_dir().join("tessera").join("bridgeshot");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    s.exports += 1;
-    let path = dir.join(format!("shot-{}.png", s.exports));
-    let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-    surface
-        .write_to_png(&mut file)
-        .map_err(|e| e.to_string())?;
-    Ok(path)
+    win.add_controller(controller);
 }
