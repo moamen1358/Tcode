@@ -442,6 +442,13 @@ impl Grid {
         suppress_reflow(&g.self_weak, &g.resize_timer, &g.resizing);
     }
 
+    /// Whether two `Grid` handles refer to the same underlying grid. Used by the
+    /// session-restore poll to detect that the page it was sizing has since been
+    /// torn down and rebuilt, so it must not spawn shells into the stale grid.
+    pub fn same(&self, other: &Grid) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Number of live terminal panes (used to persist the session layout).
     pub fn pane_count(&self) -> usize {
         self.inner.borrow().panes.len()

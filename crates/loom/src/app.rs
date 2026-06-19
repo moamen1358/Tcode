@@ -1004,14 +1004,32 @@ fn restore_session_layout(state: &Shared) {
         )
     };
     let weak = Rc::downgrade(state);
-    // Spawn the shells, and focus the grid only if this session is still the one
-    // on screen (don't steal focus from a session switched to mid-restore).
+    // Spawn the shells once layout has settled — but only if this grid is still the
+    // session's installed grid, and focus it only if the session is on screen.
+    //
+    // If the page was torn down and rebuilt while we were polling (e.g. an Alt+digit
+    // pane-count change, which `drop_live`s then rebuilds the same id), this captured
+    // grid is now detached. Spawning into it would start orphan shells — re-running
+    // the startup command in panes no one will ever see — and `grab_focused` could
+    // even steal focus from the live grid. The freshly-built grid has its own poll,
+    // so we simply bail here.
     let finish = move |grid: &Grid| {
+        let Some(st) = weak.upgrade() else {
+            return;
+        };
+        let (still_installed, on_screen) = {
+            let s = st.borrow();
+            (
+                s.live.get(&id).is_some_and(|lc| lc.grid.same(grid)),
+                s.current.as_ref().is_some_and(|c| c.id == id),
+            )
+        };
+        if !still_installed {
+            return;
+        }
         grid.spawn_pending();
-        if let Some(st) = weak.upgrade() {
-            if st.borrow().current.as_ref().is_some_and(|c| c.id == id) {
-                grid.grab_focused();
-            }
+        if on_screen {
+            grid.grab_focused();
         }
     };
     let mut phase = 0u8;
