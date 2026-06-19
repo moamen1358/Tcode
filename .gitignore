@@ -3,3 +3,6 @@
 
 # Stray desktop screenshots
 Screenshot_*.png
+
+# Local data file (real business data — never commit)
+/apollo-accounts-export.csv

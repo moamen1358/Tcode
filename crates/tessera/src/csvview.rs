@@ -117,9 +117,14 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
 
         let column = ColumnViewColumn::new(Some(&title), Some(factory));
         column.set_resizable(true);
-        // Share the panel width across columns (instead of collapsing to the
-        // ellipsized label's tiny natural width); the user can still drag-resize.
-        column.set_expand(true);
+        // Few columns: expand to share the panel width. Many columns: a fixed
+        // width + horizontal scroll keeps each one readable instead of crushing
+        // them to a sliver. Either way the user can drag-resize.
+        if ncols <= 6 {
+            column.set_expand(true);
+        } else {
+            column.set_fixed_width(160);
+        }
         column_view.append_column(&column);
     }
 
