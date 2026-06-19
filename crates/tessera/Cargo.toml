@@ -25,7 +25,9 @@ async-channel = "2"
 cairo-rs = { version = "0.22", features = ["png"] }
 # XDG screenshot portal — capture any window/region on Wayland/COSMIC via the
 # compositor's own picker. Pure Rust (zbus over D-Bus); no new system libs.
-# The `gtk4` feature is intentionally OMITTED: it would pull a second gtk4
-# version and break the build. We pass no WindowIdentifier (picker is
-# compositor-driven), so we don't need it.
-ashpd = "0.13"
+# default-features off drops ashpd's default `tokio` runtime: we use `async-io`
+# instead so zbus drives its own reactor thread and the request future can be
+# awaited on GTK's glib executor (glib::spawn_future_local). `screenshot` opts
+# into the one portal we use; the `gtk4` feature is intentionally OMITTED (it
+# would pull a second gtk4 version). No WindowIdentifier needed (compositor-driven).
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
