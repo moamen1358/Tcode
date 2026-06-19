@@ -52,6 +52,12 @@ fn chain(
     items: &[gtk4::Widget],
     divisor: usize,
 ) -> (gtk4::Widget, Vec<PanedInfo>) {
+    // Guard the empty case: build_tree only ever passes rows of width >= 1, but a
+    // future caller (or a layout change yielding a zero-width row) would otherwise
+    // underflow `items.len() - 1` below and panic. Return an inert placeholder.
+    if items.is_empty() {
+        return (GtkBox::new(orient, 0).upcast(), Vec::new());
+    }
     if items.len() == 1 {
         return (items[0].clone(), Vec::new());
     }
