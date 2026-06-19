@@ -8,7 +8,7 @@
 //! scroll) so even a 17k-row × 41-column file opens instantly instead of
 //! tagging hundreds of thousands of fields up front.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
@@ -18,9 +18,6 @@ use gtk4::{PolicyType, ScrolledWindow, TextTag, Widget, WrapMode};
 use sourceview5::prelude::*;
 use sourceview5::{Buffer, View};
 
-/// Don't load multi-GB files into the editor synchronously.
-const MAX_BYTES: u64 = 64 * 1024 * 1024;
-
 /// Per-column foreground colors (cycled). Readable on the dark theme.
 const COLORS: [&str; 8] = [
     "#e06c75", "#98c379", "#61afef", "#e5c07b", "#c678dd", "#56b6c2", "#d19a66", "#d7dae0",
@@ -28,24 +25,14 @@ const COLORS: [&str; 8] = [
 
 /// Build a rainbow CSV/TSV viewer for `path`, or `None` if it isn't decodable text.
 pub fn csv_viewer(path: &Path) -> Option<Widget> {
-    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_BYTES {
-        return None;
+    if crate::loader::too_large(path) || crate::loader::looks_binary(path) {
+        return None; // too large or binary → caller falls back to the text viewer
     }
-    let bytes = std::fs::read(path).ok()?;
-    if bytes.contains(&0) {
-        return None; // binary → caller falls back
-    }
-    let text = String::from_utf8(bytes).ok()?;
-    if text.trim().is_empty() {
-        return None;
-    }
-    let delim = detect_delimiter(&text, path) as char;
 
     let buffer = Buffer::new(None);
     if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme("Adwaita-dark") {
         buffer.set_style_scheme(Some(&scheme));
     }
-    buffer.set_text(&text);
 
     // One color tag per column slot, cycled.
     let tags: Vec<TextTag> = COLORS
@@ -76,15 +63,21 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
 
     // Track which lines have already been colored so each is tagged once.
     let tagged: Rc<RefCell<HashSet<i32>>> = Rc::new(RefCell::new(HashSet::new()));
+    // Delimiter is detected once the file has loaded (off-thread); recolor reads
+    // it from this cell so visible-line coloring uses the right delimiter.
+    let delim: Rc<Cell<char>> = Rc::new(Cell::new(','));
 
     // Color the lines currently visible (plus a small margin), once each. Line
-    // text is read straight from the buffer so field offsets are computed against
-    // the exact line model GTK splits on — this fixes lone-CR / CRLF files where
-    // Rust's str::lines() and GtkTextBuffer disagree, and avoids holding a second
-    // full copy of the file.
+    // text is read straight from the buffer so field offsets match the exact line
+    // model GTK splits on (handles lone-CR / CRLF) without a second full copy.
     let recolor: Rc<dyn Fn()> = {
-        let (view, buffer, tags, tagged) =
-            (view.clone(), buffer.clone(), tags.clone(), tagged.clone());
+        let (view, buffer, tags, tagged, delim) = (
+            view.clone(),
+            buffer.clone(),
+            tags.clone(),
+            tagged.clone(),
+            delim.clone(),
+        );
         Rc::new(move || {
             let rect = view.visible_rect();
             if rect.height() == 0 {
@@ -95,6 +88,7 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
             let last = buffer.line_count() - 1;
             let from = (top - 4).max(0);
             let to = (bot + 4).min(last);
+            let d = delim.get();
             let mut done = tagged.borrow_mut();
             for line in from..=to {
                 if !done.insert(line) {
@@ -106,7 +100,7 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
                 let mut end = start;
                 end.forward_to_line_end(); // stops before the line terminator
                 let content = buffer.text(&start, &end, false).to_string();
-                for (col, (s, e)) in field_ranges(&content, delim).into_iter().enumerate() {
+                for (col, (s, e)) in field_ranges(&content, d).into_iter().enumerate() {
                     if e <= s {
                         continue;
                     }
@@ -131,8 +125,20 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
         let recolor = recolor.clone();
         vadj.connect_changed(move |_| recolor());
     }
-    // Initial pass once laid out.
-    gtk4::glib::idle_add_local_once(move || recolor());
+    // Read the file off the main thread; once decoded, detect the delimiter, fill
+    // the buffer, and color the first screen — so a big CSV doesn't freeze the UI
+    // on open. The view appears immediately and populates when the read finishes.
+    {
+        let (buffer, delim, recolor) = (buffer.clone(), delim.clone(), recolor.clone());
+        let p = path.to_path_buf();
+        crate::loader::load_text_async(path, move |text| {
+            if let Some(text) = text {
+                delim.set(detect_delimiter(&text, &p) as char);
+                buffer.set_text(&text);
+                recolor();
+            }
+        });
+    }
 
     Some(scroller.upcast())
 }

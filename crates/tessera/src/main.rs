@@ -5,6 +5,7 @@ mod editor;
 mod grid;
 mod icons;
 mod keys;
+mod loader;
 mod pane;
 mod picker;
 mod preview;

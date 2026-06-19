@@ -247,11 +247,16 @@ fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
     if bytes.contains(&0) {
         return None; // NUL byte -> binary
     }
+    // Skip syntax highlighting above 2 MB — the highlight machinery is the main
+    // source of jank when opening a big source file.
+    let big = bytes.len() as u64 > 2 * 1024 * 1024;
     let content = String::from_utf8(bytes).ok()?;
 
     let buffer = Buffer::new(None);
-    if let Some(lang) = LanguageManager::default().guess_language(path.to_str(), None) {
-        buffer.set_language(Some(&lang));
+    if !big {
+        if let Some(lang) = LanguageManager::default().guess_language(path.to_str(), None) {
+            buffer.set_language(Some(&lang));
+        }
     }
     if let Some(scheme) = StyleSchemeManager::default().scheme("Adwaita-dark") {
         buffer.set_style_scheme(Some(&scheme));
