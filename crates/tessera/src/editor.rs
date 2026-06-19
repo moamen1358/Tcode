@@ -1,12 +1,13 @@
 //! Tabbed universal file viewer beside the terminals (the center `Paned`'s end
 //! child). Each opened file becomes a tab whose content is chosen by file type:
-//! text/code uses GtkSourceView (editable, `Ctrl+S` saves); images use
-//! GtkPicture; PDFs and office documents are rendered to page images on a worker
-//! thread (see `preview`) and shown as a scrollable column; anything else gets an
+//! text/code uses GtkSourceView (editable, `Ctrl+S` saves); images use GtkPicture
+//! with a zoom toolbar + Ctrl+scroll; PDFs and office documents are rendered to
+//! page images on a worker thread (see `preview`) and shown as a scrollable,
+//! zoomable column; audio/video play inline via GtkVideo; anything else gets an
 //! info card with "Open externally". `Esc` or a tab's `×` closes it; closing the
 //! last tab hides the panel.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,8 +17,9 @@ use gtk4::gdk::{Key, ModifierType};
 use gtk4::glib::{self, Propagation};
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, ContentFit, EventControllerKey, Label, Notebook, Orientation,
-    Paned, Picture, PolicyType, PropagationPhase, ScrolledWindow, Widget,
+    gio, Align, Box as GtkBox, Button, ContentFit, EventControllerKey, EventControllerScroll,
+    EventControllerScrollFlags, Label, Notebook, Orientation, Paned, Picture, PolicyType,
+    PropagationPhase, ScrolledWindow, Video, Widget,
 };
 use sourceview5::prelude::*;
 use sourceview5::{Buffer, LanguageManager, StyleSchemeManager, View};
@@ -31,6 +33,7 @@ enum Kind {
     Image,
     Pdf,
     Office,
+    Media,
     Other,
 }
 
@@ -47,11 +50,14 @@ fn kind_of(path: &Path) -> Kind {
         "doc" | "docx" | "odt" | "rtf" | "ppt" | "pptx" | "odp" | "xls" | "xlsx" | "ods" => {
             Kind::Office
         }
-        // Media / archives / binaries get the info card (no inline preview).
-        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "flv" | "mp3" | "wav" | "flac"
-        | "ogg" | "m4a" | "aac" | "opus" | "zip" | "tar" | "gz" | "xz" | "zst" | "bz2"
-        | "7z" | "rar" | "exe" | "bin" | "so" | "o" | "a" | "dll" | "dylib" | "wasm"
-        | "ttf" | "otf" | "woff" | "woff2" => Kind::Other,
+        // Audio + video play inline via GtkVideo (GStreamer backend).
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "flv" | "m4v" | "mpg" | "mpeg" | "ogv"
+        | "mp3" | "wav" | "flac" | "ogg" | "oga" | "m4a" | "aac" | "opus" | "wma" | "mid" => {
+            Kind::Media
+        }
+        // Archives / binaries / fonts get the info card (no inline preview).
+        "zip" | "tar" | "gz" | "xz" | "zst" | "bz2" | "7z" | "rar" | "exe" | "bin" | "so" | "o"
+        | "a" | "dll" | "dylib" | "wasm" | "ttf" | "otf" | "woff" | "woff2" => Kind::Other,
         // Unknown/extensionless default to text, downgraded to the info card if
         // the bytes aren't valid UTF-8.
         _ => Kind::Text,
@@ -148,6 +154,7 @@ impl Editor {
                     let cancel = Arc::new(AtomicBool::new(false));
                     (build_pages(path, cancel.clone()), None, Some(cancel))
                 }
+                Kind::Media => (media_viewer(path), None, None),
                 Kind::Other => (fallback_viewer(path), None, None),
             };
 
@@ -226,14 +233,19 @@ fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
     Some((scroller.upcast(), buffer))
 }
 
-/// Fit-to-view image, scrollable for very large pictures.
+/// Image viewer: fit-to-view by default, with a zoom toolbar and Ctrl+scroll to
+/// zoom in/out (scrollable once zoomed past the viewport).
 fn image_viewer(path: &Path) -> Widget {
     let pic = Picture::for_filename(path);
     pic.set_content_fit(ContentFit::Contain);
     pic.set_can_shrink(true);
+    pic.set_halign(Align::Center);
+    pic.set_valign(Align::Center);
     pic.set_vexpand(true);
     pic.set_hexpand(true);
     pic.add_css_class("image-view");
+    let (iw, ih) = intrinsic_size(&pic, path);
+
     let scroller = ScrolledWindow::builder()
         .hscrollbar_policy(PolicyType::Automatic)
         .vscrollbar_policy(PolicyType::Automatic)
@@ -241,16 +253,154 @@ fn image_viewer(path: &Path) -> Widget {
         .hexpand(true)
         .child(&pic)
         .build();
-    scroller.upcast()
+
+    let pic2 = pic.clone();
+    wrap_zoomable(&scroller, move |z| match z {
+        // Fit: let the picture shrink to the viewport (aspect preserved).
+        None => {
+            pic2.set_size_request(-1, -1);
+            pic2.set_content_fit(ContentFit::Contain);
+        }
+        // Explicit zoom: render at intrinsic_size * z and let the window scroll.
+        Some(z) => {
+            pic2.set_content_fit(ContentFit::Fill);
+            pic2.set_size_request((iw as f64 * z).round() as i32, (ih as f64 * z).round() as i32);
+        }
+    })
+}
+
+/// Inline audio/video player (GtkVideo over the GStreamer backend) with built-in
+/// play / seek / volume controls. "Open externally" stays available in case the
+/// system can't decode the codec.
+fn media_viewer(path: &Path) -> Widget {
+    let video = Video::new();
+    video.set_file(Some(&gio::File::for_path(path)));
+    video.set_autoplay(false);
+    video.set_loop(false);
+    video.set_vexpand(true);
+    video.set_hexpand(true);
+    video.add_css_class("media-view");
+
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let bar = GtkBox::new(Orientation::Horizontal, 8);
+    bar.add_css_class("viewer-toolbar");
+    let title = Label::new(Some(&name));
+    title.set_hexpand(true);
+    title.set_xalign(0.0);
+    title.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    bar.append(&title);
+    bar.append(&open_externally(path));
+
+    let root = GtkBox::new(Orientation::Vertical, 0);
+    root.append(&bar);
+    root.append(&video);
+    root.upcast()
+}
+
+/// Natural pixel size of a loaded picture, falling back to a decoded texture.
+fn intrinsic_size(pic: &Picture, path: &Path) -> (i32, i32) {
+    pic.paintable()
+        .filter(|p| p.intrinsic_width() > 0 && p.intrinsic_height() > 0)
+        .map(|p| (p.intrinsic_width(), p.intrinsic_height()))
+        .or_else(|| gtk4::gdk::Texture::from_filename(path).ok().map(|t| (t.width(), t.height())))
+        .unwrap_or((1, 1))
+}
+
+/// Wrap `content` with a thin zoom toolbar (−, live %, +, Fit) and wire Ctrl+
+/// scroll over it. `apply(Some(z))` requests an absolute zoom (1.0 = 100 %);
+/// `apply(None)` requests fit-to-view.
+fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static) -> Widget {
+    content.set_vexpand(true);
+    content.set_hexpand(true);
+
+    let apply = Rc::new(apply);
+    let zoom = Rc::new(Cell::new(1.0_f64));
+
+    let bar = GtkBox::new(Orientation::Horizontal, 2);
+    bar.add_css_class("viewer-toolbar");
+    bar.set_halign(Align::Center);
+    let pct = Label::new(Some("Fit"));
+    pct.add_css_class("viewer-zoom-pct");
+
+    // Set an absolute zoom and update the label.
+    let set_abs: Rc<dyn Fn(f64)> = {
+        let (apply, zoom, pct) = (apply.clone(), zoom.clone(), pct.clone());
+        Rc::new(move |z: f64| {
+            let z = z.clamp(0.1, 8.0);
+            zoom.set(z);
+            pct.set_text(&format!("{:.0}%", z * 100.0));
+            apply(Some(z));
+        })
+    };
+
+    let minus = Button::from_icon_name("zoom-out-symbolic");
+    minus.add_css_class("flat");
+    minus.set_tooltip_text(Some("Zoom out"));
+    {
+        let (set_abs, zoom) = (set_abs.clone(), zoom.clone());
+        minus.connect_clicked(move |_| set_abs(zoom.get() / 1.25));
+    }
+
+    let plus = Button::from_icon_name("zoom-in-symbolic");
+    plus.add_css_class("flat");
+    plus.set_tooltip_text(Some("Zoom in"));
+    {
+        let (set_abs, zoom) = (set_abs.clone(), zoom.clone());
+        plus.connect_clicked(move |_| set_abs(zoom.get() * 1.25));
+    }
+
+    let fit = Button::from_icon_name("zoom-fit-best-symbolic");
+    fit.add_css_class("flat");
+    fit.set_tooltip_text(Some("Fit to window"));
+    {
+        let (apply, zoom, pct) = (apply.clone(), zoom.clone(), pct.clone());
+        fit.connect_clicked(move |_| {
+            zoom.set(1.0);
+            pct.set_text("Fit");
+            apply(None);
+        });
+    }
+
+    bar.append(&minus);
+    bar.append(&pct);
+    bar.append(&plus);
+    bar.append(&fit);
+
+    // Ctrl+scroll zooms (intercept before the ScrolledWindow scrolls).
+    let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+    scroll.set_propagation_phase(PropagationPhase::Capture);
+    {
+        let (set_abs, zoom) = (set_abs.clone(), zoom.clone());
+        scroll.connect_scroll(move |c, _dx, dy| {
+            if c.current_event_state().contains(ModifierType::CONTROL_MASK) {
+                let factor = if dy < 0.0 { 1.1 } else { 1.0 / 1.1 };
+                set_abs(zoom.get() * factor);
+                Propagation::Stop
+            } else {
+                Propagation::Proceed
+            }
+        });
+    }
+    content.add_controller(scroll);
+
+    let root = GtkBox::new(Orientation::Vertical, 0);
+    root.append(&bar);
+    root.append(content);
+    root.upcast()
 }
 
 /// A scrollable column of rendered pages for a PDF or office document. The actual
 /// rendering happens on a worker thread; pages stream in as they're produced.
 fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     let column = GtkBox::new(Orientation::Vertical, 14);
-    column.set_halign(Align::Center);
+    column.set_halign(Align::Fill);
     column.set_margin_top(12);
     column.set_margin_bottom(12);
+    column.set_margin_start(10);
+    column.set_margin_end(10);
     column.add_css_class("doc-view");
     let status = Label::new(Some("Rendering…"));
     status.set_margin_top(40);
@@ -265,12 +415,18 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
         .child(&column)
         .build();
 
+    // Page sizing: None = fit each page to the panel width; Some(z) = panel * z.
+    // Streaming pages adopt the current mode as they arrive.
+    let mode: Rc<Cell<Option<f64>>> = Rc::new(Cell::new(None));
+
     let (tx, rx) = async_channel::unbounded::<preview::Msg>();
     preview::start_render(path.to_path_buf(), tx, cancel);
 
     let col = column.clone();
     let st = status.clone();
     let p = path.to_path_buf();
+    let mode_rx = mode.clone();
+    let sc_rx = scroller.clone();
     glib::spawn_future_local(async move {
         while let Ok(msg) = rx.recv().await {
             match msg {
@@ -281,8 +437,9 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                     let pic = Picture::for_filename(&page);
                     pic.set_can_shrink(true);
                     pic.set_content_fit(ContentFit::Contain);
-                    pic.set_size_request(820, -1);
+                    pic.set_halign(Align::Center);
                     pic.add_css_class("doc-page");
+                    size_doc_page(&pic, mode_rx.get(), sc_rx.width());
                     col.append(&pic);
                 }
                 preview::Msg::Done => st.set_visible(false),
@@ -295,7 +452,38 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
         }
     });
 
-    scroller.upcast()
+    let col2 = column.clone();
+    // Weak: the scroller owns the scroll controller that holds this closure, so a
+    // strong ref here would form a cycle and leak the page subtree on tab close.
+    let sc_weak = scroller.downgrade();
+    wrap_zoomable(&scroller, move |z| {
+        mode.set(z);
+        let panel = sc_weak.upgrade().map(|s| s.width()).unwrap_or(800);
+        let mut child = col2.first_child();
+        while let Some(c) = child {
+            let next = c.next_sibling();
+            if let Ok(pic) = c.downcast::<Picture>() {
+                size_doc_page(&pic, z, panel);
+            }
+            child = next;
+        }
+    })
+}
+
+/// Size one document page: `None` fits the page to the panel width; `Some(z)`
+/// renders it at `panel_width * z` (overflowing → scrollable).
+fn size_doc_page(pic: &Picture, z: Option<f64>, panel: i32) {
+    match z {
+        None => {
+            pic.set_hexpand(true);
+            pic.set_size_request(-1, -1);
+        }
+        Some(z) => {
+            pic.set_hexpand(false);
+            let w = ((panel.max(200) as f64) * z).round() as i32;
+            pic.set_size_request(w.max(120), -1);
+        }
+    }
 }
 
 /// Info card for files we can't preview inline (video, audio, archives, …).
