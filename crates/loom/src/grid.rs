@@ -463,21 +463,26 @@ impl Grid {
         (g.container.width(), g.container.height())
     }
 
-    /// Drop every terminal's scrollback for the duration of a session restore so
-    /// the split changes don't flood/re-wrap the buffer mid-resize. Pair with
-    /// `end_restore` once the layout has settled.
-    pub fn begin_restore(&self) {
-        for p in &self.inner.borrow().panes {
-            p.set_resizing(true);
+    /// Shift every split by `delta` px. Paired with a follow-up `apply_split_ratios`
+    /// / `relayout_positions` to restore the layout, this is a deliberate size
+    /// change that forces every terminal to re-wrap and snap its prompt back to the
+    /// top after a restore — which a programmatic split that doesn't change a pane's
+    /// pixel size won't trigger on its own (the same effect as a manual drag).
+    pub fn nudge_all(&self, delta: i32) {
+        let g = self.inner.borrow();
+        for (paned, _, _) in &g.paneds {
+            paned.set_position((paned.position() + delta).max(1));
         }
     }
 
-    /// Finish a session restore: re-enable scrollback and repaint each shell's
-    /// prompt cleanly (Ctrl+L), now that every split is at its final size. Safe:
-    /// these are freshly-spawned shells sitting at their prompt.
-    pub fn end_restore(&self) {
+    /// Finish a session restore: drop and re-enable each terminal's scrollback
+    /// (clears any blank/garbled lines the open-time resize left in history), then
+    /// repaint a clean prompt (Ctrl+L). Run after every split is at its final size.
+    /// Safe: these are freshly-spawned shells sitting at their prompt.
+    pub fn clear_and_repaint(&self) {
         for p in &self.inner.borrow().panes {
-            p.set_resizing(false);
+            p.set_resizing(true); // scrollback -> 0, discards history
+            p.set_resizing(false); // scrollback -> full again
             p.terminal.feed_child(b"\x0c");
         }
     }

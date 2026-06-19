@@ -900,39 +900,40 @@ pub fn show_grid(state: &Shared, n: usize) {
 }
 
 /// Restore a freshly-built session's split sizes in the right order so each
-/// terminal is sized exactly once, at its final width.
+/// terminal ends up at its final size with the prompt at the top (no dead space).
 ///
-/// The outer splits (sidebar width, editor split) must be applied *before* the
-/// terminal grid's splits — otherwise the grid is sized against a transient width
-/// and then resized again when the editor/sidebar move, which makes VTE re-wrap
-/// and pushes the prompt down (leaving dead space above it). Widget allocations
-/// don't update until the next layout pass, so we drive this as a short poll:
-/// wait for the window to be allocated, apply the outer splits, wait for the grid
-/// container width to stabilize, apply the terminal splits, then repaint.
+/// Two problems compound at open time: (1) the outer splits (sidebar width, editor
+/// split) must be applied *before* the terminal grid's splits, or the grid is
+/// sized against a transient width and re-wrapped; (2) the terminals are spawned
+/// (and print their prompt) before the window is maximized, so the maximize-grow
+/// leaves the prompt pushed down — and a programmatic split that doesn't actually
+/// change a terminal's pixel size won't make VTE re-wrap to fix it. So after the
+/// layout settles we force one real size change (a brief sidebar nudge, ≥1 cell),
+/// which makes every terminal re-wrap and snap the prompt back to the top — the
+/// same thing a manual divider drag does — then clear scrollback and repaint.
+///
+/// Allocations only update on the next layout pass, so this runs as a short poll.
 fn restore_session_layout(state: &Shared) {
     use gtk4::glib::ControlFlow;
-    // Drop scrollback up front so the resizes below can't flood/garble the buffer;
-    // restored with a clean repaint once everything settles.
-    if let Some(g) = state.borrow().grid.as_ref() {
-        g.begin_restore();
-    }
     let st = state.clone();
     let mut phase = 0u8;
     let mut last_w = -1i32;
     let mut stable = 0u8;
     let mut ticks = 0u32;
+    let mut nudge_restore = -1i32;
     gtk4::glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
         ticks += 1;
-        // ~2s safety cap: never leave scrollback suppressed if sizes never settle.
-        if ticks > 120 {
+        // ~5s safety cap: always finish, even if sizes never settle.
+        if ticks > 300 {
             if let Some(g) = st.borrow().grid.as_ref() {
-                g.end_restore();
+                g.clear_and_repaint();
                 g.grab_focused();
             }
             return ControlFlow::Break;
         }
         let s = st.borrow();
         let center_w = s.center_paned.as_ref().map(|c| c.width()).unwrap_or(0);
+        let cw = s.grid.as_ref().map(|g| g.container_size().0).unwrap_or(0);
         match phase {
             // Phase 0: wait for a real allocation, then apply the outer splits.
             0 => {
@@ -958,13 +959,12 @@ fn restore_session_layout(state: &Shared) {
                 stable = 0;
                 ControlFlow::Continue
             }
-            // Phase 1: wait for the grid container width to settle after the outer
-            // splits take effect, then size the terminal splits against it.
+            // Phase 1: wait for the grid width to settle after the outer splits,
+            // then size the terminal splits against their final width.
             1 => {
-                let cw = s.grid.as_ref().map(|g| g.container_size().0).unwrap_or(0);
                 stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
                 last_w = cw;
-                if stable < 2 {
+                if stable < 5 {
                     return ControlFlow::Continue;
                 }
                 if let Some(g) = s.grid.as_ref() {
@@ -984,16 +984,60 @@ fn restore_session_layout(state: &Shared) {
                 stable = 0;
                 ControlFlow::Continue
             }
-            // Phase 2: let the terminal splits settle, then repaint clean prompts.
-            _ => {
-                let cw = s.grid.as_ref().map(|g| g.container_size().0).unwrap_or(0);
+            // Phase 2: once stable, nudge every split by a real amount (grid splits
+            // and the sidebar) so each terminal's pixel size changes → VTE re-wraps
+            // → prompt snaps to the top. Nudging the grid splits directly (not just
+            // the sidebar) guarantees a ≥1-cell change per terminal at any pane
+            // count or UI scale.
+            2 => {
                 stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
                 last_w = cw;
-                if stable < 2 {
+                if stable < 5 {
                     return ControlFlow::Continue;
                 }
                 if let Some(g) = s.grid.as_ref() {
-                    g.end_restore();
+                    g.nudge_all(40);
+                }
+                if let Some(content) = s.content_paned.as_ref() {
+                    nudge_restore = content.position();
+                    content.set_position(nudge_restore + 40);
+                }
+                phase = 3;
+                ControlFlow::Continue
+            }
+            // Phase 3: undo the nudge — restore the saved layout exactly.
+            3 => {
+                if let Some(g) = s.grid.as_ref() {
+                    let ratios = s
+                        .current
+                        .as_ref()
+                        .map(|c| c.divisors.clone())
+                        .unwrap_or_default();
+                    if ratios.is_empty() {
+                        g.relayout_positions();
+                    } else {
+                        g.apply_split_ratios(&ratios);
+                    }
+                }
+                if nudge_restore >= 0 {
+                    if let Some(content) = s.content_paned.as_ref() {
+                        content.set_position(nudge_restore);
+                    }
+                }
+                phase = 4;
+                last_w = -1;
+                stable = 0;
+                ControlFlow::Continue
+            }
+            // Phase 4: let the re-wrap settle, then clear scrollback + repaint.
+            _ => {
+                stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
+                last_w = cw;
+                if stable < 4 {
+                    return ControlFlow::Continue;
+                }
+                if let Some(g) = s.grid.as_ref() {
+                    g.clear_and_repaint();
                     g.grab_focused();
                 }
                 ControlFlow::Break
