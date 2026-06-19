@@ -18,6 +18,11 @@ use crate::config::config_dir;
 
 static SESSION_ID_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Hard cap on panes per session, matching the grid's own clamp. Bounds a
+/// hand-edited or corrupt `panes` value on load so the picker, the persisted
+/// model, and the grid that actually gets built all agree.
+const MAX_PANES: usize = 16;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Session {
     /// Filename stem — a stable id that survives renames. Derived from the file
@@ -142,6 +147,7 @@ pub fn list() -> Vec<Session> {
             .file_stem()
             .map(|x| x.to_string_lossy().to_string())
             .unwrap_or_default();
+        s.panes = s.panes.clamp(1, MAX_PANES);
         let mtime = e
             .metadata()
             .and_then(|m| m.modified())
@@ -161,6 +167,7 @@ pub fn load(id: &str) -> Option<Session> {
     let text = std::fs::read_to_string(&path).ok()?;
     let mut s = toml::from_str::<Session>(&text).ok()?;
     s.id = id.to_string();
+    s.panes = s.panes.clamp(1, MAX_PANES);
     Some(s)
 }
 
