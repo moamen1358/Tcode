@@ -115,7 +115,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
                         color: alpha({fg}, 0.4); }}\n\
          .clip-clear:hover {{ color: alpha({fg}, 0.8); background-color: alpha({fg}, 0.08); }}\n\
          .clip-card {{ background-color: {surface}; border-radius: 0; }}\n\
-         .clip-card.pinned {{ background-color: alpha({accent}, 0.10); }}\n\
+         .clip-card.pinned {{ background-color: alpha(#ff9e64, 0.12); }}\n\
          .clip-copy {{ padding: 6px 9px; background: none; border: none; \
                        box-shadow: none; border-radius: 0; }}\n\
          .clip-copy:hover {{ background-color: alpha({fg}, 0.05); }}\n\
@@ -126,7 +126,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32) {
                                  box-shadow: none; border-radius: 0; color: alpha({fg}, 0.25); }}\n\
          .clip-pin:hover, .clip-del:hover {{ color: alpha({fg}, 0.75); \
                                              background-color: alpha({fg}, 0.08); }}\n\
-         .clip-card.pinned .clip-pin {{ color: {accent}; }}\n\
+         .clip-card.pinned .clip-text, .clip-card.pinned .clip-pin {{ color: #ffb38a; }}\n\
          .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 11px; }}"
     );
     let provider = CssProvider::new();
