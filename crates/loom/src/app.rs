@@ -9,7 +9,7 @@ use loom_core::config::Config;
 use loom_core::session::{self, Session};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 /// A session's live content, kept alive (shells still running) while another
@@ -479,15 +479,16 @@ fn build_session(state: &Shared, session: Session) {
     let panes = session.panes.max(1);
     let files = session.files.clone();
     let active = session.active;
-    let _ = std::env::set_current_dir(&root);
+    if !set_session_cwd(&root) {
+        show_session_picker(state);
+        return;
+    }
     state.borrow_mut().current = Some(session);
 
     show_grid(state, panes); // builds content, adds + shows the stack page `id`
 
-    for f in &files {
-        if f.is_file() {
-            open_file(state, f);
-        }
+    for f in files.iter().filter_map(|f| restored_session_file(&root, f)) {
+        open_file(state, &f);
     }
     if let Some(idx) = active {
         if let Some(editor) = state.borrow().editor.as_ref() {
@@ -536,7 +537,10 @@ fn build_session(state: &Shared, session: Session) {
 /// running), restore the active handles, and move the shared clipboard into it.
 fn reveal_session(state: &Shared, session: Session) {
     let id = session.id.clone();
-    let _ = std::env::set_current_dir(&session.root);
+    if !set_session_cwd(&session.root) {
+        show_session_picker(state);
+        return;
+    }
     // Swap the active handles to this session's live content under a short borrow.
     let (stack, shots_panel, shots_active) = {
         let mut s = state.borrow_mut();
@@ -569,6 +573,20 @@ fn reveal_session(state: &Shared, session: Session) {
     }
     clear_picker_page(state);
     refresh_session_menu(state);
+}
+
+fn set_session_cwd(root: &Path) -> bool {
+    if let Err(e) = std::env::set_current_dir(root) {
+        eprintln!("loom: could not enter session root {}: {e}", root.display());
+        return false;
+    }
+    true
+}
+
+fn restored_session_file(root: &Path, file: &Path) -> Option<PathBuf> {
+    let root = root.canonicalize().ok()?;
+    let file = file.canonicalize().ok()?;
+    (file.is_file() && file.starts_with(root)).then_some(file)
 }
 
 /// Move the shared clipboard strip into the active session's sidebar (after the
@@ -764,11 +782,17 @@ fn btn_on_click_switch(row: &Button, f: impl Fn(Session) + 'static, session: Ses
 }
 
 pub fn show_grid(state: &Shared, n: usize) {
-    // Clone config + window so we don't hold a borrow while the grid is built.
-    let (cfg, window) = {
+    // Clone config so we don't hold a borrow while the grid is built.
+    let cfg = {
         let s = state.borrow();
-        (s.cfg.clone(), s.window.clone())
+        s.cfg.clone()
     };
+    let session_id = state
+        .borrow()
+        .current
+        .as_ref()
+        .map(|s| s.id.clone())
+        .unwrap_or_default();
     // A Ctrl+clicked path in any terminal opens in the editor/viewer. Weak ref so
     // the grid (held by the state) doesn't form a cycle back to the state.
     let on_open: crate::pane::OpenFn = {
@@ -779,7 +803,28 @@ pub fn show_grid(state: &Shared, n: usize) {
             }
         })
     };
-    let grid = Grid::new(n, &cfg, &window, on_open);
+    let on_empty: crate::grid::EmptyFn = {
+        let weak = Rc::downgrade(state);
+        let session_id = session_id.clone();
+        Rc::new(move || {
+            let Some(st) = weak.upgrade() else {
+                return;
+            };
+            let (active, window) = {
+                let s = st.borrow();
+                (
+                    s.current.as_ref().is_some_and(|s| s.id == session_id),
+                    s.window.clone(),
+                )
+            };
+            if active {
+                window.close();
+            } else {
+                drop_live(&st, &session_id);
+            }
+        })
+    };
+    let grid = Grid::new(n, &cfg, on_open, on_empty);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
 
     install_image_drop(&grid.root, state);
@@ -859,6 +904,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     // Wrap the content with Frame's annotation layer (shown over the content
     // only while editing a capture), and embed the screenshots gallery at the
     // bottom of the file sidebar.
+    let window = state.borrow().window.clone();
     let bridge = crate::frame::integrate(&window, &content);
 
     // Clipboard-history strip, above the screenshots strip. Built once and
@@ -883,11 +929,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     // re-enter GTK signal handlers.
     let (stack, id, old) = {
         let s = state.borrow();
-        let id = s
-            .current
-            .as_ref()
-            .map(|c| c.id.clone())
-            .unwrap_or_default();
+        let id = s.current.as_ref().map(|c| c.id.clone()).unwrap_or_default();
         let old = s.stack.child_by_name(&id);
         (s.stack.clone(), id, old)
     };
@@ -987,7 +1029,10 @@ fn restore_session_layout(state: &Shared) {
         let cw = grid.container_size().0;
         match phase {
             // Phase 0: wait for the window to settle (post-maximize), then apply
-            // the outer splits against their final width.
+            // the outer splits against their final width. 3 stable ticks (~48ms)
+            // rides out the maximize without over-waiting; even if it fired early,
+            // the shells aren't spawned until phase 2 so there's no garble — only,
+            // at worst, slightly-off split ratios.
             0 => {
                 stable = if center_w > 1 && center_w == last_w {
                     stable + 1
@@ -995,7 +1040,7 @@ fn restore_session_layout(state: &Shared) {
                     0
                 };
                 last_w = center_w;
-                if stable < 5 {
+                if stable < 3 {
                     return ControlFlow::Continue;
                 }
                 if let (Some(content), Some(sw)) = (content.as_ref(), sidebar_width) {
@@ -1014,9 +1059,13 @@ fn restore_session_layout(state: &Shared) {
             // Phase 1: wait for the grid width to settle after the outer splits,
             // then size the terminal splits against their final width.
             1 => {
-                stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
+                stable = if cw > 1 && cw == last_w {
+                    stable + 1
+                } else {
+                    0
+                };
                 last_w = cw;
-                if stable < 5 {
+                if stable < 2 {
                     return ControlFlow::Continue;
                 }
                 if divisors.is_empty() {
@@ -1032,9 +1081,13 @@ fn restore_session_layout(state: &Shared) {
             // Phase 2: wait for the terminal splits to settle, then spawn the
             // shells — every pane is now at its final size.
             _ => {
-                stable = if cw > 1 && cw == last_w { stable + 1 } else { 0 };
+                stable = if cw > 1 && cw == last_w {
+                    stable + 1
+                } else {
+                    0
+                };
                 last_w = cw;
-                if stable < 5 {
+                if stable < 2 {
                     return ControlFlow::Continue;
                 }
                 finish(&grid);

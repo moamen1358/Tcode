@@ -100,6 +100,7 @@ with no config at all:
 font            = "Martian Mono"   # ships bundled; or any installed font name
 font_size       = 11
 startup_command = ""               # e.g. "claude" to auto-launch in every pane
+clipboard_persist = false           # opt in to saving clipboard history on disk
 
 [theme]                            # defaults are Tokyo Night
 background = "#1a1b26"

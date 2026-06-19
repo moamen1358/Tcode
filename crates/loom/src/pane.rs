@@ -148,7 +148,11 @@ impl Pane {
         let argv: Vec<String> = if startup.is_empty() {
             vec![shell.clone(), "-l".into()]
         } else {
-            vec![shell.clone(), "-c".into(), format!("{startup}; exec {shell}")]
+            vec![
+                shell.clone(),
+                "-c".into(),
+                format!("{startup}; exec {shell}"),
+            ]
         };
         SpawnParams { argv, cwd }
     }

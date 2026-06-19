@@ -7,12 +7,16 @@
 //! This is pure data + disk I/O (no GTK); the UI lives in the `loom` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
 
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::config_dir;
+
+static SESSION_ID_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Session {
@@ -84,7 +88,7 @@ impl Session {
         let dir = sessions_dir();
         let _ = std::fs::create_dir_all(&dir);
         let path = self.path();
-        if std::fs::write(&path, text).is_ok() {
+        if write_private(&path, text.as_bytes()).is_ok() {
             // Session files record the open-file paths; keep them owner-only.
             #[cfg(unix)]
             {
@@ -98,6 +102,18 @@ impl Session {
     pub fn delete(&self) {
         let _ = std::fs::remove_file(self.path());
     }
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    file.write_all(bytes)
 }
 
 /// Directory holding session files: `~/.config/loom/sessions/`.
@@ -138,6 +154,9 @@ pub fn list() -> Vec<Session> {
 
 /// Load a single session by id, if it exists.
 pub fn load(id: &str) -> Option<Session> {
+    if !valid_session_id(id) {
+        return None;
+    }
     let path = sessions_dir().join(format!("{id}.toml"));
     let text = std::fs::read_to_string(&path).ok()?;
     let mut s = toml::from_str::<Session>(&text).ok()?;
@@ -145,13 +164,18 @@ pub fn load(id: &str) -> Option<Session> {
     Some(s)
 }
 
-/// A unique id from the current time (nanoseconds, hex).
+/// A unique id from time + process + an in-process sequence, encoded as hex.
 fn new_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("{nanos:x}")
+    let seq = SESSION_ID_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}{:x}{seq:x}", std::process::id())
+}
+
+fn valid_session_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -183,5 +207,17 @@ mod tests {
         assert_eq!(s.name, "coding_Space");
         assert_eq!(s.panes, 1);
         assert!(s.files.is_empty());
+    }
+
+    #[test]
+    fn session_ids_are_hex_and_reject_paths() {
+        let a = Session::new(PathBuf::from("/tmp/a")).id;
+        let b = Session::new(PathBuf::from("/tmp/b")).id;
+        assert_ne!(a, b);
+        assert!(valid_session_id(&a));
+        assert!(!valid_session_id(""));
+        assert!(!valid_session_id("../secret"));
+        assert!(!valid_session_id("abc/def"));
+        assert!(!valid_session_id("abc.toml"));
     }
 }

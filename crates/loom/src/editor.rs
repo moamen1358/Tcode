@@ -253,10 +253,11 @@ impl Editor {
 /// Editable source view with line numbers + syntax highlighting. Returns `None`
 /// if the file isn't valid UTF-8 (binary) so the caller can show the info card.
 fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
-    // Guard against opening a multi-GB file synchronously (would freeze the UI /
-    // exhaust memory); over the cap we show the info card instead.
-    const MAX_TEXT_BYTES: u64 = 64 * 1024 * 1024;
-    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_TEXT_BYTES {
+    // Keep the editable source view synchronous only for modest files. GTKSourceView
+    // buffer population for large logs/text still runs on the main thread, so avoid
+    // freezing terminals and the rest of the UI.
+    const MAX_SYNC_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+    if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_SYNC_TEXT_BYTES {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
@@ -853,6 +854,10 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                     col.append(&pic);
                 }
                 preview::Msg::Done => {
+                    sp.stop();
+                    sb.set_visible(false);
+                }
+                preview::Msg::Cancelled => {
                     sp.stop();
                     sb.set_visible(false);
                 }

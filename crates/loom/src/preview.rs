@@ -22,6 +22,8 @@ pub enum Msg {
     Page(PathBuf),
     /// Rendering finished successfully.
     Done,
+    /// Rendering was cancelled before completion.
+    Cancelled,
     /// Rendering failed (human-readable reason).
     Error(String),
 }
@@ -30,6 +32,9 @@ pub enum Msg {
 /// `cancel` (e.g. when the tab is closed) stops delivery early.
 pub fn start_render(path: PathBuf, tx: async_channel::Sender<Msg>, cancel: Arc<AtomicBool>) {
     std::thread::spawn(move || match render(&path, &tx, &cancel) {
+        Ok(()) if cancel.load(Ordering::Acquire) => {
+            let _ = tx.send_blocking(Msg::Cancelled);
+        }
         Ok(()) => {
             let _ = tx.send_blocking(Msg::Done);
         }
@@ -47,6 +52,7 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
     let path = canon.as_path();
     let cache = cache_dir(path)?;
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+    make_private_dir(&cache);
 
     // Only trust the cache if a previous render finished completely. Without this
     // marker, a render killed part-way (OOM, tab closed, crash) would leave a few
@@ -149,7 +155,7 @@ fn office_to_pdf(
         .args(["--convert-to", "pdf", "--outdir"])
         .arg(cache)
         .arg(path);
-    let status = run_cancellable(cmd, cancel).map_err(|e| format!("soffice not available: {e}"))?;
+    let status = run_cancellable(cmd, cancel).map_err(|e| format!("soffice failed: {e}"))?;
     if profile.exists() {
         if let Err(e) = std::fs::remove_dir_all(&profile) {
             eprintln!("loom: profile cleanup failed: {e}");
@@ -179,8 +185,7 @@ fn rasterize(pdf: &Path, cache: &Path, cancel: &AtomicBool) -> Result<bool, Stri
     cmd.args(["-png", "-r", "200", "-l", "300"])
         .arg(pdf)
         .arg(cache.join("page"));
-    let status =
-        run_cancellable(cmd, cancel).map_err(|e| format!("pdftoppm not available: {e}"))?;
+    let status = run_cancellable(cmd, cancel).map_err(|e| format!("pdftoppm failed: {e}"))?;
     let Some(status) = status else {
         return Ok(false); // cancelled
     };
@@ -238,6 +243,14 @@ fn cache_dir(path: &Path) -> Result<PathBuf, String> {
         .join("loom")
         .join("preview")
         .join(fnv1a(&key)))
+}
+
+fn make_private_dir(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
 }
 
 /// FNV-1a 64-bit — a stable cache key, no dependencies.

@@ -13,12 +13,14 @@ use std::time::Duration;
 use gtk4::glib;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
-use gtk4::{ApplicationWindow, Box as GtkBox, EventControllerFocus, Orientation, Paned};
+use gtk4::{Box as GtkBox, EventControllerFocus, Orientation, Paned};
 use loom_core::config::Config;
 use loom_core::grid::{coords, flat_index, layout, neighbor, Dir};
 use vte4::prelude::*; // TerminalExt: connect_child_exited
 
 use crate::pane::{OpenFn, Pane};
+
+pub type EmptyFn = Rc<dyn Fn()>;
 
 /// A Paned, whether it splits horizontally, and the divisor for an equal split.
 type PanedInfo = (Paned, bool, usize);
@@ -30,7 +32,6 @@ struct GridInner {
     focus: usize,
     zoomed: bool,
     cfg: Config,
-    window: ApplicationWindow,
     next_id: u64,
     self_weak: Weak<RefCell<GridInner>>,
     /// While a height (vertical) resize or a zoom is in flight, panes drop their
@@ -39,6 +40,9 @@ struct GridInner {
     resizing: Rc<Cell<bool>>,
     /// Opens a Ctrl+clicked terminal path in the editor/viewer panel.
     on_open: OpenFn,
+    /// Called when the final pane exits. App-level state decides whether that closes
+    /// the visible window or just removes a hidden session.
+    on_empty: EmptyFn,
 }
 
 /// Build a right-nested Paned chain over `items`. Returns the root widget and the
@@ -264,11 +268,10 @@ impl GridInner {
             self.focus = self.focus.min(self.panes.len().saturating_sub(1));
         }
         if self.panes.is_empty() {
-            // We're inside the grid's borrow_mut here (called from child_exited).
-            // close-request -> save_current -> pane_count() would re-borrow the
-            // same GridInner and panic, so defer the close until the borrow is gone.
-            let win = self.window.clone();
-            glib::idle_add_local_once(move || win.close());
+            // We're inside the grid's borrow_mut here (called from child_exited), so
+            // defer app-level cleanup until the borrow is gone.
+            let on_empty = self.on_empty.clone();
+            glib::idle_add_local_once(move || on_empty());
             return;
         }
         self.zoomed = false;
@@ -283,7 +286,7 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn new(n: usize, cfg: &Config, window: &ApplicationWindow, on_open: OpenFn) -> Grid {
+    pub fn new(n: usize, cfg: &Config, on_open: OpenFn, on_empty: EmptyFn) -> Grid {
         let container = GtkBox::new(Orientation::Vertical, 0);
         container.add_css_class("grid-root");
 
@@ -294,12 +297,12 @@ impl Grid {
             focus: 0,
             zoomed: false,
             cfg: cfg.clone(),
-            window: window.clone(),
             next_id: 0,
             self_weak: Weak::new(),
             resize_timer: Rc::new(Cell::new(None)),
             resizing: Rc::new(Cell::new(false)),
             on_open,
+            on_empty,
         }));
         inner.borrow_mut().self_weak = Rc::downgrade(&inner);
 

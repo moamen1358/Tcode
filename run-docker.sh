@@ -40,6 +40,7 @@ else
     # leaving `xhost +local:docker` enabled afterwards. (The Wayland path needs no
     # such grant; for stricter isolation use an XAUTHORITY cookie instead.)
     xhost +local:docker >/dev/null 2>&1 || true
+    status=0
     docker run --rm -it \
         -e DISPLAY="$DISPLAY" \
         -e GDK_BACKEND=x11 \
@@ -47,6 +48,7 @@ else
         -v /tmp/.X11-unix:/tmp/.X11-unix \
         -v "${WORK}:/work" -w /work \
         "${DRI[@]}" \
-        "$IMAGE" ${N:+$N} || true
+        "$IMAGE" ${N:+$N} || status=$?
     xhost -local:docker >/dev/null 2>&1 || true
+    exit "$status"
 fi

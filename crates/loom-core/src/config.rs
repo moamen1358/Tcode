@@ -2,6 +2,7 @@
 //! Every field has a default, so a missing or partial file is fine.
 
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,9 +11,8 @@ pub struct Config {
     pub font: String,
     pub font_size: u32,
     pub startup_command: String,
-    /// Persist clipboard history to disk across restarts. On by default; set to
-    /// `false` to keep history only for the running session (nothing written to
-    /// disk) — useful if you don't want copied secrets stored.
+    /// Persist clipboard history to disk across restarts. Off by default so copied
+    /// secrets are not stored unless the user explicitly opts in.
     pub clipboard_persist: bool,
     /// Whole-UI zoom multiplier (1.0 = 100%): scales every font/terminal together.
     pub scale: f64,
@@ -44,7 +44,7 @@ impl Default for Config {
             font: "Martian Mono".into(),
             font_size: 11,
             startup_command: String::new(),
-            clipboard_persist: true,
+            clipboard_persist: false,
             scale: 1.0,
             theme: Theme::default(),
         }
@@ -116,8 +116,26 @@ impl Config {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(path, text);
+        if write_private(&path, text.as_bytes()).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    file.write_all(bytes)
 }
 
 /// Loom's base config directory: `$XDG_CONFIG_HOME/loom` or
@@ -148,7 +166,7 @@ mod tests {
         assert_eq!(c.font_size, 11);
         assert_eq!(c.theme.palette.len(), 16);
         assert!(c.startup_command.is_empty());
-        assert!(c.clipboard_persist); // on by default
+        assert!(!c.clipboard_persist); // off by default
     }
 
     #[test]
