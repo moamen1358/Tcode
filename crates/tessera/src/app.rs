@@ -69,14 +69,13 @@ pub fn build(app: &Application, preset: Option<usize>) {
     editor_btn.add_css_class("flat");
     header.pack_end(&editor_btn);
 
-    // Screenshots panel toggle (also bound to Alt+P) — show/hide the left
-    // screenshots panel. Capturing is the panel's own camera button.
+    // Screenshots section toggle (also bound to Alt+P) — show/hide the gallery
+    // strip at the bottom of the file sidebar. Visible by default; since it now
+    // lives in the sidebar it doesn't steal width from the editor/viewer.
     let shots_btn = ToggleButton::new();
     shots_btn.set_icon_name("image-x-generic-symbolic");
-    // Hidden by default so the editor/viewer panel gets full width; toggle it on
-    // (button or Alt+P) when using BridgeShot.
-    shots_btn.set_active(false);
-    shots_btn.set_tooltip_text(Some("Toggle screenshots panel (Alt+P)"));
+    shots_btn.set_active(true);
+    shots_btn.set_tooltip_text(Some("Toggle screenshots strip (Alt+P)"));
     shots_btn.add_css_class("flat");
     header.pack_end(&shots_btn);
 
@@ -242,10 +241,11 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_end_child(false);
     content.set_position(240);
 
-    // Wrap the content with BridgeShot: a persistent screenshots panel on the
-    // left, and a hidden annotation layer that appears (over the content) only
-    // while editing a capture.
+    // Wrap the content with BridgeShot's annotation layer (shown over the content
+    // only while editing a capture), and embed the screenshots gallery at the
+    // bottom of the file sidebar.
     let bridge = crate::bridgeshot::integrate(&window, &content);
+    sidebar.root.append(&bridge.panel_root);
     window.set_child(Some(&bridge.root));
 
     {

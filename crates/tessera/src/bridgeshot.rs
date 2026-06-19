@@ -25,7 +25,7 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
     ApplicationWindow, Box as GtkBox, Button, DrawingArea, EventControllerKey, Label, Orientation,
-    Overlay, Paned, Separator, ToggleButton, Widget,
+    Overlay, Separator, ToggleButton, Widget,
 };
 
 use state::{add_doc, Shot, State};
@@ -35,7 +35,9 @@ use tools::{Tool, PALETTE};
 /// panel and the (overlay-wrapped) main content. `root` is meant to be the
 /// window's child; `panel_root` is exposed so the host can toggle it.
 pub struct BridgeShot {
-    pub root: Paned,
+    /// The window's child: the content with the (hidden) annotation overlay.
+    pub root: Overlay,
+    /// The screenshots gallery — the host embeds this at the sidebar's bottom.
     pub panel_root: GtkBox,
     /// Start a capture (region-select → annotate). Wired to the titlebar camera.
     pub capture: Rc<dyn Fn()>,
@@ -154,17 +156,8 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Bridge
         annot.add_controller(key);
     }
 
-    let root = Paned::new(Orientation::Horizontal);
-    root.set_start_child(Some(&panel.root));
-    root.set_end_child(Some(&content_overlay));
-    root.set_resize_start_child(false);
-    root.set_shrink_start_child(false);
-    root.set_resize_end_child(true);
-    root.set_shrink_end_child(false);
-    root.set_position(180);
-
     BridgeShot {
-        root,
+        root: content_overlay,
         panel_root: panel.root.clone(),
         capture: on_capture,
     }

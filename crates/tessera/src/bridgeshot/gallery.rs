@@ -11,7 +11,10 @@ use gtk4::gdk::{ContentProvider, DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{gio, Box as GtkBox, Button, DragSource, Label, Orientation, PolicyType, ScrolledWindow};
+use gtk4::{
+    gio, Box as GtkBox, Button, DragSource, Label, Orientation, PolicyType, ScrolledWindow,
+    Separator,
+};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
@@ -27,11 +30,11 @@ pub struct Panel {
 /// Build the panel. `on_capture` runs when the Capture button is clicked;
 /// `on_pick` runs when a thumbnail is clicked (with that shot's path).
 pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
+    // A compact section embedded at the bottom of the file sidebar (a divider
+    // sets it off from the file tree above).
     let root = GtkBox::new(Orientation::Vertical, 0);
-    // Reuse the file-sidebar styling (background + right border) for a consistent
-    // look without adding new CSS.
-    root.add_css_class("sidebar");
-    root.set_width_request(168);
+    root.add_css_class("shots-section");
+    root.append(&Separator::new(Orientation::Horizontal));
 
     let header = GtkBox::new(Orientation::Horizontal, 6);
     header.add_css_class("sidebar-header");
@@ -52,10 +55,12 @@ pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel
     list.set_margin_bottom(6);
     list.set_margin_start(6);
     list.set_margin_end(6);
+    // Fixed height (~3 thumbnails); scroll for older shots.
     let scroll = ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(PolicyType::Never)
-        .vexpand(true)
+        .vscrollbar_policy(PolicyType::Automatic)
+        .height_request(264)
         .build();
     root.append(&scroll);
 
@@ -71,14 +76,17 @@ pub fn build(on_capture: Rc<dyn Fn()>, on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel
 impl Panel {
     /// Append a thumbnail for a saved screenshot at `path` (newest at the bottom).
     pub fn add_saved(&self, path: PathBuf) {
-        let Ok(pb) = Pixbuf::from_file_at_scale(&path, 148, -1, true) else {
+        let Ok(pb) = Pixbuf::from_file_at_scale(&path, 240, -1, true) else {
             return;
         };
         let texture = Texture::for_pixbuf(&pb);
         let pic = gtk4::Picture::for_paintable(&texture);
         pic.set_can_shrink(true);
+        pic.set_content_fit(gtk4::ContentFit::Contain);
         let btn = Button::builder().child(&pic).build();
         btn.add_css_class("bridgeshot-thumb");
+        // Fixed thumbnail height so ~3 fill the strip; older shots scroll.
+        btn.set_size_request(-1, 80);
         btn.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
 
         // Drag a thumbnail into any terminal (or other drop target) — it provides
