@@ -4,6 +4,6 @@ members = ["crates/tessera-core", "crates/tessera"]
 
 [workspace.package]
 edition = "2021"
-version = "1.0.7"
+version = "1.1.0"
 license = "MIT"
 repository = "https://github.com/moamen1358/Tessera"

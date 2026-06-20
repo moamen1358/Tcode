@@ -8,6 +8,7 @@ use std::process::Command;
 use std::rc::Rc;
 
 use gtk4::gdk::{ModifierType, BUTTON_PRIMARY, BUTTON_SECONDARY, RGBA};
+use gtk4::glib::translate::{IntoGlib, ToGlibPtr};
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
@@ -45,8 +46,10 @@ const PATH_RE: &str = r#"(?:~|\.{1,2})?/[^\s<>"'`:]+"#;
 const REL_PATH_RE: &str = r#"(?<![/\w.~-])[\w.\-]+(?:/[\w.\-]+)+(?::\d+){0,2}"#;
 const FILE_RE: &str = r#"[^\s<>"'`:/]+\.(?:png|jpe?g|gif|webp|bmp|svg|ico|tiff?|pdf|docx?|pptx?|xlsx?|odt|odp|ods|mp4|webm|mkv|mov|avi|mp3|wav|flac|ogg|opus|txt|md|markdown|json|toml|ya?ml|rs|jsx?|tsx?|c|h|hpp|cpp|go|rb|java|sh|html?|css|csv|log|conf|ini)"#;
 
-/// Lines of scrollback history each terminal keeps.
-const SCROLLBACK_LINES: i64 = 10_000;
+/// Lines of scrollback history each terminal keeps. Generous, because tools like
+/// Claude Code emit a lot of output and the whole point of a terminal workspace is
+/// being able to scroll back through it.
+const SCROLLBACK_LINES: i64 = 50_000;
 
 /// Shell-spawn parameters, computed at construction but applied later (see
 /// `Pane::spawn`).
@@ -92,6 +95,24 @@ impl Pane {
         let fd = FontDescription::from_string(&format!("{} {}", cfg.font, cfg.font_size));
         terminal.set_font(Some(&fd));
         terminal.set_scrollback_lines(SCROLLBACK_LINES);
+
+        // Disable VTE's rewrap-on-resize. VTE re-wraps (reflows) the whole buffer
+        // whenever the terminal width changes; for a prompt with right-margin
+        // content (e.g. a right-aligned clock) the shell can't tell its prompt line
+        // was re-wrapped, so on each resize it reprints — and with reflow on, those
+        // reprints pile up, in the worst case filling the pane with stacked prompts.
+        // With reflow off, lines keep their original wrapping on resize, so the
+        // prompt never fragments and the shell redraws it once, in place.
+        //
+        // It's the canonical terminal-side fix for this (see powerlevel10k#1200).
+        // The safe vte4 bindings dropped it (deprecated upstream) but libvte still
+        // exports the symbol, so reach it through the FFI.
+        unsafe {
+            vte4::ffi::vte_terminal_set_rewrap_on_resize(
+                terminal.to_glib_none().0,
+                false.into_glib(),
+            );
+        }
 
         // Ctrl+click a URL or file path to follow it (VS Code-style).
         install_links(&terminal, on_open);
@@ -232,11 +253,17 @@ impl Pane {
         self.terminal.paste_clipboard();
     }
 
-    /// Drop scrollback to 0 during a height resize / zoom so VTE can't flood the
-    /// growing pane with pulled-up history; restore it once the change settles.
+    /// Hide the terminal for the duration of a window resize, then reveal it. While
+    /// hidden the widget gets no allocation, so VTE doesn't resize its PTY on each
+    /// drag step — the child process receives a single SIGWINCH on reveal instead
+    /// of a burst, so a resize-reactive TUI (e.g. Claude Code / Ink, which reprints
+    /// its banner on every SIGWINCH) repaints once rather than stacking copies. The
+    /// `.pane` container (same background) holds the layout, so a hidden pane reads
+    /// as a solid block. Driven only by the window-surface resize hook, which is
+    /// stable under this hide/reveal — unlike a Paned position-notify, which would
+    /// feed back into a hide/reveal loop. rewrap-off (see `new`) handles reflow.
     pub fn set_resizing(&self, on: bool) {
-        self.terminal
-            .set_scrollback_lines(if on { 0 } else { SCROLLBACK_LINES });
+        self.terminal.set_visible(!on);
     }
 
     pub fn set_active(&self, active: bool) {

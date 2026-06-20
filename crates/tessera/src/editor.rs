@@ -87,6 +87,10 @@ struct OpenFile {
 
 type OpenFiles = Rc<RefCell<Vec<OpenFile>>>;
 
+/// Width (px) the file viewer opens at, at most — kept in step with the hard cap in
+/// app.rs (`VIEWER_MAX_WIDTH`) so the viewer can't shrink the terminals to a sliver.
+const MAX_VIEWER_WIDTH: i32 = 800;
+
 /// Apply an absolute zoom, optionally anchored at a viewport point (`None` =
 /// centre). Used by the toolbar, Ctrl+scroll, and keyboard.
 type ZoomFn = Rc<dyn Fn(f64, Option<(f64, f64)>)>;
@@ -244,8 +248,16 @@ impl Editor {
         }
         self.root.set_visible(true);
         if first {
+            // Cap the viewer width so opening a file (especially a wide image or PDF)
+            // doesn't shrink the terminals too far: the viewer gets at most half the
+            // width, and never more than MAX_VIEWER_WIDTH; the terminals keep the rest.
             let w = self.paned.width();
-            self.paned.set_position(if w > 200 { w / 2 } else { 700 });
+            let pos = if w > 200 {
+                (w - (w / 2).min(MAX_VIEWER_WIDTH)).max(1)
+            } else {
+                700
+            };
+            self.paned.set_position(pos);
         }
     }
 }

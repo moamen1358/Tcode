@@ -1,19 +1,20 @@
-//! The terminal grid — a *resizable* layout built from standard `GtkPaned`
-//! splits (drag any border to resize). Panes are arranged in the balanced shape
-//! from `tessera_core::grid::layout`, realized as nested Paned chains. Adding a
-//! pane (`+` / `Alt+n`) or a shell exiting rebuilds the split tree.
+//! The terminal grid — a *fixed*, equal-split layout: every pane gets the same
+//! size, determined purely by the pane count (no draggable dividers). Panes are
+//! arranged in the balanced shape from `tessera_core::grid::layout`, realized as
+//! nested homogeneous `GtkBox`es (rows of panes stacked into columns). Adding a
+//! pane (`+` / `Alt+n`) or a shell exiting rebuilds the tree.
 //!
 //! State lives behind `Rc<RefCell<GridInner>>` so widget callbacks can mutate it;
 //! callbacks hold a `Weak` to avoid leaks across re-grid.
 
 use std::cell::{Cell, RefCell};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::time::Duration;
 
 use gtk4::glib;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, EventControllerFocus, Orientation, Paned};
+use gtk4::{Box as GtkBox, EventControllerFocus, Orientation};
 use tessera_core::config::Config;
 use tessera_core::grid::{coords, flat_index, layout, neighbor, Dir};
 use vte4::prelude::*; // TerminalExt: connect_child_exited
@@ -22,22 +23,19 @@ use crate::pane::{OpenFn, Pane};
 
 pub type EmptyFn = Rc<dyn Fn()>;
 
-/// A Paned, whether it splits horizontally, and the divisor for an equal split.
-type PanedInfo = (Paned, bool, usize);
-
 struct GridInner {
     container: GtkBox,
     panes: Vec<Pane>,
-    paneds: Vec<PanedInfo>,
+    /// The intermediate split boxes (rows + the column that stacks them), kept so
+    /// zoom can toggle their visibility. Equal-split is automatic (homogeneous).
+    splits: Vec<GtkBox>,
     focus: usize,
     zoomed: bool,
     cfg: Config,
     next_id: u64,
-    self_weak: Weak<RefCell<GridInner>>,
-    /// While a height (vertical) resize or a zoom is in flight, panes drop their
-    /// scrollback so VTE can't flood the growing pane with pulled-up history.
-    resize_timer: Rc<Cell<Option<glib::SourceId>>>,
-    resizing: Rc<Cell<bool>>,
+    /// Pending "reveal terminals" timer, reset on each resize event so the panes
+    /// are revealed once the window stops resizing (see `Grid::freeze_for_resize`).
+    resize_timer: Cell<Option<glib::SourceId>>,
     /// Opens a Ctrl+clicked terminal path in the editor/viewer panel.
     on_open: OpenFn,
     /// Called when the final pane exits. App-level state decides whether that closes
@@ -45,45 +43,33 @@ struct GridInner {
     on_empty: EmptyFn,
 }
 
-/// Build a right-nested Paned chain over `items`. Returns the root widget and the
-/// created Paneds tagged with orientation + the equal-split divisor.
-fn chain(
-    orient: Orientation,
-    items: &[gtk4::Widget],
-    divisor: usize,
-) -> (gtk4::Widget, Vec<PanedInfo>) {
-    // Guard the empty case: build_tree only ever passes rows of width >= 1, but a
-    // future caller (or a layout change yielding a zero-width row) would otherwise
-    // underflow `items.len() - 1` below and panic. Return an inert placeholder.
+/// Lay `items` out as one equal-split (homogeneous) box along `orient`. Returns
+/// the root widget and the created box (if any), so the caller can collect it.
+/// One item needs no box; zero items yields an inert placeholder.
+fn chain(orient: Orientation, items: &[gtk4::Widget]) -> (gtk4::Widget, Vec<GtkBox>) {
     if items.is_empty() {
         return (GtkBox::new(orient, 0).upcast(), Vec::new());
     }
     if items.len() == 1 {
+        items[0].set_hexpand(true);
+        items[0].set_vexpand(true);
         return (items[0].clone(), Vec::new());
     }
-    let is_h = orient == Orientation::Horizontal;
-    let mut paneds = Vec::new();
-    let mut acc = items[items.len() - 1].clone();
-    for item in items[..items.len() - 1].iter().rev() {
-        let p = Paned::new(orient);
-        // Thin handle (a line, not a wide gap) between terminals.
-        p.set_wide_handle(false);
-        p.set_resize_start_child(true);
-        p.set_resize_end_child(true);
-        p.set_shrink_start_child(false);
-        p.set_shrink_end_child(false);
-        p.set_start_child(Some(item));
-        p.set_end_child(Some(&acc));
-        paneds.push((p.clone(), is_h, divisor));
-        acc = p.upcast();
+    let b = GtkBox::new(orient, 0);
+    b.set_homogeneous(true); // every child the same size — fixed equal split
+    b.set_hexpand(true);
+    b.set_vexpand(true);
+    for item in items {
+        item.set_hexpand(true);
+        item.set_vexpand(true);
+        b.append(item);
     }
-    (acc, paneds)
+    (b.clone().upcast(), vec![b])
 }
 
-/// Build the full split tree (rows of horizontal chains, stacked vertically).
-fn build_tree(panes: &[Pane]) -> (gtk4::Widget, Vec<PanedInfo>) {
+/// Build the full grid tree (rows of horizontal boxes, stacked in a column box).
+fn build_tree(panes: &[Pane]) -> (gtk4::Widget, Vec<GtkBox>) {
     let widths = layout(panes.len());
-    let rows = widths.len();
     let mut all = Vec::new();
     let mut row_widgets = Vec::new();
     let mut idx = 0;
@@ -95,54 +81,50 @@ fn build_tree(panes: &[Pane]) -> (gtk4::Widget, Vec<PanedInfo>) {
                 r
             })
             .collect();
-        let (row_w, mut row_paneds) = chain(Orientation::Horizontal, &items, w);
-        all.append(&mut row_paneds);
+        let (row_w, mut row_boxes) = chain(Orientation::Horizontal, &items);
+        all.append(&mut row_boxes);
         row_widgets.push(row_w);
     }
-    let (root, mut v_paneds) = chain(Orientation::Vertical, &row_widgets, rows);
-    all.append(&mut v_paneds);
+    let (root, mut col_boxes) = chain(Orientation::Vertical, &row_widgets);
+    all.append(&mut col_boxes);
     (root, all)
 }
 
-/// Drop every terminal's scrollback for the duration of a resize drag — so VTE
-/// can't flood/garble the buffer while re-wrapping (and a SIGWINCH-aware prompt
-/// can't stack reprints) — then restore it ~60ms after the drag settles. Shared
-/// by the grid's own dividers and external ones (the editor / sidebar dividers,
-/// which resize the terminals too but aren't part of the grid's paned tree).
-fn suppress_reflow(
-    weak: &Weak<RefCell<GridInner>>,
-    timer: &Rc<Cell<Option<glib::SourceId>>>,
-    resizing: &Rc<Cell<bool>>,
-) {
-    if let Some(id) = timer.take() {
+/// Hide every terminal for the duration of a resize, then reveal it once the
+/// resize settles (~220ms after the last resize event). While a terminal is hidden
+/// it gets no allocation, so VTE doesn't resize its PTY on each drag step — the
+/// child process sees one SIGWINCH on reveal rather than a burst, so a TUI like
+/// Claude Code (which reprints on every SIGWINCH) repaints once instead of stacking
+/// copies. The `.pane` container (same background) holds the layout, so a frozen
+/// pane reads as a solid block. Shared by window resizes (the surface hook) and
+/// divider drags (the position-notify hook), the latter value-guarded so this
+/// function's own hide/reveal can't feed back into a loop.
+fn freeze_terminals(inner: &Rc<RefCell<GridInner>>) {
+    // try_borrow: a resize can fire mid-borrow_mut (e.g. while rebuilding).
+    let Ok(g) = inner.try_borrow() else {
+        return;
+    };
+    if let Some(id) = g.resize_timer.take() {
         id.remove();
     }
-    if !resizing.replace(true) {
-        if let Some(inner) = weak.upgrade() {
-            // try_borrow: a programmatic position change can fire this while the
-            // grid is mid-borrow_mut (e.g. rebuild).
-            if let Ok(g) = inner.try_borrow() {
-                for p in &g.panes {
-                    p.set_resizing(true);
-                }
-            }
-        }
+    for p in &g.panes {
+        p.set_resizing(true); // no-op if already hidden
     }
-    let weak2 = weak.clone();
-    let timer2 = timer.clone();
-    let resizing2 = resizing.clone();
-    let id = glib::timeout_add_local_once(Duration::from_millis(60), move || {
-        timer2.set(None);
-        resizing2.set(false);
-        if let Some(inner) = weak2.upgrade() {
-            if let Ok(g) = inner.try_borrow() {
-                for p in &g.panes {
-                    p.set_resizing(false);
-                }
-            }
+    let inner = inner.clone();
+    let id = glib::timeout_add_local_once(Duration::from_millis(220), move || {
+        let Ok(g) = inner.try_borrow() else {
+            return;
+        };
+        g.resize_timer.set(None);
+        for p in &g.panes {
+            p.set_resizing(false);
+        }
+        // Hiding the focused terminal drops keyboard focus; restore it.
+        if let Some(p) = g.panes.get(g.focus) {
+            p.grab_focus();
         }
     });
-    timer.set(Some(id));
+    g.resize_timer.set(Some(id));
 }
 
 impl GridInner {
@@ -155,18 +137,6 @@ impl GridInner {
         }
     }
 
-    /// Set each Paned to an equal split for its chain (only once sized).
-    fn set_positions(&self) {
-        let w = self.container.width();
-        let h = self.container.height();
-        for (paned, is_h, div) in &self.paneds {
-            let dim = if *is_h { w } else { h };
-            if dim > 1 && *div > 1 {
-                paned.set_position((dim / *div as i32).max(1));
-            }
-        }
-    }
-
     fn rebuild(&mut self) {
         for p in &self.panes {
             p.detach_ring(); // avoid blank-GL-surface reparent of an overlay child
@@ -175,7 +145,7 @@ impl GridInner {
         while let Some(child) = self.container.first_child() {
             self.container.remove(&child);
         }
-        self.paneds.clear();
+        self.splits.clear();
         if self.panes.is_empty() {
             return;
         }
@@ -183,33 +153,16 @@ impl GridInner {
             self.focus = self.panes.len() - 1;
         }
 
-        // The full grid tree is always built; zoom just hides the non-focused
-        // panes (a hidden GtkPaned child collapses, so the focused pane fills the
+        // The full grid tree is always built; zoom just hides the non-focused panes
+        // (a hidden homogeneous-box child collapses, so the focused pane fills the
         // space). This avoids re-parenting a pane, which paints the VTE terminal
         // blank on the GL renderer.
-        {
-            let (tree, paneds) = build_tree(&self.panes);
-            tree.set_hexpand(true);
-            tree.set_vexpand(true);
-            self.container.append(&tree);
-            self.paneds = paneds;
-            self.set_positions();
+        let (tree, splits) = build_tree(&self.panes);
+        tree.set_hexpand(true);
+        tree.set_vexpand(true);
+        self.container.append(&tree);
+        self.splits = splits;
 
-            // Resizing terminals live has two artifacts: a height grow makes VTE
-            // pull scrollback up to fill the pane (floods it with old output), and
-            // a width change makes VTE re-wrap the whole scrollback buffer — during
-            // a fast drag those partial re-wraps render the prompt garbled over
-            // itself. Drop scrollback to 0 for the duration of any drag and restore
-            // it shortly after it settles, so neither happens.
-            for (paned, _, _) in &self.paneds {
-                let weak = self.self_weak.clone();
-                let timer = self.resize_timer.clone();
-                let resizing = self.resizing.clone();
-                paned.connect_position_notify(move |_| {
-                    suppress_reflow(&weak, &timer, &resizing);
-                });
-            }
-        }
         for p in &self.panes {
             p.attach_ring();
         }
@@ -217,15 +170,16 @@ impl GridInner {
         self.refresh_active();
     }
 
-    /// Zoom by hiding the sibling at every level along the focused pane's path to
-    /// the root, so each ancestor Paned collapses around it and the focused pane
-    /// fills the grid. Un-zoom restores everything. No re-parenting involved.
+    /// Zoom by hiding every sibling along the focused pane's path to the root, so
+    /// each ancestor box collapses around it (a homogeneous box splits only its
+    /// *visible* children) and the focused pane fills the grid. Un-zoom restores
+    /// everything. No re-parenting involved.
     fn apply_zoom(&self) {
         for p in &self.panes {
             p.root.set_visible(true);
         }
-        for (paned, _, _) in &self.paneds {
-            paned.set_visible(true);
+        for b in &self.splits {
+            b.set_visible(true);
         }
         if !self.zoomed {
             return;
@@ -233,20 +187,22 @@ impl GridInner {
         let Some(focused) = self.panes.get(self.focus) else {
             return;
         };
+        let container: gtk4::Widget = self.container.clone().upcast();
         let mut current: gtk4::Widget = focused.root.clone().upcast();
         while let Some(parent) = current.parent() {
-            let Some(paned) = parent.downcast_ref::<Paned>() else {
-                break; // reached the container (a GtkBox), not a Paned
-            };
-            if let Some(start) = paned.start_child() {
-                if start != current {
-                    start.set_visible(false);
-                }
+            if parent == container {
+                break; // reached the grid root; don't touch anything above it
             }
-            if let Some(end) = paned.end_child() {
-                if end != current {
-                    end.set_visible(false);
+            let Some(b) = parent.downcast_ref::<GtkBox>() else {
+                break;
+            };
+            let mut child = b.first_child();
+            while let Some(c) = child {
+                let next = c.next_sibling();
+                if c != current {
+                    c.set_visible(false);
                 }
+                child = next;
             }
             current = parent;
         }
@@ -299,18 +255,15 @@ impl Grid {
         let inner = Rc::new(RefCell::new(GridInner {
             container: container.clone(),
             panes: Vec::new(),
-            paneds: Vec::new(),
+            splits: Vec::new(),
             focus: 0,
             zoomed: false,
             cfg: cfg.clone(),
             next_id: 0,
-            self_weak: Weak::new(),
-            resize_timer: Rc::new(Cell::new(None)),
-            resizing: Rc::new(Cell::new(false)),
+            resize_timer: Cell::new(None),
             on_open,
             on_empty,
         }));
-        inner.borrow_mut().self_weak = Rc::downgrade(&inner);
 
         let grid = Grid {
             root: container,
@@ -439,15 +392,6 @@ impl Grid {
         });
     }
 
-    /// Suppress terminal reflow for a resize driven from outside the grid — the
-    /// editor or sidebar divider, which resizes the terminals (incl. a zoomed one)
-    /// but isn't one of the grid's own paneds. Call on each of their position
-    /// changes; mirrors the grid's internal divider handling.
-    pub fn on_external_resize(&self) {
-        let g = self.inner.borrow();
-        suppress_reflow(&g.self_weak, &g.resize_timer, &g.resizing);
-    }
-
     /// Whether two `Grid` handles refer to the same underlying grid. Used by the
     /// session-restore poll to detect that the page it was sizing has since been
     /// torn down and rebuilt, so it must not spawn shells into the stale grid.
@@ -477,28 +421,22 @@ impl Grid {
     }
 
     pub fn toggle_zoom(&self) {
-        {
-            let mut g = self.inner.borrow_mut();
-            if g.panes.is_empty() {
-                return;
-            }
-            // Zoom grows the focused pane in both dimensions; drop scrollback so
-            // VTE doesn't flood it with pulled-up history (restored once settled).
-            for p in &g.panes {
-                p.set_resizing(true);
-            }
-            g.zoomed = !g.zoomed;
-            g.apply_zoom();
-            if let Some(p) = g.panes.get(g.focus) {
-                p.grab_focus();
-            }
+        let mut g = self.inner.borrow_mut();
+        if g.panes.is_empty() {
+            return;
         }
-        let inner = self.inner.clone();
-        glib::timeout_add_local_once(Duration::from_millis(60), move || {
-            for p in &inner.borrow().panes {
-                p.set_resizing(false);
-            }
-        });
+        g.zoomed = !g.zoomed;
+        g.apply_zoom();
+        if let Some(p) = g.panes.get(g.focus) {
+            p.grab_focus();
+        }
+    }
+
+    /// Hide the terminals while a resize is in flight, revealing them once it
+    /// settles. See [`freeze_terminals`]. Used for window resizes (the surface
+    /// hook in app.rs); divider drags drive [`freeze_terminals`] directly.
+    pub fn freeze_for_resize(&self) {
+        freeze_terminals(&self.inner);
     }
 
     pub fn feed_focused(&self, text: &str) {
@@ -531,47 +469,23 @@ impl Grid {
         }
     }
 
-    /// Apply equal split positions once the container has a real size (after map).
-    pub fn relayout_positions(&self) {
-        self.inner.borrow().set_positions();
-    }
+    /// No-op: the grid is a fixed equal split (homogeneous boxes), so there are no
+    /// divider positions to set. Kept because the session-restore poll calls it.
+    pub fn relayout_positions(&self) {}
 
     /// Grid container size in pixels — used by the session-restore poll to know
-    /// when the terminal area has reached its final width before sizing splits.
+    /// when the terminal area has reached its final size before spawning shells.
     pub fn container_size(&self) -> (i32, i32) {
         let g = self.inner.borrow();
         (g.container.width(), g.container.height())
     }
 
-    /// Current divider positions as ratios of the container dimension (in paned
-    /// order), so a session can restore exactly how the terminals were resized.
+    /// Empty: a fixed equal-split grid has no divider positions to persist.
     pub fn split_ratios(&self) -> Vec<f64> {
-        let g = self.inner.borrow();
-        let (w, h) = (g.container.width(), g.container.height());
-        g.paneds
-            .iter()
-            .map(|(paned, is_h, _)| {
-                let dim = if *is_h { w } else { h };
-                if dim > 1 {
-                    paned.position() as f64 / dim as f64
-                } else {
-                    0.5
-                }
-            })
-            .collect()
+        Vec::new()
     }
 
-    /// Restore divider positions from saved ratios (paned order must match, which
-    /// it does for a given pane count). Falls back to leaving a paned untouched
-    /// when its ratio is missing or out of range.
-    pub fn apply_split_ratios(&self, ratios: &[f64]) {
-        let g = self.inner.borrow();
-        let (w, h) = (g.container.width(), g.container.height());
-        for ((paned, is_h, _), &ratio) in g.paneds.iter().zip(ratios) {
-            let dim = if *is_h { w } else { h };
-            if dim > 1 && ratio > 0.0 && ratio < 1.0 {
-                paned.set_position((ratio * dim as f64).round() as i32);
-            }
-        }
-    }
+    /// No-op: nothing to restore for a fixed equal-split grid. (Sessions saved by
+    /// older, resizable versions may still carry ratios; they're simply ignored.)
+    pub fn apply_split_ratios(&self, _ratios: &[f64]) {}
 }

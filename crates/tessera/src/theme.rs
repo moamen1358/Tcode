@@ -80,7 +80,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
     let font = css_font(font);
     let css = format!(
         ".grid-root {{ background-color: {bg}; }}\n\
-         .pane {{ background-color: {bg}; }}\n\
+         .pane {{ background-color: {bg}; border: 1px solid {border}; }}\n\
          .focus-ring {{ border: 1px solid transparent; }}\n\
          .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
          paned > separator {{ background-color: {border}; }}\n\

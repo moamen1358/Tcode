@@ -8,7 +8,7 @@ use gtk4::{
 };
 use tessera_core::config::Config;
 use tessera_core::session::{self, Session};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -30,6 +30,18 @@ use crate::editor::Editor;
 use crate::grid::Grid;
 use crate::sidebar::Sidebar;
 use crate::{keys, session_picker, theme};
+
+/// Minimum width (px) reserved for the terminal grid, a floor for small windows so
+/// the side panels can't collapse the terminals entirely.
+const MIN_TERMINAL_WIDTH: i32 = 480;
+
+/// Maximum width (px) for the file viewer. Enforced on every divider change — so a
+/// width restored from a saved session, or a drag, can't let it dominate the
+/// window and squeeze the terminals. It's still draggable narrower.
+const VIEWER_MAX_WIDTH: i32 = 800;
+
+/// Maximum width (px) for the file sidebar. Same idea as `VIEWER_MAX_WIDTH`.
+const SIDEBAR_MAX_WIDTH: i32 = 400;
 
 pub struct State {
     pub window: ApplicationWindow,
@@ -313,6 +325,33 @@ pub fn build(app: &Application, preset: Option<usize>) {
             None => show_session_picker(&state),
         },
     }
+    // Freeze the terminals while the window is being resized. VTE resizes a pane's
+    // PTY on every drag step, and a resize-reactive TUI (e.g. Claude Code) reprints
+    // on each SIGWINCH — so a smooth drag stacks many copies of its banner. Hiding
+    // the terminals for the gesture collapses that to a single repaint on reveal.
+    // Driven off the toplevel surface's `layout` (fires for resizes on both axes,
+    // any pane count) and guarded on the dimensions: `layout` fires every frame,
+    // and our own hide/reveal relayouts the surface, so without the guard this would
+    // re-enter into a flicker loop.
+    {
+        let weak = Rc::downgrade(&state);
+        window.connect_realize(move |w| {
+            let Some(surface) = w.surface() else { return };
+            let weak = weak.clone();
+            let last = Cell::new((0i32, 0i32));
+            surface.connect_layout(move |_, width, height| {
+                if last.replace((width, height)) == (width, height) {
+                    return; // same size — not a real resize
+                }
+                if let Some(st) = weak.upgrade() {
+                    if let Some(g) = st.borrow().grid.as_ref() {
+                        g.freeze_for_resize();
+                    }
+                }
+            });
+        });
+    }
+
     refresh_session_menu(&state);
     apply_view(&state);
     refresh_view_readout(&state);
@@ -892,6 +931,11 @@ pub fn show_grid(state: &Shared, n: usize) {
     install_image_drop(&grid.root, state);
     grid.root.set_hexpand(true);
     grid.root.set_vexpand(true);
+    // Guarantee the terminals a minimum width. Both side panels (the file sidebar
+    // and the file viewer) sit in `shrink_*_child(false)` Paneds, so this minimum
+    // becomes their effective *maximum* width — neither divider can be dragged far
+    // enough to collapse the terminals onto each other.
+    grid.root.set_size_request(MIN_TERMINAL_WIDTH, -1);
 
     // Center: resizable split — terminals on the left, the file editor (revealed
     // when a file is opened from the sidebar) on the right.
@@ -938,26 +982,50 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_end_child(false);
     content.set_position(240);
 
-    // Dragging the editor or sidebar divider resizes the terminals too, but those
-    // dividers aren't part of the grid's paned tree — wire them to the same reflow
-    // suppression so a live resize (including while a pane is zoomed) doesn't
-    // garble the focused terminal.
+    // Cap the file viewer and the sidebar so neither can grow wide enough to squeeze
+    // the terminals — enforced on every divider change, so a width restored from a
+    // saved session (or a drag) is clamped too. They stay draggable narrower. Each
+    // change also freezes the terminals across the resize so they don't reprint-
+    // garble; value-guarded so a no-op notify (incl. our own clamp) is skipped, and
+    // freezing hides terminals inside the grid without moving these dividers, so no
+    // feedback loop.
     {
         let weak = Rc::downgrade(state);
-        center.connect_position_notify(move |_| {
+        let last = Cell::new(-1);
+        center.connect_position_notify(move |p| {
+            // The end child is the viewer; cap its width (= paned width − position).
+            let cw = p.width();
+            let pos = p.position();
+            if cw > VIEWER_MAX_WIDTH && pos < cw - VIEWER_MAX_WIDTH {
+                p.set_position(cw - VIEWER_MAX_WIDTH); // re-fires; handled next pass
+                return;
+            }
+            if last.replace(pos) == pos {
+                return;
+            }
             if let Some(st) = weak.upgrade() {
                 if let Some(g) = st.borrow().grid.as_ref() {
-                    g.on_external_resize();
+                    g.freeze_for_resize();
                 }
             }
         });
     }
     {
         let weak = Rc::downgrade(state);
-        content.connect_position_notify(move |_| {
+        let last = Cell::new(-1);
+        content.connect_position_notify(move |p| {
+            // The start child is the sidebar; cap its width (= position).
+            let pos = p.position();
+            if pos > SIDEBAR_MAX_WIDTH {
+                p.set_position(SIDEBAR_MAX_WIDTH); // re-fires; handled next pass
+                return;
+            }
+            if last.replace(pos) == pos {
+                return;
+            }
             if let Some(st) = weak.upgrade() {
                 if let Some(g) = st.borrow().grid.as_ref() {
-                    g.on_external_resize();
+                    g.freeze_for_resize();
                 }
             }
         });

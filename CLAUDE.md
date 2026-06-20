@@ -54,8 +54,10 @@ cargo clippy --workspace --all-targets   # kept warning-free
 ## Code map
 - `app.rs` — window, titlebar (logo + grouped controls), session open/reveal/build,
   a `Stack` of live sessions. `keys.rs` — Alt shortcuts. `session_picker.rs` — launch screens.
-- `grid.rs` + `tessera-core/grid.rs` — tiling grid (nested GTK `Paned`) + pure geometry.
+- `grid.rs` + `tessera-core/grid.rs` — **fixed** equal-split grid (nested homogeneous
+  GTK `Box`es — every pane the same size, **not** draggable) + pure geometry.
 - `pane.rs` — a VTE terminal pane (shell spawned only once sized; Ctrl+click links).
+  Each pane has a 1px border (theme `border` color) so you can see the grid cells.
 - `sidebar.rs` + `icons.rs` — file tree + file-type icons. `editor.rs` — tabbed viewer.
 - `preview.rs` — PDF/office → page images on a worker thread.
 - `frame.rs` + `frame/*` — capture (XDG portal) → annotate → save.
@@ -73,6 +75,18 @@ pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+p` screenshots strip 
   session screens. Brand orange `#ff9e64` / logo `#F2660C`.
 
 ## Open items / gotchas
+- **Terminal resize / reflow**: VTE rewrap-on-resize is **disabled**
+  (`vte_terminal_set_rewrap_on_resize(false)` via the `vte4::ffi`, since the safe
+  bindings dropped it) — leaving it on made a prompt with right-margin content (a
+  right-aligned clock) reprint and stack on every resize, in the worst case filling
+  the pane (see powerlevel10k#1200). On a window resize the terminals are also frozen
+  (hidden) for the drag and revealed once it settles, so the child sees one SIGWINCH,
+  not a burst. Drive that freeze **only** from the size-guarded toplevel-surface
+  `layout` hook — never a Paned `position_notify`, which feeds back into a loop.
+- **The side panels are width-capped** so they can't squeeze the terminals: the file
+  viewer ≤ `VIEWER_MAX_WIDTH` (800px), the sidebar ≤ `SIDEBAR_MAX_WIDTH` (400px),
+  enforced on every divider change (incl. a width restored from a saved session); the
+  grid keeps a `MIN_TERMINAL_WIDTH` (480px) floor. All in `app.rs`.
 - **Desktop file basename must equal the GTK `APP_ID`** (`dev.tessera.Tessera` in
   `main.rs`): the installed entry is `dev.tessera.Tessera.desktop`, not
   `tessera.desktop`. On Wayland the compositor maps a window to its launcher
