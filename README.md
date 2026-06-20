@@ -48,6 +48,18 @@ tessera 4        # open a 2x2 grid in the current folder
 tessera --help
 ```
 
+## Frame — capture &amp; annotate
+
+The titlebar camera grabs any window or region (via the desktop screenshot
+portal), then hands it to **Frame** — a built-in annotation canvas where you draw
+boxes, arrows, freehand pen, highlighter, and text in any color. **Save** exports
+a PNG (also copied to your clipboard) and adds it to the strip at the bottom of
+the sidebar, ready to drag into a terminal.
+
+<p align="center">
+  <img src="docs/frame.png" width="820" alt="Frame: a captured Tessera screenshot annotated with boxes, arrows, and text">
+</p>
+
 ## Keybindings
 
 | Key | Action |
