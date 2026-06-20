@@ -58,6 +58,11 @@ pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+p` screenshots strip 
   session screens. Brand orange `#ff9e64` / logo `#F2660C`.
 
 ## Open items / gotchas
+- **Desktop file basename must equal the GTK `APP_ID`** (`dev.tessera.Tessera` in
+  `main.rs`): the installed entry is `dev.tessera.Tessera.desktop`, not
+  `tessera.desktop`. On Wayland the compositor maps a window to its launcher
+  entry by `app_id == desktop-basename`; a mismatch means the running window/dock
+  shows **no icon**. Keep `StartupWMClass=dev.tessera.Tessera` for X11.
 - **Distribution**: the repo is private, so `tessera update` (unauthenticated
   GitHub API) returns 404 for end users. Making updates work publicly without
   exposing source needs a separate **public "releases" repo**. Deferred by the user.

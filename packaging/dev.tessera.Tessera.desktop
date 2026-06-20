@@ -9,3 +9,4 @@ Terminal=false
 Categories=Utility;TerminalEmulator;
 Keywords=terminal;tiling;workspace;shell;panes;
 StartupNotify=true
+StartupWMClass=dev.tessera.Tessera

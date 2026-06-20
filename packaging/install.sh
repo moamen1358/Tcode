@@ -13,8 +13,11 @@ ICONS="$HOME/.local/share/icons/hicolor"
 mkdir -p "$APPS"
 
 # Bake the absolute binary path into Exec so the launcher works regardless of
-# the desktop session's PATH (it often doesn't include ~/.cargo/bin).
-sed "s|^Exec=.*|Exec=$BIN|" packaging/tessera.desktop >"$APPS/tessera.desktop"
+# the desktop session's PATH (it often doesn't include ~/.cargo/bin). The file is
+# named after the GTK app_id (dev.tessera.Tessera) so Wayland maps the running
+# window to this entry and shows its icon.
+rm -f "$APPS/tessera.desktop"   # drop the old misnamed entry from earlier installs
+sed "s|^Exec=.*|Exec=$BIN|" packaging/dev.tessera.Tessera.desktop >"$APPS/dev.tessera.Tessera.desktop"
 for sz in 48 64 128 256; do
     mkdir -p "$ICONS/${sz}x${sz}/apps"
     install -m644 "packaging/icons/tessera-${sz}.png" "$ICONS/${sz}x${sz}/apps/tessera.png"

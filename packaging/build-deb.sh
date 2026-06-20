@@ -16,12 +16,12 @@ cargo build --release
 
 echo "Staging package tree…"
 install -Dm755 target/release/tessera         "$STAGE/usr/bin/tessera"
-install -Dm644 packaging/tessera.desktop      "$STAGE/usr/share/applications/tessera.desktop"
+install -Dm644 packaging/dev.tessera.Tessera.desktop "$STAGE/usr/share/applications/dev.tessera.Tessera.desktop"
 for sz in 48 64 128 256; do
     install -Dm644 "packaging/icons/tessera-${sz}.png" "$STAGE/usr/share/icons/hicolor/${sz}x${sz}/apps/tessera.png"
 done
 # On a system install the binary is on PATH and the icon is in the theme.
-sed -i 's|^Exec=.*|Exec=tessera|; s|^Icon=.*|Icon=tessera|' "$STAGE/usr/share/applications/tessera.desktop"
+sed -i 's|^Exec=.*|Exec=tessera|; s|^Icon=.*|Icon=tessera|' "$STAGE/usr/share/applications/dev.tessera.Tessera.desktop"
 
 INSTALLED_KB="$(du -sk "$STAGE/usr" | cut -f1)"
 mkdir -p "$STAGE/DEBIAN"
