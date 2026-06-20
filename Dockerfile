@@ -19,6 +19,15 @@ RUN cargo build --release -p tessera
 # ---- Stage 2: slim runtime image -------------------------------------------
 FROM ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
+# Stamp the image with the Cargo.toml version (passed by run-docker.sh) so the
+# image metadata matches the binary and the .deb:
+#   docker inspect tessera:<version> --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
+ARG VERSION=0.0.0
+LABEL org.opencontainers.image.title="Tessera" \
+      org.opencontainers.image.description="Borderless tiling-terminal workspace" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/moamen1358/tessera" \
+      org.opencontainers.image.licenses="MIT"
 # Runtime libs only: GTK4 + VTE4 runtime, a font so the terminal renders text,
 # and Mesa for GL (GTK4's renderer). A shell is already present (/bin/bash, /bin/sh).
 RUN apt-get update && apt-get install -y --no-install-recommends \

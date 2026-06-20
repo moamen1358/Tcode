@@ -102,6 +102,14 @@ git clone https://github.com/moamen1358/tessera && cd tessera
 # or just: cargo build --release && ./target/release/tessera 4
 ```
 
+**Run it three ways** — all built from the same version in `Cargo.toml`:
+
+```bash
+./run.sh native    # host binary (cargo build + run)
+./run.sh docker    # container image  (tessera:<version>)
+./run.sh deb       # build + install the .deb, then run
+```
+
 Maintainers: `./packaging/build-deb.sh` builds the `.deb`; pushing a `v*` tag
 publishes it to Releases automatically (see `.github/workflows/release.yml`).
 

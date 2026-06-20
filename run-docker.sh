@@ -7,14 +7,17 @@
 # host files. Prefers Wayland; falls back to X11.
 set -euo pipefail
 
-IMAGE="tessera:latest"
-N="${1:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Tag the image with the Cargo.toml version so it matches the .deb and the binary.
+VERSION="$(grep -m1 '^version' "$HERE/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')"
+IMAGE="tessera:${VERSION}"
+N="${1:-}"
 
-# Build the image on first run (or after code changes: docker build -t tessera .).
+# Build the image on first run (rebuild after code changes with: docker build .).
+# Stamp the version in (build-arg + tag) and alias :latest so both names exist.
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "Building $IMAGE (first run — compiles the GTK stack, takes a few minutes)…"
-    docker build -t "$IMAGE" "$HERE"
+    docker build --build-arg VERSION="$VERSION" -t "$IMAGE" -t "tessera:latest" "$HERE"
 fi
 
 # Optional GPU passthrough (only if the host exposes /dev/dri).
