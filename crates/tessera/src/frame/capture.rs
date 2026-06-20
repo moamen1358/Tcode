@@ -6,16 +6,29 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::ApplicationWindow;
 
+/// What a capture attempt produced.
+enum Capture {
+    /// The user picked a window/region — annotate this image.
+    Image(Pixbuf),
+    /// The user dismissed the picker (or it errored after opening) — do nothing,
+    /// so cancelling a capture never drops you into the annotation canvas.
+    Abort,
+    /// The screenshot portal service is unreachable — fall back to snapshotting
+    /// Tessera's own window so capture still works on a portal-less system.
+    NoPortal,
+}
+
 /// Capture ANY window/region via the desktop portal. COSMIC shows its own
-/// interactive picker; the chosen area comes back as a PNG we load. On any
-/// failure (portal absent/denied/cancelled) we fall back to snapshotting
-/// Tessera's own window so capture never dead-ends.
+/// interactive picker; the chosen area comes back as a PNG we load. Cancelling
+/// the picker does nothing; only a genuinely-absent portal falls back to a
+/// self-snapshot.
 pub fn capture_screen<F: Fn(Option<Pixbuf>) + 'static>(fallback: &ApplicationWindow, done: F) {
     let fallback = fallback.clone();
     glib::spawn_future_local(async move {
         match request_portal_screenshot().await {
-            Some(pb) => done(Some(pb)),
-            None => {
+            Capture::Image(pb) => done(Some(pb)),
+            Capture::Abort => done(None),
+            Capture::NoPortal => {
                 eprintln!("tessera: screenshot portal unavailable; capturing Tessera's own window");
                 capture_window_async(&fallback, done)
             }
@@ -23,22 +36,26 @@ pub fn capture_screen<F: Fn(Option<Pixbuf>) + 'static>(fallback: &ApplicationWin
     });
 }
 
-/// Returns the captured Pixbuf, or None if the portal failed/was cancelled.
-async fn request_portal_screenshot() -> Option<Pixbuf> {
+/// Run the interactive screenshot portal. The portal being unreachable (the
+/// `send` fails) is the only case that warrants the self-snapshot fallback; once
+/// the picker is up, any non-image outcome — cancel, denial, error — means
+/// "abort", so a cancelled capture never opens the annotation canvas.
+async fn request_portal_screenshot() -> Capture {
     use ashpd::desktop::screenshot::Screenshot;
-    let response = Screenshot::request()
-        .interactive(true)
-        .modal(true)
-        .send()
-        .await
-        .ok()?
-        .response()
-        .ok()?;
-    // `uri()` Displays as a `file://` URI; glib decodes it to a path (handles
-    // percent-encoding) without us depending on the url crate's API surface.
-    let uri = response.uri().to_string();
-    let (path, _host) = glib::filename_from_uri(&uri).ok()?;
-    Pixbuf::from_file(&path).ok()
+    let request = match Screenshot::request().interactive(true).modal(true).send().await {
+        Ok(r) => r,
+        Err(_) => return Capture::NoPortal,
+    };
+    match request.response() {
+        // `uri()` Displays as a `file://` URI; glib decodes it (percent-encoding
+        // and all) to a path, no `url` crate needed.
+        Ok(response) => glib::filename_from_uri(&response.uri().to_string())
+            .ok()
+            .and_then(|(path, _host)| Pixbuf::from_file(&path).ok())
+            .map(Capture::Image)
+            .unwrap_or(Capture::Abort),
+        Err(_) => Capture::Abort,
+    }
 }
 
 /// Snapshot the live Tessera window into a `Pixbuf`, asynchronously.
