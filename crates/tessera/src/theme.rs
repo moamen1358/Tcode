@@ -99,11 +99,9 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                               box-shadow: none; border: none; color: {fg}; }}\n\
          .tessera-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
          .tessera-titlebar .titlebar-toggle {{ background: none; box-shadow: none; border: none; \
-                              border-bottom: 2px solid transparent; border-radius: 0; \
-                              color: alpha({fg}, 0.5); }}\n\
+                              color: alpha({fg}, 0.4); }}\n\
          .tessera-titlebar .titlebar-toggle:hover {{ background-color: alpha({fg}, 0.06); color: {fg}; }}\n\
-         .tessera-titlebar .titlebar-toggle:checked {{ background: none; color: {fg}; \
-                              border-bottom: 2px solid #ff9e64; }}\n\
+         .tessera-titlebar .titlebar-toggle:checked {{ background: none; color: {fg}; }}\n\
          .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
