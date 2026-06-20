@@ -56,7 +56,7 @@ impl Default for Theme {
         Theme {
             background: "#1a1b26".into(),
             foreground: "#c0caf5".into(),
-            accent: "#7aa2f7".into(),
+            accent: "#ff9e64".into(),
             surface: "#16161e".into(),
             border: "#2f3549".into(),
             palette: DEFAULT_PALETTE.iter().map(|s| s.to_string()).collect(),

@@ -96,13 +96,15 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
          .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.3); }}\n\
          .tessera-titlebar {{ min-height: 24px; background-color: {bg}; \
-                              box-shadow: none; border: none; color: {fg}; }}\n\
+                              box-shadow: none; border: none; \
+                              border-bottom: 1px solid alpha(#ff9e64, 0.5); color: {fg}; }}\n\
          .tessera-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
-         .titlebar-toggles {{ background-color: alpha({fg}, 0.06); border-radius: 7px; padding: 1px; }}\n\
-         .tessera-titlebar .titlebar-toggles button {{ padding: 2px 8px; border-radius: 6px; \
-                              background: none; box-shadow: none; border: none; color: alpha({fg}, 0.6); }}\n\
-         .tessera-titlebar .titlebar-toggles button:hover {{ background-color: alpha({fg}, 0.10); color: {fg}; }}\n\
-         .tessera-titlebar .titlebar-toggles button:checked {{ background-color: alpha({accent}, 0.28); color: {fg}; }}\n\
+         .tessera-titlebar .titlebar-toggle {{ background: none; box-shadow: none; border: none; \
+                              border-bottom: 2px solid transparent; border-radius: 0; \
+                              color: alpha({fg}, 0.5); }}\n\
+         .tessera-titlebar .titlebar-toggle:hover {{ background-color: alpha({fg}, 0.06); color: {fg}; }}\n\
+         .tessera-titlebar .titlebar-toggle:checked {{ background: none; color: {fg}; \
+                              border-bottom: 2px solid #ff9e64; }}\n\
          .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\

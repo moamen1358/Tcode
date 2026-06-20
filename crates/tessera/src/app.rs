@@ -154,13 +154,15 @@ pub fn build(app: &Application, preset: Option<usize>) {
     left_group.append(&capture_btn);
     header.pack_start(&left_group);
 
-    let toggles = gtk4::Box::new(Orientation::Horizontal, 0);
-    toggles.add_css_class("titlebar-toggles"); // segmented panel-visibility control
-    toggles.append(&sidebar_btn);
-    toggles.append(&editor_btn);
-    toggles.append(&shots_btn);
-    let right_group = gtk4::Box::new(Orientation::Horizontal, 6);
-    right_group.append(&toggles);
+    // The three panel toggles: flat, evenly spaced, each underlined in orange
+    // while its panel is showing.
+    sidebar_btn.add_css_class("titlebar-toggle");
+    editor_btn.add_css_class("titlebar-toggle");
+    shots_btn.add_css_class("titlebar-toggle");
+    let right_group = gtk4::Box::new(Orientation::Horizontal, 2);
+    right_group.append(&sidebar_btn);
+    right_group.append(&editor_btn);
+    right_group.append(&shots_btn);
     right_group.append(&view_btn);
     header.pack_end(&right_group);
 
