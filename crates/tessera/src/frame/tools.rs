@@ -22,7 +22,7 @@ pub const PALETTE: [Rgb; 6] = [
     (0.102, 0.110, 0.149), // near-black #1a1c26
 ];
 
-pub const DEFAULT_COLOR: Rgb = PALETTE[1];
+pub const DEFAULT_COLOR: Rgb = PALETTE[0]; // red
 
 pub enum Shape {
     Box {

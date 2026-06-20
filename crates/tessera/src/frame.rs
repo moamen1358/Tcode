@@ -247,8 +247,8 @@ fn build_toolbar(shot: &Shot, area: &DrawingArea) -> Toolbar {
             }
             b.add_css_class("selected");
         });
-        if i == 1 {
-            sw.add_css_class("selected"); // default blue
+        if i == 0 {
+            sw.add_css_class("selected"); // default red
         }
         swatches.append(&sw);
     }
