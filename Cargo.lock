@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "tessera"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ashpd",
  "async-channel",
@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "tessera-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "toml 0.8.23",

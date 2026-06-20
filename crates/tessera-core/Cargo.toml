@@ -2,6 +2,9 @@
 name = "tessera-core"
 edition.workspace = true
 version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure layout, config and session logic for Tessera (no GTK)."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
