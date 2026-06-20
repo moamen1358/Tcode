@@ -58,37 +58,101 @@ fn main() -> glib::ExitCode {
     app.run_with_args(&["tessera"])
 }
 
-/// `tessera update`: pull the latest source and reinstall, via the updater the
-/// installer recorded under the data dir.
+/// `tessera update`: fetch the latest GitHub release and install its `.deb` — no
+/// source checkout needed. Downloads with `curl`, installs with `pkexec apt-get`
+/// (you're prompted for your password once).
 fn cli_update() -> glib::ExitCode {
-    let marker = glib::user_data_dir().join("tessera").join("source");
-    let dir = match std::fs::read_to_string(&marker) {
-        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+    const REPO: &str = "moamen1358/tessera";
+    let current = env!("CARGO_PKG_VERSION");
+    println!("Tessera {current} — checking for a newer release…");
+
+    let api = format!("https://api.github.com/repos/{REPO}/releases/latest");
+    let body = match std::process::Command::new("curl")
+        .args(["-fsSL", "-A", "tessera-update", "-H", "Accept: application/vnd.github+json"])
+        .arg(&api)
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => {
-            eprint!(
-"tessera: don't know where Tessera's source is.
-Reinstall from a clone (it records the path for next time):
-  git clone https://github.com/moamen1358/tessera
-  cd tessera && ./packaging/install.sh
-"
-            );
+            eprintln!("tessera: couldn't reach GitHub (need `curl` and a connection).");
             return glib::ExitCode::FAILURE;
         }
     };
-    let script = std::path::Path::new(&dir).join("packaging/update.sh");
-    if !script.is_file() {
-        eprintln!("tessera: updater not found at {}", script.display());
+
+    let tag = json_string(&body, "tag_name").unwrap_or_default();
+    let latest = tag.trim_start_matches('v');
+    if latest.is_empty() {
+        eprintln!("tessera: no published release found yet.");
         return glib::ExitCode::FAILURE;
     }
-    println!("Updating Tessera from {dir} …");
-    match std::process::Command::new("bash").arg(&script).status() {
-        Ok(s) if s.success() => glib::ExitCode::SUCCESS,
-        Ok(_) => glib::ExitCode::FAILURE,
-        Err(e) => {
-            eprintln!("tessera: failed to run the updater: {e}");
-            glib::ExitCode::FAILURE
+    if latest == current {
+        println!("Already up to date ({current}).");
+        return glib::ExitCode::SUCCESS;
+    }
+    let Some(url) = deb_asset_url(&body) else {
+        eprintln!("tessera: release {tag} has no .deb to install.");
+        return glib::ExitCode::FAILURE;
+    };
+
+    println!("Updating {current} → {latest}…");
+    let deb = std::env::temp_dir().join("tessera-latest.deb");
+    let downloaded = std::process::Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(&deb)
+        .arg(&url)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !downloaded {
+        eprintln!("tessera: download failed.");
+        return glib::ExitCode::FAILURE;
+    }
+
+    println!("Installing (you'll be asked for your password once)…");
+    let installed = std::process::Command::new("pkexec")
+        .args(["apt-get", "install", "-y"])
+        .arg(&deb)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = std::fs::remove_file(&deb);
+
+    if installed {
+        println!("Updated to {latest}. Restart Tessera to use the new version.");
+        glib::ExitCode::SUCCESS
+    } else {
+        eprintln!("tessera: install failed. Download the .deb manually:\n  {url}");
+        glib::ExitCode::FAILURE
+    }
+}
+
+/// Extract a JSON string field's value (`"field": "value"` -> `value`). Minimal
+/// and dependency-free — enough for the small, well-formed GitHub release JSON.
+fn json_string(json: &str, field: &str) -> Option<String> {
+    let key = format!("\"{field}\"");
+    let after = json[json.find(&key)? + key.len()..]
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start();
+    let rest = after.strip_prefix('"')?;
+    Some(rest[..rest.find('"')?].to_string())
+}
+
+/// The first release-asset `browser_download_url` ending in `.deb`.
+fn deb_asset_url(json: &str) -> Option<String> {
+    for part in json.split("\"browser_download_url\"").skip(1) {
+        let Some(rest) = part.trim_start().strip_prefix(':') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('"') else {
+            continue;
+        };
+        let Some(end) = rest.find('"') else { continue };
+        if rest[..end].ends_with(".deb") {
+            return Some(rest[..end].to_string());
         }
     }
+    None
 }
 
 /// Usage text for `tessera --help`.
