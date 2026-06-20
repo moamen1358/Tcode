@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential pkg-config curl ca-certificates \
         libgtk-4-dev libvte-2.91-gtk4-dev libgtksourceview-5-dev \
     && rm -rf /var/lib/apt/lists/*
-# Rust toolchain (matches docs/BUILD_LOG.md). MSRV for gtk4 0.11 is 1.83.
+# Rust toolchain — stable channel. MSRV for gtk4 0.11 is 1.83.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
