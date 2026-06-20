@@ -20,16 +20,31 @@ cargo clippy --workspace --all-targets   # kept warning-free
 ./target/release/tessera        # session picker
 ./target/release/tessera 4      # straight to a 2x2 grid
 ./packaging/build-deb.sh        # -> dist/tessera_<ver>_amd64.deb
+./run.sh native|docker|deb [N]  # run it 3 ways, all versioned from Cargo.toml
 ```
 - Release: `gh release create vX.Y.Z dist/*.deb` (or push a `v*` tag → CI in `.github/workflows/release.yml`).
 - Self-update for installed users: `tessera update` (downloads the latest release `.deb`).
 - Build-from-source install: `./packaging/install.sh`.
+- **One runner — `run.sh`**: `./run.sh native|docker|deb [pane-count]`. native = host
+  binary; docker = container image `tessera:<ver>` with Wayland/X11 forwarding (Dockerfile +
+  `docker/tessera-profile.sh`); deb = build + install the package. **Version is single-sourced
+  from `Cargo.toml`** — the binary (`env!("CARGO_PKG_VERSION")`, exposed via `tessera --version`),
+  the `.deb`, and the Docker tag + OCI `image.version` label must always match. `tessera --version`
+  prints before GTK init, so it's a headless smoke test for any mode.
 
 ## Conventions
 - Conventional Commits (`feat:`/`fix:`/`docs:`/`chore:`/`perf:`), ending with the
   `Co-Authored-By` trailer.
 - The user usually works on `main` and wants it pushed; bump the version + cut a
   release + rebuild the `.deb` when they say "update the deb / github".
+- Keep the repo **lean — only the tool and the files it uses**: no sample/demo files, no
+  redundant scripts. (Already removed: `samples/`, `package.json`, `run-docker.sh` (folded into
+  `run.sh`), `docs/superpowers/`, `docs/BUILD_LOG.md`.) `target/`/`dist/` are build output —
+  gitignored, regenerate on every build, so they reappear after building/testing; `cargo clean`
+  + `rm -rf dist` to tidy.
+- The repo + local folder are named **`Tessera`** (capital T): GitHub `moamen1358/Tessera`,
+  folder `~/Desktop/Tessera`. The binary/command/package/Docker-image stay lowercase `tessera`;
+  app_id is `dev.tessera.Tessera`.
 - Environment is **COSMIC / Wayland**: automated screenshots don't work (grim's
   protocol is unsupported; the portal needs interactive confirmation). Preview by
   launching the build (`setsid ./target/release/tessera … &`); the user captures
