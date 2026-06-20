@@ -21,6 +21,7 @@ sed "s|^Exec=.*|Exec=$BIN|" packaging/dev.tessera.Tessera.desktop >"$APPS/dev.te
 for sz in 48 64 128 256; do
     mkdir -p "$ICONS/${sz}x${sz}/apps"
     install -m644 "packaging/icons/tessera-${sz}.png" "$ICONS/${sz}x${sz}/apps/tessera.png"
+    install -m644 "packaging/icons/tessera-${sz}.png" "$ICONS/${sz}x${sz}/apps/dev.tessera.Tessera.png"
 done
 
 update-desktop-database "$APPS" 2>/dev/null || true
