@@ -94,7 +94,6 @@ pub fn build(app: &Application, preset: Option<usize>) {
     logo.set_margin_start(6);
     logo.set_margin_end(2);
     logo.set_can_target(false); // decorative — let clicks/drag pass to the bar
-    header.pack_start(&logo);
 
     // Clickable sidebar toggle (also bound to Alt+b), VS Code-style — the
     // Adwaita "show sidebar" icon (a panel with a highlighted left bar).
@@ -103,7 +102,6 @@ pub fn build(app: &Application, preset: Option<usize>) {
     sidebar_btn.set_active(true);
     sidebar_btn.set_tooltip_text(Some("Toggle file panel (Alt+B)"));
     sidebar_btn.add_css_class("flat");
-    header.pack_start(&sidebar_btn);
 
     // Editor (right panel) toggle — show/hide the file editor.
     let editor_btn = ToggleButton::new();
@@ -111,7 +109,6 @@ pub fn build(app: &Application, preset: Option<usize>) {
     editor_btn.set_active(true);
     editor_btn.set_tooltip_text(Some("Toggle file editor"));
     editor_btn.add_css_class("flat");
-    header.pack_end(&editor_btn);
 
     // Screenshots section toggle (also bound to Alt+P) — show/hide the gallery
     // strip at the bottom of the file sidebar. Visible by default; since it now
@@ -121,13 +118,11 @@ pub fn build(app: &Application, preset: Option<usize>) {
     shots_btn.set_active(true);
     shots_btn.set_tooltip_text(Some("Toggle screenshots strip (Alt+P)"));
     shots_btn.add_css_class("flat");
-    header.pack_end(&shots_btn);
 
     // Frame capture: region-select a screenshot, annotate, save to the panel.
     let capture_btn = Button::from_icon_name("camera-photo-symbolic");
     capture_btn.set_tooltip_text(Some("Capture a screenshot"));
     capture_btn.add_css_class("flat");
-    header.pack_end(&capture_btn);
 
     // View settings (font size + whole-UI scale) — a titlebar popover.
     let font_readout = gtk4::Label::new(None);
@@ -136,7 +131,11 @@ pub fn build(app: &Application, preset: Option<usize>) {
     view_btn.set_icon_name("preferences-system-symbolic");
     view_btn.set_tooltip_text(Some("Font size & scale"));
     view_btn.add_css_class("flat");
-    header.pack_end(&view_btn);
+
+    // "+" new terminal (also Alt+n) — created here so it groups with the actions.
+    let add_btn = Button::from_icon_name("list-add-symbolic");
+    add_btn.set_tooltip_text(Some("New terminal (Alt+N)"));
+    add_btn.add_css_class("flat");
 
     // Centered session switcher: shows the current session's name; its popover
     // lists saved sessions (click to switch) and a New-session action.
@@ -144,8 +143,28 @@ pub fn build(app: &Application, preset: Option<usize>) {
     session_btn.set_label("Tessera");
     session_btn.add_css_class("session-switcher");
     session_btn.set_tooltip_text(Some("Switch session"));
-    header.set_title_widget(Some(&session_btn));
 
+    // Grouped titlebar layout, so the controls read as tidy clusters:
+    //   left:   logo · new-terminal · capture      (identity + create actions)
+    //   centre: session switcher
+    //   right:  [sidebar|editor|shots] · settings   (panel toggles + settings)
+    let left_group = gtk4::Box::new(Orientation::Horizontal, 2);
+    left_group.append(&logo);
+    left_group.append(&add_btn);
+    left_group.append(&capture_btn);
+    header.pack_start(&left_group);
+
+    let toggles = gtk4::Box::new(Orientation::Horizontal, 0);
+    toggles.add_css_class("titlebar-toggles"); // segmented panel-visibility control
+    toggles.append(&sidebar_btn);
+    toggles.append(&editor_btn);
+    toggles.append(&shots_btn);
+    let right_group = gtk4::Box::new(Orientation::Horizontal, 6);
+    right_group.append(&toggles);
+    right_group.append(&view_btn);
+    header.pack_end(&right_group);
+
+    header.set_title_widget(Some(&session_btn));
     window.set_titlebar(Some(&header));
 
     // The window's only child for its lifetime: a stack with one page per open
@@ -251,11 +270,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
         });
     }
 
-    // "+" button next to the sidebar toggle: add a new terminal pane (also Alt+n).
-    let add_btn = Button::from_icon_name("list-add-symbolic");
-    add_btn.set_tooltip_text(Some("New terminal (Alt+N)"));
-    add_btn.add_css_class("flat");
-    header.pack_start(&add_btn);
+    // "+" adds a new terminal pane (the button lives in the titlebar's left group).
     {
         let st = state.clone();
         add_btn.connect_clicked(move |_| {
