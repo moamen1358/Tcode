@@ -26,7 +26,7 @@ ARG VERSION=0.0.0
 LABEL org.opencontainers.image.title="Tessera" \
       org.opencontainers.image.description="Borderless tiling-terminal workspace" \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.source="https://github.com/moamen1358/tessera" \
+      org.opencontainers.image.source="https://github.com/moamen1358/Tessera" \
       org.opencontainers.image.licenses="MIT"
 # Runtime libs only: GTK4 + VTE4 runtime, a font so the terminal renders text,
 # and Mesa for GL (GTK4's renderer). A shell is already present (/bin/bash, /bin/sh).

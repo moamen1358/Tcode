@@ -21,7 +21,7 @@ with a file sidebar and a built-in viewer for code, images, PDFs and office docs
 
 ## Download &amp; install
 
-Grab the latest **`.deb`** from the [**Releases**](https://github.com/moamen1358/tessera/releases/latest)
+Grab the latest **`.deb`** from the [**Releases**](https://github.com/moamen1358/Tessera/releases/latest)
 page, then install it:
 
 ```bash
@@ -97,7 +97,7 @@ Prefer to build it yourself?
 ```bash
 sudo apt install -y build-essential pkg-config \
   libgtk-4-dev libvte-2.91-gtk4-dev libgtksourceview-5-dev
-git clone https://github.com/moamen1358/tessera && cd tessera
+git clone https://github.com/moamen1358/Tessera && cd Tessera
 ./packaging/install.sh                         # build + install for your user
 # or just: cargo build --release && ./target/release/tessera 4
 ```

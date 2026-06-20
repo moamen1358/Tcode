@@ -6,7 +6,7 @@ a universal file viewer (code / images / PDFs / office / CSV), saved sessions,
 and a built-in screenshot annotator (**Frame**). Built in Rust with GTK4 + VTE.
 
 ## Repo facts
-- GitHub `moamen1358/tessera` — **PRIVATE** (source stays private by choice).
+- GitHub `moamen1358/Tessera` — **PRIVATE** (source stays private by choice).
 - Default branch `main`. Version lives in root `Cargo.toml` (`[workspace.package]`).
 - Cargo workspace:
   - `crates/tessera-core` — pure logic (grid geometry, config, sessions), unit-tested, **no GTK**.

@@ -39,7 +39,7 @@ Recommends: poppler-utils, xdg-desktop-portal, policykit-1
 Suggests: libreoffice
 Installed-Size: ${INSTALLED_KB}
 Maintainer: moamen <moamen1358@users.noreply.github.com>
-Homepage: https://github.com/moamen1358/tessera
+Homepage: https://github.com/moamen1358/Tessera
 Description: Borderless tiling-terminal workspace
  Tessera is a fast, keyboard-driven tiling terminal for Linux: pick a number and
  get that many terminal panes in a balanced grid, with a file sidebar and a

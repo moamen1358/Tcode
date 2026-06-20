@@ -62,7 +62,7 @@ fn main() -> glib::ExitCode {
 /// source checkout needed. Downloads with `curl`, installs with `pkexec apt-get`
 /// (you're prompted for your password once).
 fn cli_update() -> glib::ExitCode {
-    const REPO: &str = "moamen1358/tessera";
+    const REPO: &str = "moamen1358/Tessera";
     let current = env!("CARGO_PKG_VERSION");
     println!("Tessera {current} — checking for a newer release…");
 
@@ -166,7 +166,7 @@ Usage:
   tessera --version  print the version
   tessera --help     show this help
 
-Keybindings & config: https://github.com/moamen1358/tessera
+Keybindings & config: https://github.com/moamen1358/Tessera
 "
     );
 }
