@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="packaging/tessera.svg" width="120" alt="Tessera logo">
+<img src="packaging/tessera.png" width="120" alt="Tessera logo">
 
 # Tessera
 

@@ -10,3 +10,8 @@ Screenshot_*.png
 
 # npm wrapper (scripts only; no deps)
 node_modules/
+
+# Logo experiments (not part of the product)
+/logos/
+/packaging/tessera_lbl.png
+generate_tessera_ai_logos.py

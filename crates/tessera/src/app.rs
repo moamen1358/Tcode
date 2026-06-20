@@ -319,12 +319,12 @@ pub fn build(app: &Application, preset: Option<usize>) {
     window.present();
 }
 
-/// The Tessera logo as a small titlebar image — the embedded app-icon SVG,
-/// rasterized at `px` device pixels via librsvg.
+/// The Tessera logo as a small titlebar image — the embedded app icon, scaled
+/// to `px` device pixels.
 fn tessera_logo(px: i32) -> Image {
     let image = Image::new();
     image.set_pixel_size(px);
-    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tessera.svg"));
+    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tessera.png"));
     let stream = gtk4::gio::MemoryInputStream::from_bytes(&bytes);
     if let Ok(pb) =
         gtk4::gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, px, px, true, gtk4::gio::Cancellable::NONE)

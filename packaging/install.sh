@@ -10,13 +10,15 @@ cargo install --path crates/tessera --force
 BIN="$(command -v tessera || echo "$HOME/.cargo/bin/tessera")"
 APPS="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor"
-mkdir -p "$APPS" "$ICONS/scalable/apps" "$ICONS/256x256/apps"
+mkdir -p "$APPS"
 
 # Bake the absolute binary path into Exec so the launcher works regardless of
 # the desktop session's PATH (it often doesn't include ~/.cargo/bin).
 sed "s|^Exec=.*|Exec=$BIN|" packaging/tessera.desktop >"$APPS/tessera.desktop"
-install -m644 packaging/tessera.svg "$ICONS/scalable/apps/tessera.svg"
-install -m644 packaging/icons/tessera-256.png "$ICONS/256x256/apps/tessera.png"
+for sz in 48 64 128 256; do
+    mkdir -p "$ICONS/${sz}x${sz}/apps"
+    install -m644 "packaging/icons/tessera-${sz}.png" "$ICONS/${sz}x${sz}/apps/tessera.png"
+done
 
 update-desktop-database "$APPS" 2>/dev/null || true
 gtk-update-icon-cache -f -t "$ICONS" 2>/dev/null || true
