@@ -3,7 +3,8 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Button, HeaderBar, Orientation, Paned, Stack, ToggleButton,
+    Application, ApplicationWindow, Button, HeaderBar, Image, Orientation, Paned, Stack,
+    ToggleButton,
 };
 use tessera_core::config::Config;
 use tessera_core::session::{self, Session};
@@ -86,6 +87,14 @@ pub fn build(app: &Application, preset: Option<usize>) {
     // be closed or restored. Press Alt+f for an immersive fullscreen (no header).
     let header = HeaderBar::new();
     header.add_css_class("tessera-titlebar");
+
+    // App logo at the far left of the titlebar.
+    let logo = tessera_logo(18);
+    logo.set_tooltip_text(Some("Tessera"));
+    logo.set_margin_start(6);
+    logo.set_margin_end(2);
+    logo.set_can_target(false); // decorative — let clicks/drag pass to the bar
+    header.pack_start(&logo);
 
     // Clickable sidebar toggle (also bound to Alt+b), VS Code-style — the
     // Adwaita "show sidebar" icon (a panel with a highlighted left bar).
@@ -291,6 +300,21 @@ pub fn build(app: &Application, preset: Option<usize>) {
     apply_view(&state);
     refresh_view_readout(&state);
     window.present();
+}
+
+/// The Tessera logo as a small titlebar image — the embedded app-icon SVG,
+/// rasterized at `px` device pixels via librsvg.
+fn tessera_logo(px: i32) -> Image {
+    let image = Image::new();
+    image.set_pixel_size(px);
+    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tessera.svg"));
+    let stream = gtk4::gio::MemoryInputStream::from_bytes(&bytes);
+    if let Ok(pb) =
+        gtk4::gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, px, px, true, gtk4::gio::Cancellable::NONE)
+    {
+        image.set_paintable(Some(&gtk4::gdk::Texture::for_pixbuf(&pb)));
+    }
+    image
 }
 
 /// A "title  [−] readout [+]" stepper row for the view popover. `on_step` is
