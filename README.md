@@ -64,7 +64,7 @@ the sidebar, ready to drag into a terminal.
 
 | Key | Action |
 |-----|--------|
-| `Alt+h` / `j` / `k` / `l` | Move focus between panes |
+| `Alt+h/j/k/l` or `Alt`+arrow keys | Move focus between panes |
 | `Alt+z` | Zoom the focused pane / restore |
 | `Alt+n` | New terminal (add a pane) |
 | `Alt+b` | Toggle the file sidebar |

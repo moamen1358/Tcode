@@ -89,10 +89,10 @@ pub fn build(app: &Application, preset: Option<usize>) {
     header.add_css_class("tessera-titlebar");
 
     // App logo at the far left of the titlebar.
-    let logo = tessera_logo(18);
+    let logo = tessera_logo(26);
     logo.set_tooltip_text(Some("Tessera"));
-    logo.set_margin_start(6);
-    logo.set_margin_end(2);
+    logo.set_margin_start(8);
+    logo.set_margin_end(4);
     logo.set_can_target(false); // decorative — let clicks/drag pass to the bar
 
     // Clickable sidebar toggle (also bound to Alt+b), VS Code-style — the

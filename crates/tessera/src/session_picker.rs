@@ -262,12 +262,33 @@ fn field_label(text: &str) -> Label {
     l
 }
 
-/// Wrap a column in the full-screen picker background.
+/// The brush-T brand logo (embedded PNG), sized for the launch screens.
+fn brand_logo(px: i32) -> Image {
+    let image = Image::new();
+    image.set_pixel_size(px);
+    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tessera.png"));
+    let stream = gio::MemoryInputStream::from_bytes(&bytes);
+    if let Ok(pb) =
+        gtk4::gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, px, px, true, gio::Cancellable::NONE)
+    {
+        image.set_paintable(Some(&gtk4::gdk::Texture::for_pixbuf(&pb)));
+    }
+    image
+}
+
+/// Wrap a column in the full-screen picker background. The big brand logo sits at
+/// the top of the centered content, so logo + title + form read as one group.
 fn wrap(column: GtkBox) -> Widget {
     let root = GtkBox::new(Orientation::Vertical, 0);
     root.set_hexpand(true);
     root.set_vexpand(true);
     root.add_css_class("picker-root");
+
+    let logo = brand_logo(260);
+    logo.set_halign(Align::Center);
+    logo.set_margin_bottom(10);
+    column.prepend(&logo);
+
     root.append(&column);
     root.upcast()
 }
