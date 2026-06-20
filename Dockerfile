@@ -1,5 +1,5 @@
 # Tessera — multi-stage build. Runs INSIDE the container; the GUI renders on the
-# host display via socket forwarding (see run-docker.sh).
+# host display via socket forwarding (see ./run.sh docker).
 
 # ---- Stage 1: build the release binary -------------------------------------
 FROM ubuntu:24.04 AS builder
@@ -19,7 +19,7 @@ RUN cargo build --release -p tessera
 # ---- Stage 2: slim runtime image -------------------------------------------
 FROM ubuntu:24.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
-# Stamp the image with the Cargo.toml version (passed by run-docker.sh) so the
+# Stamp the image with the Cargo.toml version (passed by run.sh) so the
 # image metadata matches the binary and the .deb:
 #   docker inspect tessera:<version> --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
 ARG VERSION=0.0.0
