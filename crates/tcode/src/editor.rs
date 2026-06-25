@@ -887,7 +887,7 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                 }
                 preview::Msg::Page(page) => {
                     if !page.exists() {
-                        eprintln!("tessera: preview page vanished: {}", page.display());
+                        eprintln!("tcode: preview page vanished: {}", page.display());
                         continue;
                     }
                     let pic = Picture::for_filename(&page);
@@ -995,7 +995,7 @@ fn open_externally(path: &Path) -> Button {
     let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     btn.connect_clicked(move |_| {
         if let Err(e) = std::process::Command::new("xdg-open").arg(&p).spawn() {
-            eprintln!("tessera: 'Open externally' failed (xdg-open): {e}");
+            eprintln!("tcode: 'Open externally' failed (xdg-open): {e}");
         }
     });
     btn
@@ -1023,7 +1023,7 @@ fn save_current(nb: &Notebook, open: &OpenFiles) {
         if let Some(b) = &of.buffer {
             let text = b.text(&b.start_iter(), &b.end_iter(), false);
             if let Err(e) = std::fs::write(&of.path, text.as_str()) {
-                eprintln!("tessera: save failed for {}: {e}", of.path.display());
+                eprintln!("tcode: save failed for {}: {e}", of.path.display());
             }
         }
     }

@@ -13,7 +13,7 @@ use gtk4::{
     PolicyType, ScrolledWindow, Widget,
 };
 
-use tessera_core::session::Session;
+use tcode_core::session::Session;
 
 /// Terminal-count choices offered when creating a new session.
 const COUNTS: [usize; 7] = [1, 2, 3, 4, 6, 8, 9];
@@ -30,7 +30,7 @@ pub fn build(
     let column = centered_column();
 
     column.append(&heading(
-        "Tessera",
+        "Tcode",
         if sessions.is_empty() {
             "No saved sessions yet — start a new one"
         } else {
@@ -266,7 +266,7 @@ fn field_label(text: &str) -> Label {
 fn brand_logo(px: i32) -> Image {
     let image = Image::new();
     image.set_pixel_size(px);
-    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tessera.png"));
+    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tcode.png"));
     let stream = gio::MemoryInputStream::from_bytes(&bytes);
     if let Ok(pb) =
         gtk4::gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, px, px, true, gio::Cancellable::NONE)

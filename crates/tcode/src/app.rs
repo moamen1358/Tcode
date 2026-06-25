@@ -6,8 +6,8 @@ use gtk4::{
     Application, ApplicationWindow, Button, HeaderBar, Image, Orientation, Paned, Stack,
     ToggleButton,
 };
-use tessera_core::config::Config;
-use tessera_core::session::{self, Session};
+use tcode_core::config::Config;
+use tcode_core::session::{self, Session};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -61,7 +61,7 @@ pub struct State {
     pub clipboard: Option<Rc<crate::clipboard::Panel>>,
     /// The session currently open in this window, if any.
     pub current: Option<Session>,
-    /// Whether to persist `current` on changes. False for `tessera N` quick
+    /// Whether to persist `current` on changes. False for `tcode N` quick
     /// launches (ephemeral), true for sessions opened/created via the picker.
     pub save_sessions: bool,
     /// Titlebar session switcher: shows the current name, popover lists/creates.
@@ -88,7 +88,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
 
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("Tessera")
+        .title("Tcode")
         .default_width(1280)
         .default_height(800)
         .maximized(true)
@@ -98,11 +98,11 @@ pub fn build(app: &Application, preset: Option<usize>) {
     // carries the minimize / maximize / close buttons, so the window can always
     // be closed or restored. Press Alt+f for an immersive fullscreen (no header).
     let header = HeaderBar::new();
-    header.add_css_class("tessera-titlebar");
+    header.add_css_class("tcode-titlebar");
 
     // App logo at the far left of the titlebar.
-    let logo = tessera_logo(26);
-    logo.set_tooltip_text(Some("Tessera"));
+    let logo = tcode_logo(26);
+    logo.set_tooltip_text(Some("Tcode"));
     logo.set_margin_start(8);
     logo.set_margin_end(4);
     logo.set_can_target(false); // decorative — let clicks/drag pass to the bar
@@ -152,7 +152,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
     // Centered session switcher: shows the current session's name; its popover
     // lists saved sessions (click to switch) and a New-session action.
     let session_btn = gtk4::MenuButton::new();
-    session_btn.set_label("Tessera");
+    session_btn.set_label("Tcode");
     session_btn.add_css_class("session-switcher");
     session_btn.set_tooltip_text(Some("Switch session"));
 
@@ -306,16 +306,16 @@ pub fn build(app: &Application, preset: Option<usize>) {
     }
 
     match preset {
-        // `tessera N`: a quick ephemeral session (N panes, current dir), no picker.
+        // `tcode N`: a quick ephemeral session (N panes, current dir), no picker.
         Some(n) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
             let mut s = Session::new(cwd);
             s.panes = n;
             open_session(&state, s);
         }
-        // `TESSERA_RESUME=<id>` opens that saved session directly, skipping the
+        // `TCODE_RESUME=<id>` opens that saved session directly, skipping the
         // picker (handy for scripting a launch straight into a known session).
-        None => match std::env::var_os("TESSERA_RESUME")
+        None => match std::env::var_os("TCODE_RESUME")
             .and_then(|id| session::load(&id.to_string_lossy()))
         {
             Some(sess) => {
@@ -358,12 +358,12 @@ pub fn build(app: &Application, preset: Option<usize>) {
     window.present();
 }
 
-/// The Tessera logo as a small titlebar image — the embedded app icon, scaled
+/// The Tcode logo as a small titlebar image — the embedded app icon, scaled
 /// to `px` device pixels.
-fn tessera_logo(px: i32) -> Image {
+fn tcode_logo(px: i32) -> Image {
     let image = Image::new();
     image.set_pixel_size(px);
-    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tessera.png"));
+    let bytes = gtk4::glib::Bytes::from_static(include_bytes!("../assets/tcode.png"));
     let stream = gtk4::gio::MemoryInputStream::from_bytes(&bytes);
     if let Ok(pb) =
         gtk4::gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, px, px, true, gtk4::gio::Cancellable::NONE)
@@ -461,7 +461,7 @@ pub fn reset_view(state: &Shared) {
 
 /// Reserved stack-page name for the transient picker / new-session screens (not
 /// a session, so it never collides with a session id and is replaced each time).
-const PICKER_PAGE: &str = "__tessera_picker__";
+const PICKER_PAGE: &str = "__tcode_picker__";
 
 /// Show a transient full-window screen (picker or new-session form) as the
 /// reserved stack page, replacing any previous one.
@@ -538,7 +538,7 @@ pub fn open_session(state: &Shared, session: Session) {
     if !session.root.is_dir() {
         // If the saved root is gone, don't silently open in a stale cwd.
         eprintln!(
-            "tessera: session root {} is missing; returning to picker",
+            "tcode: session root {} is missing; returning to picker",
             session.root.display()
         );
         show_session_picker(state);
@@ -678,7 +678,7 @@ fn reveal_session(state: &Shared, session: Session) {
 
 fn set_session_cwd(root: &Path) -> bool {
     if let Err(e) = std::env::set_current_dir(root) {
-        eprintln!("tessera: could not enter session root {}: {e}", root.display());
+        eprintln!("tcode: could not enter session root {}: {e}", root.display());
         return false;
     }
     true
@@ -824,7 +824,7 @@ fn refresh_session_menu(state: &Shared) {
         .current
         .as_ref()
         .map(|c| c.name.clone())
-        .unwrap_or_else(|| "Tessera".to_string());
+        .unwrap_or_else(|| "Tcode".to_string());
     btn.set_label(&name);
 
     let current_id = state.borrow().current.as_ref().map(|c| c.id.clone());
@@ -1084,8 +1084,8 @@ pub fn show_grid(state: &Shared, n: usize) {
         .panel_root
         .set_visible(state.borrow().shots_btn.is_active());
 
-    // Optionally open a file at startup (TESSERA_OPEN=path) — preview/testing aid.
-    if let Some(path) = std::env::var_os("TESSERA_OPEN") {
+    // Optionally open a file at startup (TCODE_OPEN=path) — preview/testing aid.
+    if let Some(path) = std::env::var_os("TCODE_OPEN") {
         open_file(state, std::path::Path::new(&path));
     }
 

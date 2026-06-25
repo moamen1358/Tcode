@@ -1,35 +1,35 @@
-# Tessera — project memory
+# Tcode — project memory
 
-Tessera is a fast, borderless **tiling-terminal workspace** for Linux: pick a
+Tcode is a fast, borderless **tiling-terminal workspace** for Linux: pick a
 number → get that many terminal panes in a balanced grid. It has a file sidebar,
 a universal file viewer (code / images / PDFs / office / CSV), saved sessions,
 and a built-in screenshot annotator (**Frame**). Built in Rust with GTK4 + VTE.
 
 ## Repo facts
-- GitHub `moamen1358/Tessera` — **PRIVATE** (source stays private by choice).
+- GitHub `moamen1358/Tcode` — **PRIVATE** (source stays private by choice).
 - Default branch `main`. Version lives in root `Cargo.toml` (`[workspace.package]`).
 - Cargo workspace:
-  - `crates/tessera-core` — pure logic (grid geometry, config, sessions), unit-tested, **no GTK**.
-  - `crates/tessera` — the GTK4 app (binary `tessera`).
+  - `crates/tcode-core` — pure logic (grid geometry, config, sessions), unit-tested, **no GTK**.
+  - `crates/tcode` — the GTK4 app (binary `tcode`).
 
 ## Build · run · test · package
 ```bash
 cargo build --release
 cargo test --workspace
 cargo clippy --workspace --all-targets   # kept warning-free
-./target/release/tessera        # session picker
-./target/release/tessera 4      # straight to a 2x2 grid
-./packaging/build-deb.sh        # -> dist/tessera_<ver>_amd64.deb
+./target/release/tcode        # session picker
+./target/release/tcode 4      # straight to a 2x2 grid
+./packaging/build-deb.sh        # -> dist/tcode_<ver>_amd64.deb
 ./run.sh native|docker|deb [N]  # run it 3 ways, all versioned from Cargo.toml
 ```
 - Release: `gh release create vX.Y.Z dist/*.deb` (or push a `v*` tag → CI in `.github/workflows/release.yml`).
-- Self-update for installed users: `tessera update` (downloads the latest release `.deb`).
+- Self-update for installed users: `tcode update` (downloads the latest release `.deb`).
 - Build-from-source install: `./packaging/install.sh`.
 - **One runner — `run.sh`**: `./run.sh native|docker|deb [pane-count]`. native = host
-  binary; docker = container image `tessera:<ver>` with Wayland/X11 forwarding (Dockerfile +
-  `docker/tessera-profile.sh`); deb = build + install the package. **Version is single-sourced
-  from `Cargo.toml`** — the binary (`env!("CARGO_PKG_VERSION")`, exposed via `tessera --version`),
-  the `.deb`, and the Docker tag + OCI `image.version` label must always match. `tessera --version`
+  binary; docker = container image `tcode:<ver>` with Wayland/X11 forwarding (Dockerfile +
+  `docker/tcode-profile.sh`); deb = build + install the package. **Version is single-sourced
+  from `Cargo.toml`** — the binary (`env!("CARGO_PKG_VERSION")`, exposed via `tcode --version`),
+  the `.deb`, and the Docker tag + OCI `image.version` label must always match. `tcode --version`
   prints before GTK init, so it's a headless smoke test for any mode.
 
 ## Conventions
@@ -42,26 +42,26 @@ cargo clippy --workspace --all-targets   # kept warning-free
   `run.sh`), `docs/superpowers/`, `docs/BUILD_LOG.md`.) `target/`/`dist/` are build output —
   gitignored, regenerate on every build, so they reappear after building/testing; `cargo clean`
   + `rm -rf dist` to tidy.
-- The repo + local folder are named **`Tessera`** (capital T): GitHub `moamen1358/Tessera`,
-  folder `~/Desktop/Tessera`. The binary/command/package/Docker-image stay lowercase `tessera`;
-  app_id is `dev.tessera.Tessera`.
+- The repo + local folder are named **`Tcode`** (capital T): GitHub `moamen1358/Tcode`,
+  folder `~/Desktop/Tcode`. The binary/command/package/Docker-image stay lowercase `tcode`;
+  app_id is `dev.tcode.Tcode`.
 - Environment is **COSMIC / Wayland**: automated screenshots don't work (grim's
   protocol is unsupported; the portal needs interactive confirmation). Preview by
-  launching the build (`setsid ./target/release/tessera … &`); the user captures
+  launching the build (`setsid ./target/release/tcode … &`); the user captures
   screenshots when needed. The Bash shell here is **zsh** (no `mapfile`; unquoted
   `$var` doesn't word-split; foreground `sleep` is blocked).
 
 ## Code map
 - `app.rs` — window, titlebar (logo + grouped controls), session open/reveal/build,
   a `Stack` of live sessions. `keys.rs` — Alt shortcuts. `session_picker.rs` — launch screens.
-- `grid.rs` + `tessera-core/grid.rs` — **fixed** equal-split grid (nested homogeneous
+- `grid.rs` + `tcode-core/grid.rs` — **fixed** equal-split grid (nested homogeneous
   GTK `Box`es — every pane the same size, **not** draggable) + pure geometry.
 - `pane.rs` — a VTE terminal pane (shell spawned only once sized; Ctrl+click links).
   Each pane has a 1px border (theme `border` color) so you can see the grid cells.
 - `sidebar.rs` + `icons.rs` — file tree + file-type icons. `editor.rs` — tabbed viewer.
 - `preview.rs` — PDF/office → page images on a worker thread.
 - `frame.rs` + `frame/*` — capture (XDG portal) → annotate → save.
-- `theme.rs` — global CSS (brand orange accent `#ff9e64`). `config.rs` — `~/.config/tessera/config.toml`.
+- `theme.rs` — global CSS (brand orange accent `#ff9e64`). `config.rs` — `~/.config/tcode/config.toml`.
 
 ## Keybindings
 `Alt+h/j/k/l` **or** `Alt+arrows` move pane focus · `Alt+z` zoom pane · `Alt+n` new
@@ -70,8 +70,8 @@ pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+p` screenshots strip 
 
 ## Branding
 - Logo: a hand-brushed orange **T** on transparent (raster PNG, so the icon set is
-  PNG not SVG): `packaging/tessera.png` (master), `packaging/icons/tessera-{48,64,128,256}.png`,
-  embedded titlebar logo `crates/tessera/assets/tessera.png`, and large on the
+  PNG not SVG): `packaging/tcode.png` (master), `packaging/icons/tcode-{48,64,128,256}.png`,
+  embedded titlebar logo `crates/tcode/assets/tcode.png`, and large on the
   session screens. Brand orange `#ff9e64` / logo `#F2660C`.
 
 ## Open items / gotchas
@@ -87,12 +87,12 @@ pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+p` screenshots strip 
   viewer ≤ `VIEWER_MAX_WIDTH` (800px), the sidebar ≤ `SIDEBAR_MAX_WIDTH` (400px),
   enforced on every divider change (incl. a width restored from a saved session); the
   grid keeps a `MIN_TERMINAL_WIDTH` (480px) floor. All in `app.rs`.
-- **Desktop file basename must equal the GTK `APP_ID`** (`dev.tessera.Tessera` in
-  `main.rs`): the installed entry is `dev.tessera.Tessera.desktop`, not
-  `tessera.desktop`. On Wayland the compositor maps a window to its launcher
+- **Desktop file basename must equal the GTK `APP_ID`** (`dev.tcode.Tcode` in
+  `main.rs`): the installed entry is `dev.tcode.Tcode.desktop`, not
+  `tcode.desktop`. On Wayland the compositor maps a window to its launcher
   entry by `app_id == desktop-basename`; a mismatch means the running window/dock
-  shows **no icon**. Keep `StartupWMClass=dev.tessera.Tessera` for X11.
-- **Distribution**: the repo is private, so `tessera update` (unauthenticated
+  shows **no icon**. Keep `StartupWMClass=dev.tcode.Tcode` for X11.
+- **Distribution**: the repo is private, so `tcode update` (unauthenticated
   GitHub API) returns 404 for end users. Making updates work publicly without
   exposing source needs a separate **public "releases" repo**. Deferred by the user.
 - `apollo-accounts-export.csv` at the repo root is the user's private business

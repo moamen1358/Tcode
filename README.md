@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="packaging/tessera.png" width="120" alt="Tessera logo">
+<img src="packaging/tcode.png" width="120" alt="Tcode logo">
 
-# Tessera
+# Tcode
 
 **A fast, borderless tiling-terminal workspace for Linux.**
 
@@ -16,25 +16,25 @@ with a file sidebar and a built-in viewer for code, images, PDFs and office docs
 </div>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="820" alt="Tessera: a 2x2 terminal grid with a file sidebar and a tabbed editor">
+  <img src="docs/screenshot.png" width="820" alt="Tcode: a 2x2 terminal grid with a file sidebar and a tabbed editor">
 </p>
 
 ## Download &amp; install
 
-Grab the latest **`.deb`** from the [**Releases**](https://github.com/moamen1358/Tessera/releases/latest)
+Grab the latest **`.deb`** from the [**Releases**](https://github.com/moamen1358/Tcode/releases/latest)
 page, then install it:
 
 ```bash
-sudo apt install ./tessera_*.deb
+sudo apt install ./tcode_*.deb
 ```
 
-That's it — **Tessera** shows up in your app launcher (or run `tessera`). No source
+That's it — **Tcode** shows up in your app launcher (or run `tcode`). No source
 code or Rust toolchain needed; `apt` pulls in the few system libraries it uses.
 
 ## Update
 
 ```bash
-tessera update
+tcode update
 ```
 
 Checks GitHub, downloads the newest release `.deb`, and installs it. (Or just
@@ -43,9 +43,9 @@ download the new `.deb` and `apt install` it again.)
 ## Usage
 
 ```bash
-tessera          # session picker
-tessera 4        # open a 2x2 grid in the current folder
-tessera --help
+tcode          # session picker
+tcode 4        # open a 2x2 grid in the current folder
+tcode --help
 ```
 
 ## Frame — capture &amp; annotate
@@ -57,7 +57,7 @@ a PNG (also copied to your clipboard) and adds it to the strip at the bottom of
 the sidebar, ready to drag into a terminal.
 
 <p align="center">
-  <img src="docs/frame.png" width="820" alt="Frame: a captured Tessera screenshot annotated with boxes, arrows, and text">
+  <img src="docs/frame.png" width="820" alt="Frame: a captured Tcode screenshot annotated with boxes, arrows, and text">
 </p>
 
 ## Keybindings
@@ -76,7 +76,7 @@ Ctrl+click a path or URL in any terminal to open it; right-click for Copy / Past
 
 ## Configuration
 
-Optional `~/.config/tessera/config.toml` — every field has a default, so it's only
+Optional `~/.config/tcode/config.toml` — every field has a default, so it's only
 there if you want it:
 
 ```toml
@@ -97,16 +97,16 @@ Prefer to build it yourself?
 ```bash
 sudo apt install -y build-essential pkg-config \
   libgtk-4-dev libvte-2.91-gtk4-dev libgtksourceview-5-dev
-git clone https://github.com/moamen1358/Tessera && cd Tessera
+git clone https://github.com/moamen1358/Tcode && cd Tcode
 ./packaging/install.sh                         # build + install for your user
-# or just: cargo build --release && ./target/release/tessera 4
+# or just: cargo build --release && ./target/release/tcode 4
 ```
 
 **Run it three ways** — all built from the same version in `Cargo.toml`:
 
 ```bash
 ./run.sh native    # host binary (cargo build + run)
-./run.sh docker    # container image  (tessera:<version>)
+./run.sh docker    # container image  (tcode:<version>)
 ./run.sh deb       # build + install the .deb, then run
 ```
 

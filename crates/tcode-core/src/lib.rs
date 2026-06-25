@@ -1,4 +1,4 @@
-//! Pure logic for Tessera — grid geometry and configuration.
+//! Pure logic for Tcode — grid geometry and configuration.
 //! No GTK dependency, so this crate is unit-tested without a display.
 
 pub mod config;

@@ -1,7 +1,7 @@
 //! Background rendering of PDFs and office documents to page-image files. Office
 //! docs are first converted to PDF with `soffice --headless`, then every PDF is
 //! rasterised with `pdftoppm`. Rendered pages are cached under
-//! `~/.cache/tessera/preview/<key>/` (key = path + mtime + size), so re-opening
+//! `~/.cache/tcode/preview/<key>/` (key = path + mtime + size), so re-opening
 //! is instant. Rendering runs on a worker thread; pages are delivered to the GTK
 //! main thread over an `async-channel` (see `editor::build_pages`).
 
@@ -162,7 +162,7 @@ fn office_to_pdf(
     let status = run_cancellable(cmd, cancel).map_err(|e| format!("soffice failed: {e}"))?;
     if profile.exists() {
         if let Err(e) = std::fs::remove_dir_all(&profile) {
-            eprintln!("tessera: profile cleanup failed: {e}");
+            eprintln!("tcode: profile cleanup failed: {e}");
         }
     }
     let Some(status) = status else {
@@ -246,7 +246,7 @@ fn cache_dir(path: &Path) -> Result<PathBuf, String> {
         .unwrap_or(0);
     let key = format!("{}|{}|{}", path.display(), mtime, meta.len());
     Ok(gtk4::glib::user_cache_dir()
-        .join("tessera")
+        .join("tcode")
         .join("preview")
         .join(fnv1a(&key)))
 }

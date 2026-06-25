@@ -16,7 +16,7 @@ use gtk4::{
     gio, Box as GtkBox, EventSequenceState, GestureClick, Orientation, Overlay, PopoverMenu,
     PropagationPhase,
 };
-use tessera_core::config::Config;
+use tcode_core::config::Config;
 use vte4::prelude::*;
 use vte4::{Format, PtyFlags, Regex, Terminal};
 
@@ -39,7 +39,7 @@ const MATCH_FLAGS: u32 = PCRE2_UTF | PCRE2_UCP | PCRE2_MULTILINE | PCRE2_CASELES
 const URL_RE: &str = r#"(?:https?|ftp|file)://[^\s<>"'`]+"#;
 const PATH_RE: &str = r#"(?:~|\.{1,2})?/[^\s<>"'`:]+"#;
 // Relative paths with a directory component, e.g. `src/main.rs` or
-// `crates/tessera/src/app.rs:12:5` (rustc/grep output) — neither PATH_RE (needs a
+// `crates/tcode/src/app.rs:12:5` (rustc/grep output) — neither PATH_RE (needs a
 // leading /, ~/, ./, ..) nor FILE_RE (rejects /) catches these. The lookbehind
 // stops it matching inside an absolute path; the :line[:col] suffix is stripped
 // in open_link before the existence check.
@@ -206,10 +206,10 @@ impl Pane {
             gio::Cancellable::NONE,
             move |res| {
                 if let Err(err) = res {
-                    eprintln!("tessera: spawn failed: {err}");
+                    eprintln!("tcode: spawn failed: {err}");
                     if let Some(term) = term.upgrade() {
                         term.feed(
-                            format!("\r\n\x1b[1;31mtessera: failed to start shell: {err}\x1b[0m\r\n")
+                            format!("\r\n\x1b[1;31mtcode: failed to start shell: {err}\x1b[0m\r\n")
                                 .as_bytes(),
                         );
                     }
@@ -327,7 +327,7 @@ fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
         // and control-char-free before handing it to the browser.
         if s.len() <= 4096 && !s.contains(char::is_control) {
             if let Err(e) = Command::new("xdg-open").arg(s).spawn() {
-                eprintln!("tessera: xdg-open failed for {s}: {e}");
+                eprintln!("tcode: xdg-open failed for {s}: {e}");
             }
         }
         return true;

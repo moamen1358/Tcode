@@ -1,35 +1,35 @@
 #!/usr/bin/env bash
-# Build a Debian package (.deb) for Tessera — a download-and-install bundle that
+# Build a Debian package (.deb) for Tcode — a download-and-install bundle that
 # needs no source code or Rust toolchain on the user's machine.
 #
-#   ./packaging/build-deb.sh        ->  dist/tessera_<version>_<arch>.deb
+#   ./packaging/build-deb.sh        ->  dist/tcode_<version>_<arch>.deb
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
 ARCH="$(dpkg --print-architecture)"
-PKG="tessera_${VERSION}_${ARCH}"
+PKG="tcode_${VERSION}_${ARCH}"
 STAGE="$(mktemp -d)/${PKG}"
 
 echo "Building release binary…"
 cargo build --release
 
 echo "Staging package tree…"
-install -Dm755 target/release/tessera         "$STAGE/usr/bin/tessera"
-install -Dm644 packaging/dev.tessera.Tessera.desktop "$STAGE/usr/share/applications/dev.tessera.Tessera.desktop"
+install -Dm755 target/release/tcode         "$STAGE/usr/bin/tcode"
+install -Dm644 packaging/dev.tcode.Tcode.desktop "$STAGE/usr/share/applications/dev.tcode.Tcode.desktop"
 for sz in 48 64 128 256; do
-    install -Dm644 "packaging/icons/tessera-${sz}.png" "$STAGE/usr/share/icons/hicolor/${sz}x${sz}/apps/tessera.png"
+    install -Dm644 "packaging/icons/tcode-${sz}.png" "$STAGE/usr/share/icons/hicolor/${sz}x${sz}/apps/tcode.png"
     # Also under the app_id name so launchers that look the icon up by app_id
     # (rather than reading Icon= from the matched .desktop) resolve it on Wayland.
-    install -Dm644 "packaging/icons/tessera-${sz}.png" "$STAGE/usr/share/icons/hicolor/${sz}x${sz}/apps/dev.tessera.Tessera.png"
+    install -Dm644 "packaging/icons/tcode-${sz}.png" "$STAGE/usr/share/icons/hicolor/${sz}x${sz}/apps/dev.tcode.Tcode.png"
 done
 # On a system install the binary is on PATH and the icon is in the theme.
-sed -i 's|^Exec=.*|Exec=tessera|; s|^Icon=.*|Icon=dev.tessera.Tessera|' "$STAGE/usr/share/applications/dev.tessera.Tessera.desktop"
+sed -i 's|^Exec=.*|Exec=tcode|; s|^Icon=.*|Icon=dev.tcode.Tcode|' "$STAGE/usr/share/applications/dev.tcode.Tcode.desktop"
 
 INSTALLED_KB="$(du -sk "$STAGE/usr" | cut -f1)"
 mkdir -p "$STAGE/DEBIAN"
 cat >"$STAGE/DEBIAN/control" <<CTRL
-Package: tessera
+Package: tcode
 Version: ${VERSION}
 Section: utils
 Priority: optional
@@ -39,9 +39,9 @@ Recommends: poppler-utils, xdg-desktop-portal, policykit-1
 Suggests: libreoffice
 Installed-Size: ${INSTALLED_KB}
 Maintainer: moamen <moamen1358@users.noreply.github.com>
-Homepage: https://github.com/moamen1358/Tessera
+Homepage: https://github.com/moamen1358/Tcode
 Description: Borderless tiling-terminal workspace
- Tessera is a fast, keyboard-driven tiling terminal for Linux: pick a number and
+ Tcode is a fast, keyboard-driven tiling terminal for Linux: pick a number and
  get that many terminal panes in a balanced grid, with a file sidebar and a
  universal file viewer. Built in Rust with GTK4 and VTE.
 CTRL

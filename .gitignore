@@ -13,5 +13,5 @@ node_modules/
 
 # Logo experiments (not part of the product)
 /logos/
-/packaging/tessera_lbl.png
-generate_tessera_ai_logos.py
+/packaging/tcode_lbl.png
+generate_tcode_ai_logos.py

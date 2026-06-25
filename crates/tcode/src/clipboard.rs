@@ -3,7 +3,7 @@
 //! cards — each just the copied text in a rectangle (two-line preview) with pin
 //! and delete (×) buttons. Click a card to copy it again; pin keeps an entry at
 //! the top, exempt from Clear and the entry cap. Records every text copied to the
-//! system clipboard (from any app) while Tessera runs, newest on top, and saves
+//! system clipboard (from any app) while Tcode runs, newest on top, and saves
 //! the history to disk so it survives restarts.
 //!
 //! The card widgets are a view over `entries` (the source of truth); any change
@@ -54,7 +54,7 @@ pub struct Panel {
 /// Path of the on-disk history (user data dir, so it persists across restarts).
 fn history_path() -> PathBuf {
     gtk4::glib::user_data_dir()
-        .join("tessera")
+        .join("tcode")
         .join("clipboard.history")
 }
 

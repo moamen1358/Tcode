@@ -1,5 +1,5 @@
 //! Image capture for Frame: the XDG screenshot portal (any window/region,
-//! Wayland-safe) with the Tessera self-snapshot as a fallback.
+//! Wayland-safe) with the Tcode self-snapshot as a fallback.
 
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
@@ -14,7 +14,7 @@ enum Capture {
     /// so cancelling a capture never drops you into the annotation canvas.
     Abort,
     /// The screenshot portal service is unreachable — fall back to snapshotting
-    /// Tessera's own window so capture still works on a portal-less system.
+    /// Tcode's own window so capture still works on a portal-less system.
     NoPortal,
 }
 
@@ -29,7 +29,7 @@ pub fn capture_screen<F: Fn(Option<Pixbuf>) + 'static>(fallback: &ApplicationWin
             Capture::Image(pb) => done(Some(pb)),
             Capture::Abort => done(None),
             Capture::NoPortal => {
-                eprintln!("tessera: screenshot portal unavailable; capturing Tessera's own window");
+                eprintln!("tcode: screenshot portal unavailable; capturing Tcode's own window");
                 capture_window_async(&fallback, done)
             }
         }
@@ -58,7 +58,7 @@ async fn request_portal_screenshot() -> Capture {
     }
 }
 
-/// Snapshot the live Tessera window into a `Pixbuf`, asynchronously.
+/// Snapshot the live Tcode window into a `Pixbuf`, asynchronously.
 ///
 /// `WidgetPaintable` only records a render node on the widget's *next* snapshot
 /// after it is attached — so a synchronous capture of an already-drawn, static

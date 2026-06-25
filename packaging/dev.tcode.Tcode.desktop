@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=Tessera
+Name=Tcode
 GenericName=Terminal Workspace
 Comment=Borderless tiling-terminal workspace
-Exec=tessera
-Icon=dev.tessera.Tessera
+Exec=tcode
+Icon=dev.tcode.Tcode
 Terminal=false
 Categories=Utility;TerminalEmulator;
 Keywords=terminal;tiling;workspace;shell;panes;
 StartupNotify=true
-StartupWMClass=dev.tessera.Tessera
+StartupWMClass=dev.tcode.Tcode

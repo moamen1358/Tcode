@@ -1060,6 +1060,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
+name = "tcode"
+version = "1.1.0"
+dependencies = [
+ "ashpd",
+ "async-channel",
+ "cairo-rs",
+ "csv",
+ "gtk4",
+ "sourceview5",
+ "tcode-core",
+ "vte4",
+]
+
+[[package]]
+name = "tcode-core"
+version = "1.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1070,28 +1092,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "tessera"
-version = "1.1.0"
-dependencies = [
- "ashpd",
- "async-channel",
- "cairo-rs",
- "csv",
- "gtk4",
- "sourceview5",
- "tessera-core",
- "vte4",
-]
-
-[[package]]
-name = "tessera-core"
-version = "1.1.0"
-dependencies = [
- "serde",
- "toml 0.8.23",
 ]
 
 [[package]]

@@ -1,10 +1,10 @@
 [package]
-name = "tessera-core"
+name = "tcode-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Pure layout, config and session logic for Tessera (no GTK)."
+description = "Pure layout, config and session logic for Tcode (no GTK)."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -5,7 +5,7 @@ use gtk4::gdk::{Key, ModifierType};
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, EventControllerKey, PropagationPhase};
-use tessera_core::grid::Dir;
+use tcode_core::grid::Dir;
 
 use crate::app::{change_scale, reset_view, set_panes, Shared};
 

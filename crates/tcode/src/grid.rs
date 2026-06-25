@@ -1,6 +1,6 @@
 //! The terminal grid — a *fixed*, equal-split layout: every pane gets the same
 //! size, determined purely by the pane count (no draggable dividers). Panes are
-//! arranged in the balanced shape from `tessera_core::grid::layout`, realized as
+//! arranged in the balanced shape from `tcode_core::grid::layout`, realized as
 //! nested homogeneous `GtkBox`es (rows of panes stacked into columns). Adding a
 //! pane (`+` / `Alt+n`) or a shell exiting rebuilds the tree.
 //!
@@ -15,8 +15,8 @@ use gtk4::glib;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, EventControllerFocus, Orientation};
-use tessera_core::config::Config;
-use tessera_core::grid::{coords, flat_index, layout, neighbor, Dir};
+use tcode_core::config::Config;
+use tcode_core::grid::{coords, flat_index, layout, neighbor, Dir};
 use vte4::prelude::*; // TerminalExt: connect_child_exited
 
 use crate::pane::{OpenFn, Pane};

@@ -1,2 +1,2 @@
 Martian Mono by Evil Martians — SIL Open Font License 1.1 (see OFL.txt).
-Bundled and loaded at runtime as Tessera's default UI font.
+Bundled and loaded at runtime as Tcode's default UI font.

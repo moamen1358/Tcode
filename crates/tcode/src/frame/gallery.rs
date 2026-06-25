@@ -1,4 +1,4 @@
-//! The persistent left-side screenshots panel in Tessera's main window: a
+//! The persistent left-side screenshots panel in Tcode's main window: a
 //! scrollable strip of every saved screenshot (loaded from the cache dir on
 //! startup, so history survives restarts), showing ~3 at a time. Clicking a
 //! thumbnail re-opens it in the annotation canvas; capturing is from the titlebar.
@@ -14,7 +14,7 @@ use gtk4::{Box as GtkBox, Button, DragSource, Orientation, Separator};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
-    glib::user_cache_dir().join("tessera").join("frame")
+    glib::user_cache_dir().join("tcode").join("frame")
 }
 
 /// True for a canonical `shot-<digits>.png` filename (our own exports).

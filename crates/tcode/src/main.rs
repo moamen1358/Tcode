@@ -17,7 +17,7 @@ mod theme;
 use gtk4::prelude::*;
 use gtk4::{gio, glib, Application};
 
-const APP_ID: &str = "dev.tessera.Tessera";
+const APP_ID: &str = "dev.tcode.Tcode";
 
 fn main() -> glib::ExitCode {
     // CLI subcommands, handled before any GTK setup.
@@ -25,7 +25,7 @@ fn main() -> glib::ExitCode {
         match arg.as_str() {
             "update" => return cli_update(),
             "version" | "--version" | "-V" => {
-                println!("tessera {}", env!("CARGO_PKG_VERSION"));
+                println!("tcode {}", env!("CARGO_PKG_VERSION"));
                 return glib::ExitCode::SUCCESS;
             }
             "help" | "--help" | "-h" => {
@@ -41,7 +41,7 @@ fn main() -> glib::ExitCode {
     // Make the bundled default font available before GTK initializes fontconfig.
     ensure_bundled_font();
 
-    // Optional pane count from argv[1] (e.g. `tessera 4`). Read it ourselves so
+    // Optional pane count from argv[1] (e.g. `tcode 4`). Read it ourselves so
     // GTK never sees it — we hand GTK a clean argv to avoid file-open parsing.
     let preset: Option<usize> = std::env::args()
         .nth(1)
@@ -49,32 +49,32 @@ fn main() -> glib::ExitCode {
         .filter(|n| (1..=16).contains(n));
 
     // NON_UNIQUE: each launch is its own independent window (no single-instance
-    // handoff to an already-running Tessera).
+    // handoff to an already-running Tcode).
     let app = Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.connect_activate(move |app| app::build(app, preset));
-    app.run_with_args(&["tessera"])
+    app.run_with_args(&["tcode"])
 }
 
-/// `tessera update`: fetch the latest GitHub release and install its `.deb` — no
+/// `tcode update`: fetch the latest GitHub release and install its `.deb` — no
 /// source checkout needed. Downloads with `curl`, installs with `pkexec apt-get`
 /// (you're prompted for your password once).
 fn cli_update() -> glib::ExitCode {
-    const REPO: &str = "moamen1358/Tessera";
+    const REPO: &str = "moamen1358/Tcode";
     let current = env!("CARGO_PKG_VERSION");
-    println!("Tessera {current} — checking for a newer release…");
+    println!("Tcode {current} — checking for a newer release…");
 
     let api = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let body = match std::process::Command::new("curl")
-        .args(["-fsSL", "-A", "tessera-update", "-H", "Accept: application/vnd.github+json"])
+        .args(["-fsSL", "-A", "tcode-update", "-H", "Accept: application/vnd.github+json"])
         .arg(&api)
         .output()
     {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => {
-            eprintln!("tessera: couldn't reach GitHub (need `curl` and a connection).");
+            eprintln!("tcode: couldn't reach GitHub (need `curl` and a connection).");
             return glib::ExitCode::FAILURE;
         }
     };
@@ -82,7 +82,7 @@ fn cli_update() -> glib::ExitCode {
     let tag = json_string(&body, "tag_name").unwrap_or_default();
     let latest = tag.trim_start_matches('v');
     if latest.is_empty() {
-        eprintln!("tessera: no published release found yet.");
+        eprintln!("tcode: no published release found yet.");
         return glib::ExitCode::FAILURE;
     }
     if latest == current {
@@ -90,12 +90,12 @@ fn cli_update() -> glib::ExitCode {
         return glib::ExitCode::SUCCESS;
     }
     let Some(url) = deb_asset_url(&body) else {
-        eprintln!("tessera: release {tag} has no .deb to install.");
+        eprintln!("tcode: release {tag} has no .deb to install.");
         return glib::ExitCode::FAILURE;
     };
 
     println!("Updating {current} → {latest}…");
-    let deb = std::env::temp_dir().join("tessera-latest.deb");
+    let deb = std::env::temp_dir().join("tcode-latest.deb");
     let downloaded = std::process::Command::new("curl")
         .args(["-fsSL", "-o"])
         .arg(&deb)
@@ -104,7 +104,7 @@ fn cli_update() -> glib::ExitCode {
         .map(|s| s.success())
         .unwrap_or(false);
     if !downloaded {
-        eprintln!("tessera: download failed.");
+        eprintln!("tcode: download failed.");
         return glib::ExitCode::FAILURE;
     }
 
@@ -118,10 +118,10 @@ fn cli_update() -> glib::ExitCode {
     let _ = std::fs::remove_file(&deb);
 
     if installed {
-        println!("Updated to {latest}. Restart Tessera to use the new version.");
+        println!("Updated to {latest}. Restart Tcode to use the new version.");
         glib::ExitCode::SUCCESS
     } else {
-        eprintln!("tessera: install failed. Download the .deb manually:\n  {url}");
+        eprintln!("tcode: install failed. Download the .deb manually:\n  {url}");
         glib::ExitCode::FAILURE
     }
 }
@@ -155,24 +155,24 @@ fn deb_asset_url(json: &str) -> Option<String> {
     None
 }
 
-/// Usage text for `tessera --help`.
+/// Usage text for `tcode --help`.
 fn print_usage() {
     print!(
-"Tessera — a borderless tiling-terminal workspace.
+"Tcode — a borderless tiling-terminal workspace.
 
 Usage:
-  tessera [N]        open with N panes (1-16); omit N for the session picker
-  tessera update     update to the latest version and reinstall
-  tessera --version  print the version
-  tessera --help     show this help
+  tcode [N]        open with N panes (1-16); omit N for the session picker
+  tcode update     update to the latest version and reinstall
+  tcode --version  print the version
+  tcode --help     show this help
 
-Keybindings & config: https://github.com/moamen1358/Tessera
+Keybindings & config: https://github.com/moamen1358/Tcode
 "
     );
 }
 
 /// One-time migration of data written under the old "loom" name into the new
-/// "tessera" dirs, so existing sessions, clipboard history, and screenshots survive
+/// "tcode" dirs, so existing sessions, clipboard history, and screenshots survive
 /// the rename. Each move only happens if the new location doesn't exist yet.
 fn migrate_legacy_data() {
     for base in [
@@ -180,13 +180,13 @@ fn migrate_legacy_data() {
         glib::user_cache_dir(),
         glib::user_data_dir(),
     ] {
-        let (old, new) = (base.join("loom"), base.join("tessera"));
+        let (old, new) = (base.join("loom"), base.join("tcode"));
         if old.is_dir() && !new.exists() {
             let _ = std::fs::rename(&old, &new);
         }
     }
     // The screenshots subdir was renamed too (bridgeshot -> frame).
-    let cache = glib::user_cache_dir().join("tessera");
+    let cache = glib::user_cache_dir().join("tcode");
     let (old, new) = (cache.join("bridgeshot"), cache.join("frame"));
     if old.is_dir() && !new.exists() {
         let _ = std::fs::rename(&old, &new);
@@ -198,7 +198,7 @@ fn migrate_legacy_data() {
 /// picks the file up and the app's default font renders on a fresh machine
 /// without a manual install.
 fn ensure_bundled_font() {
-    let dir = glib::user_data_dir().join("fonts").join("tessera");
+    let dir = glib::user_data_dir().join("fonts").join("tcode");
     let file = dir.join("MartianMono.ttf");
     if file.exists() {
         return;

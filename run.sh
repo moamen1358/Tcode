@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run Tessera one of three ways. Every mode is built from the SINGLE version in
+# Run Tcode one of three ways. Every mode is built from the SINGLE version in
 # Cargo.toml, so the host binary, the .deb and the Docker image stay in sync.
 #
 #   ./run.sh native [N]   compile the release binary and run it on the host
-#   ./run.sh docker [N]   build + run the container image  (tessera:<version>)
+#   ./run.sh docker [N]   build + run the container image  (tcode:<version>)
 #   ./run.sh deb    [N]   build + install the .deb, then run the installed app
 #
 # N = optional pane count (e.g. 4 -> a 2x2 grid). No N -> the session picker.
@@ -19,23 +19,23 @@ N="${2:-}"
 
 usage() {
     cat <<EOF
-Tessera v$VERSION — run it three ways (all the same version):
+Tcode v$VERSION — run it three ways (all the same version):
 
   ./run.sh native [N]   compile + run the release binary on the host
-  ./run.sh docker [N]   build + run the Docker image  (tessera:$VERSION)
+  ./run.sh docker [N]   build + run the Docker image  (tcode:$VERSION)
   ./run.sh deb    [N]   build + install the .deb, then run the installed app
 
   N   optional pane count, e.g.  ./run.sh native 4
 EOF
 }
 
-# Render Tessera from inside the container on the host display (prefers Wayland,
+# Render Tcode from inside the container on the host display (prefers Wayland,
 # falls back to X11). Mounts your invocation dir at /work so panes see your files.
 run_docker() {
-    local image="tessera:${VERSION}"
+    local image="tcode:${VERSION}"
     if ! docker image inspect "$image" >/dev/null 2>&1; then
         echo "Building $image (first run — compiles the GTK stack, takes a few minutes)…"
-        docker build --build-arg VERSION="$VERSION" -t "$image" -t "tessera:latest" "$HERE"
+        docker build --build-arg VERSION="$VERSION" -t "$image" -t "tcode:latest" "$HERE"
     fi
     local dri=(); [ -d /dev/dri ] && dri=(--device /dev/dri)   # optional GPU passthrough
 
@@ -64,24 +64,24 @@ run_docker() {
 
 case "$TYPE" in
   native)
-    echo "▶ native · Tessera v$VERSION (host binary)"
-    ( cd "$HERE" && cargo build --release -p tessera )
-    cd "$WHERE"; exec "$HERE/target/release/tessera" ${N:+"$N"}
+    echo "▶ native · Tcode v$VERSION (host binary)"
+    ( cd "$HERE" && cargo build --release -p tcode )
+    cd "$WHERE"; exec "$HERE/target/release/tcode" ${N:+"$N"}
     ;;
   docker)
-    echo "▶ docker · Tessera v$VERSION (image tessera:$VERSION)"
+    echo "▶ docker · Tcode v$VERSION (image tcode:$VERSION)"
     run_docker
     ;;
   deb)
-    echo "▶ deb · Tessera v$VERSION (system package)"
-    DEB="$HERE/dist/tessera_${VERSION}_${ARCH}.deb"
+    echo "▶ deb · Tcode v$VERSION (system package)"
+    DEB="$HERE/dist/tcode_${VERSION}_${ARCH}.deb"
     [ -f "$DEB" ] || ( cd "$HERE" && ./packaging/build-deb.sh )
-    installed="$(dpkg-query -W -f='${Version}' tessera 2>/dev/null || true)"
+    installed="$(dpkg-query -W -f='${Version}' tcode 2>/dev/null || true)"
     if [ "$installed" != "$VERSION" ]; then
         echo "Installing the .deb (needs your password)…"
         pkexec apt-get install -y --allow-downgrades "$DEB"
     fi
-    cd "$WHERE"; exec tessera ${N:+"$N"}
+    cd "$WHERE"; exec tcode ${N:+"$N"}
     ;;
   ""|-h|--help|help)
     usage
