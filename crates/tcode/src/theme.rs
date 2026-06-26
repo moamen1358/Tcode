@@ -103,7 +103,29 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                   box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .focus-ring {{ border: 1px solid transparent; }}\n\
          .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
-         .overlay-scrim {{ background-color: rgba(0,0,0,0.38); }}\n\
+         .overlay-scrim {{ background-color: rgba(0,0,0,0.46); }}\n\
+         .clip-palette {{ background-color: {surface}; border-radius: 16px; padding: 12px; \
+                          box-shadow: 0 28px 80px rgba(0,0,0,0.66); \
+                          border: 1px solid alpha({fg}, 0.10); }}\n\
+         .clip-search {{ background-color: {bg}; color: {fg}; border: none; \
+                          border-radius: 11px; padding: 11px 13px; margin: 2px 2px 10px 2px; \
+                          font-size: 16px; box-shadow: inset 0 0 0 1px alpha({fg}, 0.10); }}\n\
+         .clip-search:focus-within {{ box-shadow: inset 0 0 0 1px alpha({accent}, 0.75); }}\n\
+         .clip-search image {{ color: alpha({fg}, 0.42); margin-right: 8px; }}\n\
+         .clip-search text {{ color: {fg}; caret-color: {accent}; }}\n\
+         .clip-pal-list {{ padding: 1px; }}\n\
+         .clip-pal-row {{ background: none; border: none; box-shadow: none; \
+                          border-radius: 10px; padding: 10px 12px; margin: 1px 0; }}\n\
+         .clip-pal-row:hover {{ background-color: alpha({fg}, 0.06); }}\n\
+         .clip-pal-row.active {{ background-color: alpha({accent}, 0.18); \
+                          box-shadow: inset 0 0 0 1px alpha({accent}, 0.48); }}\n\
+         .clip-pal-row .clip-text {{ color: alpha({fg}, 0.92); font-size: 14px; \
+                          font-family: \"{font}\", monospace; }}\n\
+         .clip-pal-row.pinned .clip-text {{ color: #ffb38a; }}\n\
+         .clip-empty {{ color: alpha({fg}, 0.38); font-size: 13px; padding: 22px 12px; }}\n\
+         .clip-pal-footer {{ color: alpha({fg}, 0.40); font-size: 11px; letter-spacing: 0.3px; \
+                          padding: 9px 4px 2px 4px; margin-top: 6px; \
+                          border-top: 1px solid alpha({fg}, 0.08); }}\n\
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\

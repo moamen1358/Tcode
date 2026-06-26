@@ -25,6 +25,7 @@ struct LiveContent {
     center: Paned,
     content: Paned,
     host: Rc<crate::overlay::OverlayHost>,
+    palette: gtk4::Box,
 }
 
 use crate::editor::Editor;
@@ -76,6 +77,8 @@ pub struct State {
     pub content_paned: Option<Paned>,
     /// Floating-overlay layer for the active session (scrim + palette/preview/tray).
     pub host: Option<Rc<crate::overlay::OverlayHost>>,
+    /// The active session's clipboard command palette (Alt+V).
+    pub palette: Option<gtk4::Box>,
     /// Holds one page per open session; switching flips the visible page so each
     /// session's terminals keep running in the background.
     pub stack: Stack,
@@ -210,6 +213,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
         center_paned: None,
         content_paned: None,
         host: None,
+        palette: None,
         stack: stack.clone(),
         live: HashMap::new(),
     }));
@@ -620,6 +624,7 @@ fn build_session(state: &Shared, session: Session) {
             Some(center),
             Some(content),
             Some(host),
+            Some(palette),
         ) = (
             s.grid.clone(),
             s.sidebar.clone(),
@@ -629,6 +634,7 @@ fn build_session(state: &Shared, session: Session) {
             s.center_paned.clone(),
             s.content_paned.clone(),
             s.host.clone(),
+            s.palette.clone(),
         ) {
             s.live.insert(
                 id.clone(),
@@ -641,6 +647,7 @@ fn build_session(state: &Shared, session: Session) {
                     center,
                     content,
                     host,
+                    palette,
                 },
             );
         }
@@ -677,6 +684,7 @@ fn reveal_session(state: &Shared, session: Session) {
             s.center_paned = Some(lc.center);
             s.content_paned = Some(lc.content);
             s.host = Some(lc.host);
+            s.palette = Some(lc.palette);
         }
         s.current = Some(session);
         (
@@ -1097,10 +1105,18 @@ pub fn show_grid(state: &Shared, n: usize) {
         }
         s.clipboard.clone().unwrap()
     };
-    if clip.root.parent().is_some() {
-        clip.root.unparent();
-    }
-    sidebar.root.append(&clip.root);
+    // Clipboard command palette (Alt+V): a floating, searchable list over the same
+    // history model, replacing the old docked strip. Pasting feeds the focused
+    // terminal with no trailing newline so it isn't auto-run.
+    let palette = {
+        let g = grid.clone();
+        let on_paste: Rc<dyn Fn(&str)> = Rc::new(move |t: &str| {
+            g.feed_focused(t.strip_suffix('\n').unwrap_or(t));
+            g.grab_focused(); // return typing focus to the terminal after the palette closes
+        });
+        clip.palette(on_paste, Rc::downgrade(&host))
+    };
+    host.add_panel(&palette, gtk4::Align::Center, gtk4::Align::Center, 0);
     sidebar.root.append(&bridge.panel_root);
     // Add this session's content as a stack page and show it. Switching to a
     // different session later just flips the visible page, so these shells keep
@@ -1128,6 +1144,7 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.center_paned = Some(center.clone());
         s.content_paned = Some(content.clone());
         s.host = Some(host);
+        s.palette = Some(palette);
     }
     // Respect the current toggle state for the freshly built panel.
     bridge

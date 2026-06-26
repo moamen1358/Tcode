@@ -80,8 +80,6 @@ impl OverlayHost {
     /// Register a floating panel as a hidden overlay child at the given alignment
     /// and a uniform margin. Call `open`/`toggle` to show it (or, for a passive
     /// toast like the screenshot preview, show it directly so it doesn't dim).
-    // Used once the palette / preview / tray are wired (Tasks 3-5).
-    #[allow(dead_code)]
     pub fn add_panel(&self, child: &impl IsA<Widget>, halign: Align, valign: Align, margin: i32) {
         child.set_halign(halign);
         child.set_valign(valign);
@@ -98,7 +96,6 @@ impl OverlayHost {
     }
 
     /// Show `panel` as the modal overlay: reveal the scrim, show + focus it.
-    #[allow(dead_code)] // called via `toggle`, wired by the palette/tray (Tasks 3,5)
     pub fn open(&self, panel: &impl IsA<Widget>) {
         self.close(); // hide any currently-open panel first
         self.scrim.set_visible(true);
@@ -117,7 +114,6 @@ impl OverlayHost {
     }
 
     /// Open `panel` if it isn't the open one; close if it is.
-    #[allow(dead_code)] // wired by the clipboard palette / shots tray (Tasks 3, 5)
     pub fn toggle(&self, panel: &impl IsA<Widget>) {
         let target: Widget = panel.clone().upcast();
         let same = self.open.borrow().as_ref() == Some(&target);

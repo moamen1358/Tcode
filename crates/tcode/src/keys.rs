@@ -127,6 +127,17 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 btn.set_active(!btn.is_active());
                 Propagation::Stop
             }
+            // Alt+V -> toggle the clipboard command palette (floating, searchable).
+            Key::v => {
+                let (host, palette) = {
+                    let s = st.borrow();
+                    (s.host.clone(), s.palette.clone())
+                };
+                if let (Some(host), Some(palette)) = (host, palette) {
+                    host.toggle(&palette);
+                }
+                Propagation::Stop
+            }
             _ => Propagation::Proceed,
         }
     });

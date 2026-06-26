@@ -13,12 +13,13 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk4::gdk::Display;
+use gtk4::gdk::{Display, Key, ModifierType};
+use gtk4::glib::Propagation;
 use gtk4::pango::{EllipsizeMode, WrapMode};
 use gtk4::prelude::*;
 use gtk4::{
-    gio, AlertDialog, Align, Box as GtkBox, Button, Label, Orientation, PolicyType, ScrolledWindow,
-    Separator,
+    gio, AlertDialog, Align, Box as GtkBox, Button, EventControllerKey, Label, Orientation,
+    PolicyType, ScrolledWindow, Separator,
 };
 
 /// Cap on remembered (unpinned) clipboard entries.
@@ -380,6 +381,210 @@ impl Panel {
         if let Err(e) = tcode_core::fsutil::atomic_write(&path, &out, 0o600) {
             eprintln!("tcode: failed to write clipboard history: {e}");
         }
+    }
+
+    // --- Alt+V command palette (a search-filtered view over the same model) ---
+
+    /// Texts of all entries in display order (pinned-first), for the palette filter.
+    pub fn texts_in_order(&self) -> Vec<String> {
+        self.entries.borrow().iter().map(|e| e.text.clone()).collect()
+    }
+
+    /// Text of the entry at display index `idx`, if any.
+    pub fn entry_text(&self, idx: usize) -> Option<String> {
+        self.entries.borrow().get(idx).map(|e| e.text.clone())
+    }
+
+    /// Whether the entry at display index `idx` is pinned.
+    pub fn entry_is_pinned(&self, idx: usize) -> bool {
+        self.entries.borrow().get(idx).map(|e| e.pinned).unwrap_or(false)
+    }
+
+    /// Copy `text` to the system clipboard (the palette's Ctrl-activate path).
+    pub fn copy_text(&self, text: &str) {
+        *self.last.borrow_mut() = text.to_string();
+        if let Some(d) = Display::default() {
+            d.clipboard().set_text(text);
+        }
+    }
+
+    /// Build the Alt+V command palette: a search box over a scrollable, filtered
+    /// list of history entries. Enter or click pastes the selected entry via
+    /// `on_paste`; Ctrl+Enter copies it to the system clipboard instead. Acting
+    /// (or Esc/click-away) closes the overlay `host`. It re-renders fresh, clears
+    /// the query, and focuses the search box each time it's shown.
+    pub fn palette(
+        self: &Rc<Self>,
+        on_paste: Rc<dyn Fn(&str)>,
+        host: std::rc::Weak<crate::overlay::OverlayHost>,
+    ) -> GtkBox {
+        let root = GtkBox::new(Orientation::Vertical, 0);
+        root.add_css_class("clip-palette");
+        root.set_size_request(660, -1);
+
+        let search = gtk4::Entry::builder()
+            .placeholder_text("Search clipboard…")
+            .primary_icon_name("system-search-symbolic")
+            .build();
+        search.add_css_class("clip-search");
+        root.append(&search);
+
+        let list = GtkBox::new(Orientation::Vertical, 4);
+        list.add_css_class("clip-pal-list");
+        let scroll = ScrolledWindow::builder()
+            .child(&list)
+            .hscrollbar_policy(PolicyType::Never)
+            .vscrollbar_policy(PolicyType::Automatic)
+            .height_request(460)
+            .build();
+        root.append(&scroll);
+
+        // Key-hints footer (discoverability).
+        let footer = Label::new(Some("↵  paste        ⌃↵  copy        esc  close"));
+        footer.set_xalign(0.0);
+        footer.add_css_class("clip-pal-footer");
+        root.append(&footer);
+
+        // Selection index into the *currently shown* (filtered) rows.
+        let sel = Rc::new(Cell::new(0usize));
+        let shown: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+
+        // (Re)render the filtered rows for the current query. `search` is held
+        // weakly so the entry's own signal handlers (which capture `render`) can't
+        // form a reference cycle that leaks the palette.
+        let render: Rc<dyn Fn()> = {
+            let (panel, list, search_w, sel, shown, on_paste, host) = (
+                self.clone(),
+                list.clone(),
+                search.downgrade(),
+                sel.clone(),
+                shown.clone(),
+                on_paste.clone(),
+                host.clone(),
+            );
+            Rc::new(move || {
+                let Some(search) = search_w.upgrade() else {
+                    return;
+                };
+                while let Some(c) = list.first_child() {
+                    list.remove(&c);
+                }
+                let texts = panel.texts_in_order();
+                let idxs = tcode_core::clipboard::matching_indices(&texts, &search.text());
+                if sel.get() >= idxs.len() {
+                    sel.set(idxs.len().saturating_sub(1));
+                }
+                *shown.borrow_mut() = idxs.clone();
+                if idxs.is_empty() {
+                    let hint = Label::new(Some("No matching clips"));
+                    hint.set_xalign(0.0);
+                    hint.add_css_class("clip-empty");
+                    list.append(&hint);
+                    return;
+                }
+                for (row_i, &ei) in idxs.iter().enumerate() {
+                    let text = texts[ei].clone();
+                    let row = Button::new();
+                    row.add_css_class("clip-pal-row");
+                    if panel.entry_is_pinned(ei) {
+                        row.add_css_class("pinned");
+                    }
+                    if row_i == sel.get() {
+                        row.add_css_class("active");
+                    }
+                    let lbl = Label::new(Some(&preview(&text)));
+                    lbl.set_xalign(0.0);
+                    lbl.set_wrap(true);
+                    lbl.set_wrap_mode(WrapMode::WordChar);
+                    lbl.set_lines(2);
+                    lbl.set_ellipsize(EllipsizeMode::End);
+                    lbl.add_css_class("clip-text");
+                    row.set_child(Some(&lbl));
+                    let (op, hs, t) = (on_paste.clone(), host.clone(), text.clone());
+                    row.connect_clicked(move |_| {
+                        op(&t);
+                        if let Some(h) = hs.upgrade() {
+                            h.close();
+                        }
+                    });
+                    list.append(&row);
+                }
+            })
+        };
+
+        // Refilter as the user types (reset the selection to the top).
+        {
+            let (render, sel) = (render.clone(), sel.clone());
+            search.connect_changed(move |_| {
+                sel.set(0);
+                render();
+            });
+        }
+        // Each time the palette is shown: clear the query, re-render, focus search.
+        {
+            let (render, sel) = (render.clone(), sel.clone());
+            let search_w = search.downgrade();
+            root.connect_map(move |_| {
+                sel.set(0);
+                if let Some(search) = search_w.upgrade() {
+                    search.set_text("");
+                    search.grab_focus();
+                }
+                render();
+            });
+        }
+        // Keyboard: ↑/↓ move the selection; Enter pastes (Ctrl+Enter copies only).
+        // Capture phase on the palette *root* (a strict ancestor of the focused
+        // search box) so these keys are handled before GtkEntry's own activate
+        // swallows Return — otherwise Enter does nothing.
+        {
+            let key = EventControllerKey::new();
+            key.set_propagation_phase(gtk4::PropagationPhase::Capture);
+            let (panel, sel, shown, render, on_paste, host) = (
+                self.clone(),
+                sel.clone(),
+                shown.clone(),
+                render.clone(),
+                on_paste.clone(),
+                host.clone(),
+            );
+            key.connect_key_pressed(move |_, kv, _, mods| {
+                let n = shown.borrow().len();
+                match kv {
+                    Key::Down => {
+                        if n > 0 {
+                            sel.set((sel.get() + 1).min(n - 1));
+                            render();
+                        }
+                        Propagation::Stop
+                    }
+                    Key::Up => {
+                        sel.set(sel.get().saturating_sub(1));
+                        render();
+                        Propagation::Stop
+                    }
+                    Key::Return | Key::KP_Enter => {
+                        let ei = shown.borrow().get(sel.get()).copied();
+                        if let Some(ei) = ei {
+                            if let Some(t) = panel.entry_text(ei) {
+                                if mods.contains(ModifierType::CONTROL_MASK) {
+                                    panel.copy_text(&t);
+                                } else {
+                                    on_paste(&t);
+                                }
+                            }
+                        }
+                        if let Some(h) = host.upgrade() {
+                            h.close();
+                        }
+                        Propagation::Stop
+                    }
+                    _ => Propagation::Proceed,
+                }
+            });
+            root.add_controller(key);
+        }
+        root
     }
 }
 
