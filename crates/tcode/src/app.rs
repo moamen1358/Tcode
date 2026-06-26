@@ -24,6 +24,7 @@ struct LiveContent {
     shots_capture: Rc<dyn Fn()>,
     center: Paned,
     content: Paned,
+    host: Rc<crate::overlay::OverlayHost>,
 }
 
 use crate::editor::Editor;
@@ -73,6 +74,8 @@ pub struct State {
     /// their drag positions can be saved into the session and restored.
     pub center_paned: Option<Paned>,
     pub content_paned: Option<Paned>,
+    /// Floating-overlay layer for the active session (scrim + palette/preview/tray).
+    pub host: Option<Rc<crate::overlay::OverlayHost>>,
     /// Holds one page per open session; switching flips the visible page so each
     /// session's terminals keep running in the background.
     pub stack: Stack,
@@ -206,6 +209,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
         scale_readout: scale_readout.clone(),
         center_paned: None,
         content_paned: None,
+        host: None,
         stack: stack.clone(),
         live: HashMap::new(),
     }));
@@ -615,6 +619,7 @@ fn build_session(state: &Shared, session: Session) {
             Some(shots_capture),
             Some(center),
             Some(content),
+            Some(host),
         ) = (
             s.grid.clone(),
             s.sidebar.clone(),
@@ -623,6 +628,7 @@ fn build_session(state: &Shared, session: Session) {
             s.shots_capture.clone(),
             s.center_paned.clone(),
             s.content_paned.clone(),
+            s.host.clone(),
         ) {
             s.live.insert(
                 id.clone(),
@@ -634,6 +640,7 @@ fn build_session(state: &Shared, session: Session) {
                     shots_capture,
                     center,
                     content,
+                    host,
                 },
             );
         }
@@ -669,6 +676,7 @@ fn reveal_session(state: &Shared, session: Session) {
             s.shots_capture = Some(lc.shots_capture);
             s.center_paned = Some(lc.center);
             s.content_paned = Some(lc.content);
+            s.host = Some(lc.host);
         }
         s.current = Some(session);
         (
@@ -1073,6 +1081,10 @@ pub fn show_grid(state: &Shared, n: usize) {
     // bottom of the file sidebar.
     let window = state.borrow().window.clone();
     let bridge = crate::frame::integrate(&window, &content);
+    // Wrap the content in the floating-overlay layer (scrim + the clipboard
+    // palette / screenshot preview / shots tray). Built per session and stored in
+    // State + LiveContent below so its hotkeys act on the active session.
+    let host = crate::overlay::OverlayHost::new(&bridge.root);
 
     // Clipboard-history strip, above the screenshots strip. Built once and
     // re-parented across relayouts so its history + single clipboard watcher
@@ -1103,7 +1115,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     if let Some(old) = old {
         stack.remove(&old);
     }
-    stack.add_named(&bridge.root, Some(&id));
+    stack.add_named(&host.root, Some(&id));
     stack.set_visible_child_name(&id);
 
     {
@@ -1115,6 +1127,7 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.shots_capture = Some(bridge.capture.clone());
         s.center_paned = Some(center.clone());
         s.content_paned = Some(content.clone());
+        s.host = Some(host);
     }
     // Respect the current toggle state for the freshly built panel.
     bridge

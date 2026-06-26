@@ -8,6 +8,7 @@ mod grid;
 mod icons;
 mod keys;
 mod loader;
+mod overlay;
 mod pane;
 mod preview;
 mod session_picker;

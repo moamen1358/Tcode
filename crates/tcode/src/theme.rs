@@ -103,6 +103,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                   box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .focus-ring {{ border: 1px solid transparent; }}\n\
          .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
+         .overlay-scrim {{ background-color: rgba(0,0,0,0.38); }}\n\
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
