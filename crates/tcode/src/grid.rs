@@ -269,22 +269,32 @@ impl Grid {
             root: container,
             inner,
         };
-        for _ in 0..n.clamp(1, 16) {
-            let pane = grid.make_pane();
+        let n = n.clamp(1, 16);
+        // Auto-launch a coding agent in each pane, assigned by pane count
+        // (tcode_core::agents::layout): the command for each agent comes from config.
+        let commands: Vec<Option<String>> = {
+            let g = grid.inner.borrow();
+            tcode_core::agents::layout(n)
+                .into_iter()
+                .map(|a| Some(g.cfg.agents.command_for(a).to_string()))
+                .collect()
+        };
+        for cmd in commands {
+            let pane = grid.make_pane(cmd);
             grid.inner.borrow_mut().panes.push(pane);
         }
         grid.inner.borrow_mut().rebuild();
         grid
     }
 
-    fn make_pane(&self) -> Pane {
+    fn make_pane(&self, agent_cmd: Option<String>) -> Pane {
         let (id, cfg, on_open) = {
             let mut g = self.inner.borrow_mut();
             let id = g.next_id;
             g.next_id += 1;
             (id, g.cfg.clone(), g.on_open.clone())
         };
-        let pane = Pane::new(&cfg, id, on_open);
+        let pane = Pane::new(&cfg, id, on_open, agent_cmd);
 
         let controller = EventControllerFocus::new();
         let weak = Rc::downgrade(&self.inner);
@@ -344,7 +354,9 @@ impl Grid {
         if self.inner.borrow().panes.len() >= 16 {
             return;
         }
-        let pane = self.make_pane();
+        // An ad-hoc Alt+n pane is a plain shell — it would break the count-based
+        // "exactly one Codex and one Hermes" mix, so it launches no agent.
+        let pane = self.make_pane(None);
         let id = pane.id;
         {
             let mut g = self.inner.borrow_mut();

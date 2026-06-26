@@ -10,7 +10,7 @@ use gtk4::pango::EllipsizeMode;
 use gtk4::prelude::*;
 use gtk4::{
     gio, Align, ApplicationWindow, Box as GtkBox, Button, FileDialog, Image, Label, Orientation,
-    PolicyType, ScrolledWindow, Widget,
+    Overlay, PolicyType, ScrolledWindow, Widget,
 };
 
 use tcode_core::session::Session;
@@ -24,8 +24,10 @@ pub fn build(
     sessions: Vec<Session>,
     on_open: impl Fn(Session) + 'static,
     on_new: impl Fn() + 'static,
+    on_delete: impl Fn(Session) + 'static,
 ) -> Widget {
     let on_open = Rc::new(on_open);
+    let on_delete = Rc::new(on_delete);
 
     let column = centered_column();
 
@@ -41,7 +43,7 @@ pub fn build(
     // Scrollable list of saved sessions so a long history doesn't overflow.
     let list = GtkBox::new(Orientation::Vertical, 8);
     for s in sessions {
-        list.append(&session_card(s, &on_open));
+        list.append(&session_card(s, &on_open, &on_delete));
     }
     let scroll = ScrolledWindow::builder()
         .hscrollbar_policy(PolicyType::Never)
@@ -165,8 +167,14 @@ pub fn build_new(
     wrap(column)
 }
 
-/// One clickable card: folder icon, name, path, and terminal/file badges.
-fn session_card<F: Fn(Session) + 'static>(s: Session, on_open: &Rc<F>) -> Button {
+/// One clickable card: folder icon, name, path, and terminal/file badges, with a
+/// ✕ delete button overlaid in the top-right corner. The card opens the session;
+/// the overlaid ✕ catches its own clicks to delete it.
+fn session_card<F: Fn(Session) + 'static, D: Fn(Session) + 'static>(
+    s: Session,
+    on_open: &Rc<F>,
+    on_delete: &Rc<D>,
+) -> Widget {
     let row = GtkBox::new(Orientation::Horizontal, 12);
 
     let icon = Image::from_icon_name("folder-symbolic");
@@ -204,9 +212,31 @@ fn session_card<F: Fn(Session) + 'static>(s: Session, on_open: &Rc<F>) -> Button
 
     let btn = Button::builder().child(&row).build();
     btn.add_css_class("session-card");
-    let on_open = on_open.clone();
-    btn.connect_clicked(move |_| on_open(s.clone()));
-    btn
+    btn.set_hexpand(true);
+    {
+        let on_open = on_open.clone();
+        let s = s.clone();
+        btn.connect_clicked(move |_| on_open(s.clone()));
+    }
+
+    // Overlay a ✕ delete button in the top-right corner. As an overlay child it
+    // catches its own clicks (delete); clicks anywhere else fall through to the
+    // card button (open).
+    let overlay = Overlay::new();
+    overlay.set_child(Some(&btn));
+    let del = Button::from_icon_name("window-close-symbolic");
+    del.add_css_class("session-delete");
+    del.set_halign(Align::End);
+    del.set_valign(Align::Start);
+    del.set_margin_top(8);
+    del.set_margin_end(8);
+    del.set_tooltip_text(Some("Delete this session"));
+    {
+        let on_delete = on_delete.clone();
+        del.connect_clicked(move |_| on_delete(s.clone()));
+    }
+    overlay.add_overlay(&del);
+    overlay.upcast()
 }
 
 /// A small icon + text pill.

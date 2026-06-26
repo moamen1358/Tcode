@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::agents::Agent;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -16,6 +18,42 @@ pub struct Config {
     /// Whole-UI zoom multiplier (1.0 = 100%): scales every font/terminal together.
     pub scale: f64,
     pub theme: Theme,
+    /// Commands run to auto-launch each coding agent in a session's panes.
+    pub agents: Agents,
+}
+
+/// The shell command run to launch each coding agent in a pane. Each is fed into
+/// the pane's shell once it's spawned at final size, and when the agent exits the
+/// pane drops back to a normal shell. Edit these to change the model, effort, or
+/// permission flags without rebuilding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Agents {
+    pub claude: String,
+    pub codex: String,
+    pub hermes: String,
+}
+
+impl Default for Agents {
+    fn default() -> Self {
+        Agents {
+            claude: "claude --effort max --dangerously-skip-permissions".into(),
+            codex: "codex --dangerously-bypass-approvals-and-sandbox -c model_reasoning_effort=xhigh"
+                .into(),
+            hermes: "hermes chat --yolo".into(),
+        }
+    }
+}
+
+impl Agents {
+    /// The configured command for `agent`.
+    pub fn command_for(&self, agent: Agent) -> &str {
+        match agent {
+            Agent::Claude => &self.claude,
+            Agent::Codex => &self.codex,
+            Agent::Hermes => &self.hermes,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +84,7 @@ impl Default for Config {
             clipboard_persist: false,
             scale: 1.0,
             theme: Theme::default(),
+            agents: Agents::default(),
         }
     }
 }
@@ -177,6 +216,27 @@ mod tests {
     fn bad_toml_falls_back_to_defaults() {
         let c = Config::from_str_or_default("= = = not toml");
         assert_eq!(c.font_size, 11);
+    }
+
+    #[test]
+    fn agent_commands_default_to_bypass_mode() {
+        let a = Agents::default();
+        assert!(a
+            .command_for(Agent::Claude)
+            .contains("--dangerously-skip-permissions"));
+        assert!(a
+            .command_for(Agent::Codex)
+            .contains("--dangerously-bypass-approvals-and-sandbox"));
+        assert!(a.command_for(Agent::Hermes).contains("--yolo"));
+    }
+
+    #[test]
+    fn agents_section_merges_from_partial_toml() {
+        // A user overriding just one agent keeps defaults for the others.
+        let c = Config::from_str_or_default("[agents]\nclaude = \"claude\"");
+        assert_eq!(c.agents.claude, "claude");
+        assert!(c.agents.codex.contains("codex"));
+        assert!(c.agents.hermes.contains("hermes"));
     }
 
     #[test]

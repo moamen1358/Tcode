@@ -7,7 +7,8 @@
 //! This is pure data + disk I/O (no GTK); the UI lives in the `tcode` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -110,8 +111,54 @@ pub fn sessions_dir() -> PathBuf {
     config_dir().join("sessions")
 }
 
-/// All saved sessions, most-recently-used first (by file mtime).
+/// Saved sessions, most-recently-used first, **one entry per folder** — older
+/// duplicates for the same root are hidden (and removed by `prune_duplicate_roots`).
 pub fn list() -> Vec<Session> {
+    dedup_by_root(list_all())
+}
+
+/// The newest saved session rooted at `root`, if any. Lets the app keep one
+/// session per folder: creating a session for a folder that already has one
+/// reuses it (same file/id) instead of making a duplicate.
+pub fn find_by_root(root: &Path) -> Option<Session> {
+    let target = canonical_root(root);
+    list_all()
+        .into_iter()
+        .find(|s| canonical_root(&s.root) == target)
+}
+
+/// Delete duplicate session files that share a folder, keeping only the most
+/// recently used per folder (collapse-to-newest). Call at startup so a history
+/// that already accumulated duplicates settles to one entry per folder.
+pub fn prune_duplicate_roots() {
+    let mut seen = HashSet::new();
+    for s in list_all() {
+        if !seen.insert(canonical_root(&s.root)) {
+            s.delete(); // a newer session for this folder is already kept
+        }
+    }
+}
+
+/// Canonical form of a session root for "same folder" comparison: resolves
+/// symlinks and `..` when the folder exists, else falls back to the path as-is
+/// (so a session whose folder was deleted still compares equal to itself).
+fn canonical_root(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// From a most-recently-used-first list, keep only the newest session per folder.
+fn dedup_by_root(sessions: Vec<Session>) -> Vec<Session> {
+    let mut seen = HashSet::new();
+    sessions
+        .into_iter()
+        .filter(|s| seen.insert(canonical_root(&s.root)))
+        .collect()
+}
+
+/// Every saved session file, most-recently-used first (by file mtime), including
+/// duplicates for the same folder. `list` dedups this for display; the prune and
+/// lookup helpers need the duplicates.
+fn list_all() -> Vec<Session> {
     let Ok(entries) = std::fs::read_dir(sessions_dir()) else {
         return Vec::new();
     };
@@ -198,6 +245,26 @@ mod tests {
         assert_eq!(s.name, "coding_Space");
         assert_eq!(s.panes, 1);
         assert!(s.files.is_empty());
+    }
+
+    #[test]
+    fn dedup_by_root_keeps_newest_per_folder() {
+        let mk = |root: &str, name: &str| {
+            let mut s = Session::new(PathBuf::from(root));
+            s.name = name.into();
+            s
+        };
+        // Newest-first input with two entries for the same (nonexistent) folder;
+        // canonicalize falls back to the raw path, so they compare equal.
+        let input = vec![
+            mk("/nonexistent/projA", "newA"),
+            mk("/nonexistent/projB", "B"),
+            mk("/nonexistent/projA", "oldA"),
+        ];
+        let out = dedup_by_root(input);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].name, "newA"); // the newer A is kept, oldA dropped
+        assert_eq!(out[1].name, "B");
     }
 
     #[test]

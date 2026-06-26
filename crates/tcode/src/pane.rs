@@ -55,6 +55,11 @@ const SCROLLBACK_LINES: i64 = 50_000;
 struct SpawnParams {
     argv: Vec<String>,
     cwd: String,
+    /// A command to run once the shell is up (the pane's coding agent), or `None`
+    /// for a plain shell. Fed into the shell after spawn so it inherits the shell's
+    /// full PATH/env (the agent CLIs live in `~/.local/bin`); when the agent exits
+    /// the shell remains, so the pane stays usable.
+    feed: Option<String>,
 }
 
 pub struct Pane {
@@ -74,7 +79,7 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn new(cfg: &Config, id: u64, on_open: OpenFn) -> Pane {
+    pub fn new(cfg: &Config, id: u64, on_open: OpenFn, agent_cmd: Option<String>) -> Pane {
         let terminal = Terminal::new();
 
         // Cell colors come from the VTE API, not CSS.
@@ -135,7 +140,7 @@ impl Pane {
             root,
             terminal,
             ring,
-            spawn: RefCell::new(Some(Self::spawn_params(cfg))),
+            spawn: RefCell::new(Some(Self::spawn_params(cfg, agent_cmd))),
         };
         pane.install_file_drop();
         pane
@@ -157,7 +162,7 @@ impl Pane {
     /// Compute the shell argv + working dir for the deferred spawn. Captured at
     /// construction (the process cwd is the session root then) so the later spawn
     /// starts in the right place even if the cwd has since moved.
-    fn spawn_params(cfg: &Config) -> SpawnParams {
+    fn spawn_params(cfg: &Config, agent_cmd: Option<String>) -> SpawnParams {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let cwd = std::env::current_dir()
             .ok()
@@ -178,7 +183,10 @@ impl Pane {
                 shell.clone(),
             ]
         };
-        SpawnParams { argv, cwd }
+        let feed = agent_cmd
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty());
+        SpawnParams { argv, cwd, feed }
     }
 
     /// Spawn the shell (+ optional startup command) over a PTY. Deferred from
@@ -194,6 +202,7 @@ impl Pane {
         // terminal cycle. On failure, write a visible message into the terminal
         // instead of leaving a silent black pane.
         let term = self.terminal.downgrade();
+        let feed = params.feed;
         self.terminal.spawn_async(
             PtyFlags::DEFAULT,
             Some(params.cwd.as_str()),
@@ -203,14 +212,25 @@ impl Pane {
             || {},
             -1,
             gio::Cancellable::NONE,
-            move |res| {
-                if let Err(err) = res {
+            move |res| match res {
+                Err(err) => {
                     eprintln!("tcode: spawn failed: {err}");
                     if let Some(term) = term.upgrade() {
                         term.feed(
                             format!("\r\n\x1b[1;31mtcode: failed to start shell: {err}\x1b[0m\r\n")
                                 .as_bytes(),
                         );
+                    }
+                }
+                Ok(_) => {
+                    // Type the pane's coding agent into the just-started shell. The
+                    // shell buffers it until it's reading input, so it runs once the
+                    // prompt is ready, at the pane's final size. A missing CLI just
+                    // prints "command not found" and leaves the shell — never fatal.
+                    if let Some(cmd) = &feed {
+                        if let Some(term) = term.upgrade() {
+                            term.feed_child(format!("{cmd}\n").as_bytes());
+                        }
                     }
                 }
             },

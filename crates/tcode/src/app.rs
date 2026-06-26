@@ -491,8 +491,11 @@ fn clear_picker_page(state: &Shared) {
 
 /// Show the startup session picker (resume a saved session or start a new one).
 pub fn show_session_picker(state: &Shared) {
+    // Collapse any duplicate-folder sessions to the newest before listing them.
+    session::prune_duplicate_roots();
     let st_open = state.clone();
     let st_new = state.clone();
+    let st_del = state.clone();
     let widget = session_picker::build(
         session::list(),
         move |s| {
@@ -501,6 +504,11 @@ pub fn show_session_picker(state: &Shared) {
             refresh_session_menu(&st_open);
         },
         move || new_session(&st_new),
+        move |s: Session| {
+            s.delete();
+            refresh_session_menu(&st_del);
+            show_session_picker(&st_del); // rebuild the list without the deleted card
+        },
     );
     show_transient(state, &widget);
 }
@@ -518,7 +526,11 @@ fn new_session(state: &Shared) {
     let widget = session_picker::build_new(
         window,
         move |folder, panes| {
-            let mut s = Session::new(folder);
+            // One session per folder: reuse the folder's existing session (same
+            // file/id) if it has one, so creating "new" for an already-saved folder
+            // updates it instead of piling up duplicates. open_session reveals it if
+            // it's already live this run, otherwise builds it.
+            let mut s = session::find_by_root(&folder).unwrap_or_else(|| Session::new(folder));
             s.panes = panes;
             s.save();
             st_create.borrow_mut().save_sessions = true;

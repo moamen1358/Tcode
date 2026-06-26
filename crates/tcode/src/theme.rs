@@ -200,6 +200,10 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                           border-radius: 0; padding: 13px 15px; }}\n\
          .session-card:hover {{ background-color: alpha({fg}, 0.05); border-color: #ff9e64; }}\n\
          .session-card-icon {{ color: #ff9e64; }}\n\
+         .session-delete {{ background: transparent; background-image: none; border: none; \
+                            box-shadow: none; min-height: 0; min-width: 0; padding: 2px; \
+                            color: alpha({fg}, 0.35); }}\n\
+         .session-delete:hover {{ background-color: alpha(#ff9e64, 0.18); color: #ff9e64; }}\n\
          .session-name {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
          .session-meta {{ color: alpha({fg}, 0.45); font-size: 11px; }}\n\
          .session-badge {{ background-color: alpha({fg}, 0.07); padding: 1px 7px; \
