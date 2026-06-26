@@ -38,7 +38,13 @@ impl Default for Agents {
     fn default() -> Self {
         Agents {
             claude: "claude --effort max --dangerously-skip-permissions".into(),
-            codex: "codex --dangerously-bypass-approvals-and-sandbox -c model_reasoning_effort=xhigh"
+            // Run Codex unattended via config overrides rather than the
+            // `--dangerously-bypass-approvals-and-sandbox` flag: that flag forces
+            // the dangerous mode and makes Codex show a "continue?" confirmation on
+            // every launch, whereas the same settings applied through `-c` run with
+            // no prompt at all.
+            codex: "codex -c model_reasoning_effort=xhigh -c approval_policy=never \
+                    -c sandbox_mode=danger-full-access"
                 .into(),
             hermes: "hermes chat --yolo".into(),
         }
@@ -224,9 +230,12 @@ mod tests {
         assert!(a
             .command_for(Agent::Claude)
             .contains("--dangerously-skip-permissions"));
-        assert!(a
-            .command_for(Agent::Codex)
-            .contains("--dangerously-bypass-approvals-and-sandbox"));
+        // Codex is unattended via config overrides — and must NOT use the forcing
+        // flag, which would re-introduce the per-launch "continue?" confirmation.
+        let codex = a.command_for(Agent::Codex);
+        assert!(codex.contains("approval_policy=never"));
+        assert!(codex.contains("sandbox_mode=danger-full-access"));
+        assert!(!codex.contains("--dangerously-bypass"));
         assert!(a.command_for(Agent::Hermes).contains("--yolo"));
     }
 
