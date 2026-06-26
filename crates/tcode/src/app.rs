@@ -58,8 +58,9 @@ pub struct State {
     /// Frame capture action (region-select → annotate), set once the grid
     /// is built; the titlebar camera button invokes it.
     pub shots_capture: Option<Rc<dyn Fn()>>,
-    /// Clipboard-history panel — built once and re-parented across relayouts so
-    /// the history and its single clipboard watcher persist.
+    /// Clipboard-history model + its single system-clipboard watcher — built once
+    /// and shared across sessions. Surfaced only through each session's Alt+V
+    /// palette; never docked into the sidebar.
     pub clipboard: Option<Rc<crate::clipboard::Panel>>,
     /// The session currently open in this window, if any.
     pub current: Option<Session>,
@@ -91,6 +92,9 @@ pub type Shared = Rc<RefCell<State>>;
 /// A callback taking a filesystem path — e.g. the capture-save → preview hook.
 type PathHook = Rc<dyn Fn(std::path::PathBuf)>;
 
+/// A no-argument callback — e.g. the "annotator opened, hide floating panels" hook.
+type VoidHook = Rc<dyn Fn()>;
+
 pub fn build(app: &Application, preset: Option<usize>) {
     let cfg = Config::load();
     theme::install_css(&cfg.theme, &cfg.font, cfg.font_size, cfg.scale);
@@ -110,7 +114,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
     header.add_css_class("tcode-titlebar");
 
     // App logo at the far left of the titlebar.
-    let logo = tcode_logo(26);
+    let logo = tcode_logo(14);
     logo.set_tooltip_text(Some("Tcode"));
     logo.set_margin_start(8);
     logo.set_margin_end(4);
@@ -269,20 +273,14 @@ pub fn build(app: &Application, preset: Option<usize>) {
         });
     }
 
-    // Toggle the floating screenshots tray on the active session's overlay host.
+    // Toggle the right-side screenshots tray (the far-right column). No scrim, so
+    // thumbnails stay draggable onto the terminals; hiding it lets them reclaim the
+    // space.
     {
         let st = state.clone();
         shots_btn.connect_toggled(move |btn| {
-            let (host, panel) = {
-                let s = st.borrow();
-                (s.host.clone(), s.shots_panel.clone())
-            };
-            if let (Some(host), Some(panel)) = (host, panel) {
-                if btn.is_active() {
-                    host.open(&panel);
-                } else {
-                    host.close();
-                }
+            if let Some(p) = st.borrow().shots_panel.as_ref() {
+                p.set_visible(btn.is_active());
             }
         });
     }
@@ -672,7 +670,15 @@ fn reveal_session(state: &Shared, session: Session) {
         return;
     }
     // Swap the active handles to this session's live content under a short borrow.
-    let (stack, sidebar_root, sidebar_active, editor_root, editor_active) = {
+    let (
+        stack,
+        sidebar_root,
+        sidebar_active,
+        editor_root,
+        editor_active,
+        shots_panel,
+        shots_active,
+    ) = {
         let mut s = state.borrow_mut();
         if let Some(lc) = s.live.get(&id).cloned() {
             s.grid = Some(lc.grid);
@@ -692,6 +698,8 @@ fn reveal_session(state: &Shared, session: Session) {
             s.sidebar_btn.is_active(),
             s.editor.as_ref().map(|ed| ed.root.clone()),
             s.editor_btn.is_active(),
+            s.shots_panel.clone(),
+            s.shots_btn.is_active(),
         )
     };
     // Flip the stack with no borrow held: mapping the revealed page can re-enter
@@ -706,17 +714,10 @@ fn reveal_session(state: &Shared, session: Session) {
     if let Some(r) = editor_root.as_ref() {
         r.set_visible(editor_active);
     }
-    // The screenshots tray is a floating modal on each session's overlay host, not
-    // a docked panel — start a switched-to session with it closed (and the toggle
-    // released) rather than carrying the previous page's open state.
-    {
-        let s = state.borrow();
-        if let Some(h) = s.host.as_ref() {
-            h.close();
-        }
+    // Re-sync the new session's right-side tray to the global toggle.
+    if let Some(p) = shots_panel.as_ref() {
+        p.set_visible(shots_active);
     }
-    state.borrow().shots_btn.set_active(false);
-    reparent_clipboard(state);
     // Re-apply the current font/scale straight to this grid's terminals. A reveal
     // changes neither theme, font nor scale, so the stylesheet is identical to the
     // one already installed — skip apply_view's full CSS rebuild + reparse, which
@@ -745,23 +746,6 @@ fn restored_session_file(root: &Path, file: &Path) -> Option<PathBuf> {
     let root = root.canonicalize().ok()?;
     let file = file.canonicalize().ok()?;
     (file.is_file() && file.starts_with(root)).then_some(file)
-}
-
-/// Move the shared clipboard strip into the active session's sidebar (after the
-/// file tree, before the screenshots strip).
-fn reparent_clipboard(state: &Shared) {
-    let s = state.borrow();
-    let Some(clip) = s.clipboard.clone() else {
-        return;
-    };
-    let Some(sidebar) = s.sidebar.as_ref() else {
-        return;
-    };
-    if clip.root.parent().is_some() {
-        clip.root.unparent();
-    }
-    let first = sidebar.root.first_child();
-    sidebar.root.insert_child_after(&clip.root, first.as_ref());
 }
 
 /// Drop a session's live content (its shells die) and remove its stack page.
@@ -1030,14 +1014,33 @@ pub fn show_grid(state: &Shared, n: usize) {
         .root
         .set_visible(state.borrow().sidebar_btn.is_active());
 
+    // The screenshots tray is a column on the far right (a draggable split between
+    // the work area and the tray). The tray itself is attached after Frame builds
+    // it, below. middle = [work area | shots tray].
+    let middle = Paned::new(Orientation::Horizontal);
+    middle.add_css_class("work-area");
+    middle.set_start_child(Some(&center));
+    middle.set_resize_start_child(true);
+    middle.set_shrink_start_child(false);
+    middle.set_resize_end_child(false);
+    middle.set_shrink_end_child(false);
+
     // Resizable split between the sidebar and the rest (drag to set its width).
     let content = Paned::new(Orientation::Horizontal);
     content.set_start_child(Some(&sidebar.root));
-    content.set_end_child(Some(&center));
+    content.set_end_child(Some(&middle));
     content.set_resize_start_child(false);
     content.set_shrink_start_child(false);
     content.set_resize_end_child(true);
     content.set_shrink_end_child(false);
+    // Cap the right tray's width (= middle's width − position) like the other panels.
+    middle.connect_position_notify(move |p| {
+        let mw = p.width();
+        let pos = p.position();
+        if mw > 0 && pos < mw - SIDEBAR_MAX_WIDTH {
+            p.set_position(mw - SIDEBAR_MAX_WIDTH); // re-fires; handled next pass
+        }
+    });
     content.add_css_class("work-area"); // same backdrop behind the files rail
     content.set_position(240);
 
@@ -1094,9 +1097,9 @@ pub fn show_grid(state: &Shared, n: usize) {
     // only while editing a capture), and embed the screenshots gallery at the
     // bottom of the file sidebar.
     let window = state.borrow().window.clone();
-    // A capture's "saved" toast needs the overlay host + the frame's reopen hook,
-    // both known only after integrate returns — so route on_saved through a slot
-    // filled in just below, once they exist.
+    // On capture+save, float a single just-captured image in the bottom-left for
+    // ~1 minute (the full history lives in the right-side tray). Host + reopen exist
+    // only after integrate, so route on_saved through a slot filled just below.
     let preview_hook: Rc<RefCell<Option<PathHook>>> = Rc::new(RefCell::new(None));
     let on_saved: PathHook = {
         let hook = preview_hook.clone();
@@ -1106,22 +1109,42 @@ pub fn show_grid(state: &Shared, n: usize) {
             }
         })
     };
-    let bridge = crate::frame::integrate(&window, &content, on_saved);
-    // Wrap the content in the floating-overlay layer (scrim + the clipboard
-    // palette / screenshot preview / shots tray). Built per session and stored in
-    // State + LiveContent below so its hotkeys act on the active session.
+    // The annotator takes over the work area; when it opens it must hide the
+    // floating panels (which sit above the content) so they don't overlap. Host +
+    // tray toggle exist only after integrate, so route through a slot.
+    let annot_hook: Rc<RefCell<Option<VoidHook>>> = Rc::new(RefCell::new(None));
+    let on_annot_open: VoidHook = {
+        let hook = annot_hook.clone();
+        Rc::new(move || {
+            if let Some(f) = hook.borrow().as_ref() {
+                f();
+            }
+        })
+    };
+    let bridge = crate::frame::integrate(&window, &content, on_saved, on_annot_open);
+    // Wrap the content in the floating-overlay layer (scrim + the clipboard palette
+    // + the shots tray). Built per session and stored in State + LiveContent below
+    // so its hotkeys act on the active session.
     let host = crate::overlay::OverlayHost::new(&bridge.root);
-    // Host + reopen now exist: a fresh capture floats a bottom-right preview toast.
+    // Host + reopen now exist: a fresh capture floats the bottom-left preview image.
     {
-        let (host, reopen, window) = (host.clone(), bridge.reopen.clone(), window.clone());
+        let (host, reopen) = (host.clone(), bridge.reopen.clone());
         *preview_hook.borrow_mut() = Some(Rc::new(move |path: std::path::PathBuf| {
-            crate::frame::show_screenshot_preview(&host, path, reopen.clone(), window.clipboard());
+            crate::frame::show_screenshot_preview(&host, path, reopen.clone());
+        }));
+    }
+    // Opening the annotator dismisses the clipboard palette (the docked right-side
+    // tray is covered by the annotation layer automatically, so it needs no hiding).
+    {
+        let host = host.clone();
+        *annot_hook.borrow_mut() = Some(Rc::new(move || {
+            host.close(); // dismiss the clipboard palette if it's open
         }));
     }
 
-    // Clipboard-history strip, above the screenshots strip. Built once and
-    // re-parented across relayouts so its history + single clipboard watcher
-    // persist.
+    // Shared clipboard-history model (one system-clipboard watcher), built once.
+    // It's surfaced only through the Alt+V palette below — the old docked sidebar
+    // strip was replaced by that palette, so nothing is parented into the sidebar.
     let clip = {
         let mut s = state.borrow_mut();
         if s.clipboard.is_none() {
@@ -1142,19 +1165,10 @@ pub fn show_grid(state: &Shared, n: usize) {
         clip.palette(on_paste, Rc::downgrade(&host))
     };
     host.add_panel(&palette, gtk4::Align::Center, gtk4::Align::Center, 0);
-    // Screenshots tray: a floating horizontal strip docked to the bottom of the
-    // work area, toggled (with dim + Esc/click-away) by Alt+P / the titlebar button.
-    host.add_panel(&bridge.panel_root, gtk4::Align::Fill, gtk4::Align::End, 12);
-    // Closing the host (Esc, click-away, or opening another panel) releases the
-    // shots toggle so the button never reads "on" with the tray gone.
-    {
-        let btn = state.borrow().shots_btn.clone();
-        host.set_on_close(Rc::new(move || {
-            if btn.is_active() {
-                btn.set_active(false);
-            }
-        }));
-    }
+    // Dock the screenshots tray as the far-right column (a resizable split off the
+    // work area). Hidden by default; Alt+P reveals it to browse/scroll all shots and
+    // drag any thumbnail onto a terminal.
+    middle.set_end_child(Some(&bridge.panel_root));
     // Add this session's content as a stack page and show it. Switching to a
     // different session later just flips the visible page, so these shells keep
     // running in the background. Done with no borrow held: mapping the page can
@@ -1183,6 +1197,10 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.host = Some(host);
         s.palette = Some(palette);
     }
+    // Respect the current toggle state for the freshly built tray (hidden by default).
+    bridge
+        .panel_root
+        .set_visible(state.borrow().shots_btn.is_active());
 
     // Optionally open a file at startup (TCODE_OPEN=path) — preview/testing aid.
     if let Some(path) = std::env::var_os("TCODE_OPEN") {

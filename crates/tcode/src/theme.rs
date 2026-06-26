@@ -98,8 +98,8 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
     let backdrop = darken_css(&theme.background, 0.45);
     let font = css_font(font);
     let css = format!(
-        ".grid-root {{ background-color: {backdrop}; padding: 6px; }}\n\
-         .pane {{ background-color: {bg}; margin: 6px; \
+        ".grid-root {{ background-color: {backdrop}; padding: 4.5px; }}\n\
+         .pane {{ background-color: {bg}; margin: 4.5px; \
                   box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .focus-ring {{ border: 1px solid transparent; }}\n\
          .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
@@ -126,28 +126,20 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .clip-pal-footer {{ color: alpha({fg}, 0.40); font-size: 11px; letter-spacing: 0.3px; \
                           padding: 9px 4px 2px 4px; margin-top: 6px; \
                           border-top: 1px solid alpha({fg}, 0.08); }}\n\
-         .shot-preview {{ background-color: {surface}; border-radius: 12px; padding: 8px; \
-                          box-shadow: 0 16px 40px rgba(0,0,0,0.66); \
-                          border: 1px solid alpha({accent}, 0.35); }}\n\
-         .shot-preview .shot-thumb {{ border-radius: 6px; box-shadow: 0 1px 6px rgba(0,0,0,0.5); }}\n\
-         .shot-preview .shot-saved {{ color: {fg}; font-weight: 600; font-size: 13px; \
-                          margin-bottom: 2px; }}\n\
-         .shot-preview button {{ min-height: 0; min-width: 0; padding: 3px 6px; \
-                          background: none; border: none; box-shadow: none; \
-                          color: alpha({fg}, 0.72); border-radius: 6px; }}\n\
-         .shot-preview button:hover {{ background-color: alpha({fg}, 0.10); color: {fg}; }}\n\
-         .shot-preview .shot-timer {{ background-color: {accent}; min-height: 3px; \
-                          border-radius: 2px; margin-top: 2px; }}\n\
-         .shot-tray {{ background-color: {surface}; border-radius: 12px; padding: 7px; \
-                          box-shadow: 0 16px 40px rgba(0,0,0,0.62); \
-                          border: 1px solid alpha({accent}, 0.30); }}\n\
+         .shot-preview {{ background-color: {surface}; border-radius: 10px; padding: 5px; \
+                          box-shadow: 0 14px 36px rgba(0,0,0,0.66); \
+                          border: 1px solid alpha({accent}, 0.40); }}\n\
+         .shot-preview .shot-preview-img {{ border-radius: 6px; }}\n\
+         .shot-tray {{ background-color: {bg}; margin: 9px; padding: 4px; \
+                          box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .shot-tray .frame-gallery {{ background-color: transparent; }}\n\
-         .shot-tray .frame-thumb {{ border-radius: 6px; }}\n\
+         .shot-tray .frame-thumb {{ border-radius: 6px; padding: 2px; }}\n\
+         .shot-tray .frame-thumb:hover {{ box-shadow: 0 0 0 2px alpha({accent}, 0.65); }}\n\
          .work-area {{ background-color: {backdrop}; }}\n\
          paned > separator {{ background-color: {backdrop}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
-         .sidebar {{ background-color: {bg}; margin: 6px; \
+         .sidebar {{ background-color: {bg}; margin: 9px; \
                      box-shadow: 0 2px 8px rgba(0,0,0,0.55); \
                      font-family: \"Noto Sans\", sans-serif; font-size: {font_size}pt; }}\n\
          .sidebar-header {{ padding: 8px 10px; color: {fg}; font-weight: bold; }}\n\
@@ -157,14 +149,14 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .sidebar .hovered {{ background-color: alpha({fg}, 0.08); border-radius: 4px; }}\n\
          .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
          .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.3); }}\n\
-         .tcode-titlebar {{ min-height: 32px; background-color: {bg}; \
+         .tcode-titlebar {{ min-height: 18px; background-color: {bg}; \
                               box-shadow: none; border: none; color: {fg}; }}\n\
-         .tcode-titlebar button {{ min-height: 0; min-width: 0; padding: 2px 6px; margin: 0; }}\n\
+         .tcode-titlebar button {{ min-height: 0; min-width: 0; padding: 1px 6px; margin: 0; }}\n\
          .tcode-titlebar .titlebar-toggle {{ background: none; box-shadow: none; border: none; \
                               color: alpha({fg}, 0.4); }}\n\
          .tcode-titlebar .titlebar-toggle:hover {{ background-color: alpha({fg}, 0.06); color: {fg}; }}\n\
          .tcode-titlebar .titlebar-toggle:checked {{ background: none; color: {fg}; }}\n\
-         .editor {{ background-color: {bg}; margin: 6px; \
+         .editor {{ background-color: {bg}; margin: 9px; \
                     box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
@@ -297,7 +289,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                           color: alpha({fg}, 0.55); margin-top: 2px; }}\n\
          .session-back:hover {{ color: {fg}; background-color: alpha({fg}, 0.06); }}\n\
          .session-switcher {{ background: none; border: none; box-shadow: none; \
-                              color: {fg}; font-weight: bold; padding: 2px 10px; }}\n\
+                              color: {fg}; font-weight: bold; padding: 1px 10px; }}\n\
          .session-switcher:hover {{ background-color: alpha({fg}, 0.08); }}\n\
          .session-popover > contents {{ background-color: {surface}; \
                                         border: 1px solid {border}; border-radius: 0; }}\n\

@@ -1,8 +1,8 @@
-//! The screenshots tray in Tcode's main window: a horizontal, scrollable strip
-//! of every saved screenshot (loaded from the cache dir on startup, so history
-//! survives restarts), floated over the work area on Alt+P. Newest leftmost.
-//! Clicking a thumbnail re-opens it in the annotation canvas; capturing is from
-//! the titlebar.
+//! The screenshots tray in Tcode's main window: a vertical, scrollable strip of
+//! every saved screenshot (loaded from the cache dir on startup, so history
+//! survives restarts), floated against the right edge of the work area on Alt+P.
+//! Newest on top. Click a thumbnail to re-open it in the annotation canvas, or
+//! drag it onto any terminal to insert its path. Capturing is from the titlebar.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -11,7 +11,7 @@ use gtk4::gdk::{DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Button, DragSource, Orientation};
+use gtk4::{Box as GtkBox, DragSource, GestureClick, Orientation};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
@@ -39,19 +39,20 @@ pub struct Panel {
 /// Build the panel. `on_pick` runs when a thumbnail is clicked (with that
 /// shot's path). Capturing is started from the window titlebar, not here.
 pub fn build(on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
-    // A floating horizontal tray of recent screenshots, shown over the work area
-    // on Alt+P. Newest leftmost; scroll horizontally to reach older shots.
+    // The screenshots tray: the far-right column, summoned with Alt+P. Newest on top;
+    // fills the column height and scrolls vertically through all shots.
     let root = GtkBox::new(Orientation::Vertical, 0);
     root.add_css_class("shot-tray");
 
-    let list = GtkBox::new(Orientation::Horizontal, 6);
+    let list = GtkBox::new(Orientation::Vertical, 6);
     list.add_css_class("frame-gallery");
-    // Show a row of thumbnails; scroll horizontally to reach the rest.
+    // A column of thumbnails (84px + spacing); scroll vertically for the rest.
     let scroll = gtk4::ScrolledWindow::builder()
         .child(&list)
-        .hscrollbar_policy(gtk4::PolicyType::Automatic)
-        .vscrollbar_policy(gtk4::PolicyType::Never)
-        .height_request(108)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::Automatic)
+        .vexpand(true)
+        .width_request(120)
         .build();
     root.append(&scroll);
 
@@ -78,12 +79,15 @@ impl Panel {
         let texture = Texture::for_pixbuf(&pb);
         let img = gtk4::Image::from_paintable(Some(&texture));
         img.set_pixel_size(84);
-        let btn = Button::builder().child(&img).build();
-        btn.add_css_class("frame-thumb");
-        btn.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
+        img.add_css_class("frame-thumb");
+        img.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
+        // A pointer cursor hints the thumbnail is interactive (click or drag).
+        img.set_cursor_from_name(Some("pointer"));
 
-        // Drag a thumbnail into any terminal (or other drop target) — it provides
-        // the screenshot file, so the terminal inserts its path.
+        // Drag a thumbnail onto any terminal (or other drop target) — it provides
+        // the screenshot file, so the terminal inserts its path. A plain Image (not
+        // a Button) is used on purpose: a GtkButton's own click gesture claims the
+        // press and the drag never starts, so dragging a thumbnail did nothing.
         let drag = DragSource::new();
         drag.set_actions(DragAction::COPY);
         drag.set_content(Some(&crate::dnd::file_drag_provider(&path)));
@@ -91,14 +95,23 @@ impl Panel {
             let texture = texture.clone();
             drag.connect_drag_begin(move |d, _| d.set_icon(Some(&texture), 0, 0));
         }
-        btn.add_controller(drag);
+        img.add_controller(drag);
 
-        let on_pick = self.on_pick.clone();
-        btn.connect_clicked(move |_| on_pick(path.clone()));
-        // Newest leftmost so a fresh capture is immediately visible; older
-        // captures remain to the right and are reachable by scrolling the tray.
-        self.list.prepend(&btn);
-        // Bound the live tray: drop the oldest (rightmost) thumbnails past MAX_THUMBS
+        // A plain click (press+release without a drag) re-opens the shot to annotate.
+        // GestureClick fires on release and is cancelled if the DragSource claims the
+        // sequence first, so click and drag stay mutually exclusive.
+        let click = GestureClick::new();
+        {
+            let on_pick = self.on_pick.clone();
+            let path = path.clone();
+            click.connect_released(move |_g, _n, _x, _y| on_pick(path.clone()));
+        }
+        img.add_controller(click);
+
+        // Newest on top so a fresh capture is immediately visible; older captures
+        // remain below and are reachable by scrolling the tray.
+        self.list.prepend(&img);
+        // Bound the live tray: drop the oldest (bottom) thumbnails past MAX_THUMBS
         // so a long session of captures can't grow the retained textures unbounded.
         while self.list.observe_children().n_items() as usize > MAX_THUMBS {
             match self.list.last_child() {

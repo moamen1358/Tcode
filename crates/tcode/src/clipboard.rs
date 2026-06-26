@@ -241,6 +241,13 @@ impl Panel {
 
     /// Rebuild the card widgets from `entries` (or the empty-state hint).
     fn rebuild(self: &Rc<Self>) {
+        // The history is surfaced through the Alt+V palette, not this strip, so the
+        // strip widget is never parented into the window. Skip rebuilding its cards
+        // while it's unshown — pure waste otherwise (callers still update `entries`,
+        // which is what the palette reads). Robust if it's ever docked again.
+        if self.root.parent().is_none() {
+            return;
+        }
         while let Some(c) = self.list.first_child() {
             self.list.remove(&c);
         }
