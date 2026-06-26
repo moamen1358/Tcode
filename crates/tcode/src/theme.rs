@@ -143,10 +143,12 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                           border: 1px solid alpha({accent}, 0.30); }}\n\
          .shot-tray .frame-gallery {{ background-color: transparent; }}\n\
          .shot-tray .frame-thumb {{ border-radius: 6px; }}\n\
-         paned > separator {{ background-color: {border}; }}\n\
+         .work-area {{ background-color: {backdrop}; }}\n\
+         paned > separator {{ background-color: {backdrop}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
-         .sidebar {{ background-color: {bg}; border-right: 1px solid {border}; \
+         .sidebar {{ background-color: {bg}; margin: 6px; \
+                     box-shadow: 0 2px 8px rgba(0,0,0,0.55); \
                      font-family: \"Noto Sans\", sans-serif; font-size: {font_size}pt; }}\n\
          .sidebar-header {{ padding: 8px 10px; color: {fg}; font-weight: bold; }}\n\
          .sidebar label {{ color: {fg}; }}\n\
@@ -162,7 +164,8 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                               color: alpha({fg}, 0.4); }}\n\
          .tcode-titlebar .titlebar-toggle:hover {{ background-color: alpha({fg}, 0.06); color: {fg}; }}\n\
          .tcode-titlebar .titlebar-toggle:checked {{ background: none; color: {fg}; }}\n\
-         .editor {{ background-color: {bg}; border-left: 1px solid {border}; }}\n\
+         .editor {{ background-color: {bg}; margin: 6px; \
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
          .editor header tab button {{ min-height: 0; min-width: 0; padding: 2px; }}\n\

@@ -1004,6 +1004,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     center.set_shrink_start_child(false);
     center.set_resize_end_child(true);
     center.set_shrink_end_child(false);
+    center.add_css_class("work-area"); // deep-black canvas behind the floating cards
     let editor = Editor::new(&center, &cfg.theme.surface);
 
     // Clicking anywhere in the editor/viewer panel pulls keyboard focus off the
@@ -1037,6 +1038,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_start_child(false);
     content.set_resize_end_child(true);
     content.set_shrink_end_child(false);
+    content.add_css_class("work-area"); // same backdrop behind the files rail
     content.set_position(240);
 
     // Cap the file viewer and the sidebar so neither can grow wide enough to squeeze
