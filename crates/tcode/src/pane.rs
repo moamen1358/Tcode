@@ -241,6 +241,12 @@ impl Pane {
         self.terminal.grab_focus();
     }
 
+    /// Whether this pane's terminal currently holds the keyboard focus. Used by the
+    /// resize freeze so it only restores focus to a pane if a terminal had it.
+    pub fn has_focus(&self) -> bool {
+        self.terminal.has_focus()
+    }
+
     /// Type text into the terminal's child as if entered at the keyboard.
     pub fn feed_text(&self, text: &str) {
         self.terminal.feed_child(text.as_bytes());

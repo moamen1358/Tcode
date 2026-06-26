@@ -16,6 +16,11 @@ const OFFICE_EXTS: &[&str] = &[
     "doc", "docx", "odt", "rtf", "ppt", "pptx", "odp", "xls", "xlsx", "ods",
 ];
 
+/// Cap on rendered pages — see `rasterize`. A longer document renders only its
+/// first `MAX_PAGES` pages and gets a `.truncated` marker recording the real
+/// total, so the cut-off is logged and visible on disk rather than silent.
+const MAX_PAGES: u32 = 300;
+
 /// Worker → UI messages.
 pub enum Msg {
     /// Total page count is known.
@@ -67,6 +72,12 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
         Vec::new()
     };
     if pages.is_empty() {
+        // Mark this dir in-use before writing into it: a concurrent render's
+        // prune_cache treats a `.done`-less dir with a fresh `.lock` as in-flight
+        // and won't remove it out from under our soffice/pdftoppm — important
+        // when we've re-entered a stale partial dir whose mtime is otherwise old.
+        let lock = cache.join(".lock");
+        let _ = std::fs::write(&lock, b"");
         let pdf = if is_office(path) {
             match office_to_pdf(path, &cache, cancel)? {
                 Some(p) => p,
@@ -81,6 +92,7 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
         pages = collect_pages(&cache);
         if !pages.is_empty() {
             let _ = std::fs::write(&done, b""); // cache is now complete
+            let _ = std::fs::remove_file(&lock); // render finished — no longer in flight
             prune_cache(&cache); // keep the regenerable preview cache bounded
         }
     }
@@ -190,7 +202,8 @@ fn rasterize(pdf: &Path, cache: &Path, cancel: &AtomicBool) -> Result<bool, Stri
     // Cap rendered pages so a document with tens of thousands of pages can't
     // exhaust CPU/disk (and memory when each PNG is later loaded as a widget).
     let mut cmd = Command::new("pdftoppm");
-    cmd.args(["-png", "-r", "200", "-l", "300"])
+    cmd.args(["-png", "-r", "200", "-l"])
+        .arg(MAX_PAGES.to_string())
         .arg(pdf)
         .arg(cache.join("page"));
     let status = run_cancellable(cmd, cancel).map_err(|e| format!("pdftoppm failed: {e}"))?;
@@ -200,40 +213,88 @@ fn rasterize(pdf: &Path, cache: &Path, cancel: &AtomicBool) -> Result<bool, Stri
     if !status.success() {
         return Err("pdftoppm failed".into());
     }
+    // A document longer than the cap rendered only pages 1..=MAX_PAGES. Don't let
+    // the rest vanish without a trace: log it and drop a `.truncated` marker
+    // recording the real total, so the cut-off is visible on disk (and a viewer
+    // can later show "first MAX_PAGES of N pages").
+    if let Some(total) = pdf_page_count(pdf) {
+        if total > MAX_PAGES {
+            eprintln!("tcode: preview capped at first {MAX_PAGES} of {total} pages");
+            let _ = std::fs::write(cache.join(".truncated"), total.to_string());
+        }
+    }
     Ok(true)
 }
 
+/// Total page count of a PDF via `pdfinfo` (ships in poppler-utils alongside
+/// pdftoppm). `None` if pdfinfo is absent or the count can't be parsed — the
+/// page cap then simply applies without a truncation notice.
+fn pdf_page_count(pdf: &Path) -> Option<u32> {
+    let out = Command::new("pdfinfo").arg(pdf).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("Pages:"))
+        .and_then(|n| n.trim().parse::<u32>().ok())
+}
+
 /// Keep the preview cache bounded: delete all but the most recently modified
-/// cache directories under `.../preview` (the page images are regenerable).
+/// *completed* cache directories under `.../preview` (the page images are
+/// regenerable). A `.done`-less directory is either a render in flight (kept
+/// while its `.lock` heartbeat is fresh) or an abandoned partial from a
+/// cancelled/crashed render (reaped only once stale) — so a concurrent render is
+/// never `remove_dir_all`'d out from under its live soffice/pdftoppm.
 fn prune_cache(current: &Path) {
     const KEEP: usize = 20;
+    // Exceeds the 120s render cap (MAX_RENDER): an in-flight render stamps
+    // `.lock` once, at start, so its heartbeat can be that old yet still count
+    // as live.
+    const STALE: std::time::Duration = std::time::Duration::from_secs(300);
+
     let Some(base) = current.parent() else {
         return;
     };
     let Ok(entries) = std::fs::read_dir(base) else {
         return;
     };
-    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
-        .flatten()
-        .filter_map(|e| {
-            // Real directories only — file_type() doesn't follow symlinks, so a
-            // planted symlink here can't send remove_dir_all outside the cache.
-            if !e.file_type().ok()?.is_dir() {
-                return None;
-            }
-            let p = e.path();
+    let now = std::time::SystemTime::now();
+    let mut done: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for e in entries.flatten() {
+        // Real directories only — file_type() doesn't follow symlinks, so a
+        // planted symlink here can't send remove_dir_all outside the cache.
+        if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let p = e.path();
+        if p == current {
+            continue; // never prune the dir this render just completed
+        }
+        if p.join(".done").exists() {
             let t = e
                 .metadata()
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            Some((t, p))
-        })
-        .collect();
-    if dirs.len() <= KEEP {
+            done.push((t, p));
+        } else {
+            // No `.done`: prune only if there's no fresh `.lock` (i.e. no render
+            // is currently writing here), so we can't race a concurrent render
+            // mid-rasterize into a reused stale dir.
+            let in_flight = std::fs::metadata(p.join(".lock"))
+                .and_then(|m| m.modified())
+                .map(|lock| now.duration_since(lock).map_or(true, |age| age <= STALE))
+                .unwrap_or(false);
+            if !in_flight {
+                let _ = std::fs::remove_dir_all(&p);
+            }
+        }
+    }
+    if done.len() <= KEEP {
         return;
     }
-    dirs.sort_by_key(|(t, _)| *t); // oldest first
-    for (_, p) in dirs.iter().take(dirs.len() - KEEP) {
+    done.sort_by_key(|(t, _)| *t); // oldest first
+    for (_, p) in done.iter().take(done.len() - KEEP) {
         let _ = std::fs::remove_dir_all(p);
     }
 }

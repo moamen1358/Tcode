@@ -153,11 +153,15 @@ impl Editor {
 
     /// Open `path` in a tab (focusing it if already open) and reveal the panel.
     pub fn open(&self, path: &Path) {
+        // Normalize so the same file reached by a different spelling (relative path,
+        // symlink, or `..` segments) focuses the existing tab instead of opening a
+        // duplicate — which for a PDF/office file would repeat the soffice render.
+        let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if let Some(child) = self
             .open
             .borrow()
             .iter()
-            .find(|of| of.path == path)
+            .find(|of| of.path == key)
             .map(|of| of.child.clone())
         {
             if let Some(p) = self.root.page_num(&child) {
@@ -202,7 +206,7 @@ impl Editor {
         let page = self.root.append_page(&child, Some(&tab));
         self.root.set_current_page(Some(page));
         self.open.borrow_mut().push(OpenFile {
-            path: path.to_path_buf(),
+            path: key,
             buffer,
             child: child.clone(),
             cancel,

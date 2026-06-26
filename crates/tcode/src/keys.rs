@@ -119,7 +119,13 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 Propagation::Stop
             }
             Key::q => {
-                st.borrow().window.close();
+                // Clone the window out and DROP the borrow before close(): a realized
+                // window emits close-request synchronously, whose handler calls
+                // save_current -> state.borrow_mut(). Holding this borrow across
+                // close() would be a BorrowMutError panic (and the session wouldn't
+                // save). Mirrors Key::f above.
+                let win = st.borrow().window.clone();
+                win.close();
                 Propagation::Stop
             }
             Key::p => {

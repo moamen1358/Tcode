@@ -36,6 +36,10 @@ struct GridInner {
     /// Pending "reveal terminals" timer, reset on each resize event so the panes
     /// are revealed once the window stops resizing (see `Grid::freeze_for_resize`).
     resize_timer: Cell<Option<glib::SourceId>>,
+    /// Whether a terminal held keyboard focus when the current freeze began,
+    /// captured once at gesture start so the reveal restores focus only if the
+    /// freeze actually took it (and doesn't yank focus out of the sidebar/editor).
+    resize_focus: Cell<bool>,
     /// Opens a Ctrl+clicked terminal path in the editor/viewer panel.
     on_open: OpenFn,
     /// Called when the final pane exits. App-level state decides whether that closes
@@ -104,8 +108,15 @@ fn freeze_terminals(inner: &Rc<RefCell<GridInner>>) {
     let Ok(g) = inner.try_borrow() else {
         return;
     };
-    if let Some(id) = g.resize_timer.take() {
+    let pending = g.resize_timer.take();
+    if let Some(id) = pending {
         id.remove();
+    } else {
+        // Start of a resize gesture (no reveal pending): the panes are still
+        // visible, so capture whether a terminal actually holds focus right now.
+        // Mid-drag events (pending is Some) run after the panes are hidden, so they
+        // must not overwrite this — focus has already left the hidden terminals.
+        g.resize_focus.set(g.panes.iter().any(|p| p.has_focus()));
     }
     for p in &g.panes {
         p.set_resizing(true); // no-op if already hidden
@@ -119,9 +130,13 @@ fn freeze_terminals(inner: &Rc<RefCell<GridInner>>) {
         for p in &g.panes {
             p.set_resizing(false);
         }
-        // Hiding the focused terminal drops keyboard focus; restore it.
-        if let Some(p) = g.panes.get(g.focus) {
-            p.grab_focus();
+        // Restore focus to the active pane ONLY if the freeze actually took it from
+        // a terminal; otherwise leave focus where the user put it (sidebar/editor),
+        // so resizing while typing in a side panel doesn't yank focus to a terminal.
+        if g.resize_focus.get() {
+            if let Some(p) = g.panes.get(g.focus) {
+                p.grab_focus();
+            }
         }
     });
     g.resize_timer.set(Some(id));
@@ -261,6 +276,7 @@ impl Grid {
             cfg: cfg.clone(),
             next_id: 0,
             resize_timer: Cell::new(None),
+            resize_focus: Cell::new(false),
             on_open,
             on_empty,
         }));

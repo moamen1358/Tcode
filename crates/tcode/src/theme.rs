@@ -137,12 +137,10 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .shot-tray .frame-thumb:hover {{ box-shadow: 0 0 0 2px alpha({accent}, 0.65); }}\n\
          .work-area {{ background-color: {backdrop}; }}\n\
          paned > separator {{ background-color: {backdrop}; }}\n\
-         .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
          .sidebar {{ background-color: {bg}; margin: 9px; \
                      box-shadow: 0 2px 8px rgba(0,0,0,0.55); \
                      font-family: \"Noto Sans\", sans-serif; font-size: {font_size}pt; }}\n\
-         .sidebar-header {{ padding: 8px 10px; color: {fg}; font-weight: bold; }}\n\
          .sidebar label {{ color: {fg}; }}\n\
          .sidebar row {{ padding: 0 4px; min-height: 22px; border-radius: 4px; }}\n\
          .sidebar row:hover {{ background-color: transparent; }}\n\
@@ -178,6 +176,8 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                              padding: 0 4px; font-size: 12px; }}\n\
          .doc-view {{ background-color: {surface}; }}\n\
          .doc-page {{ background-color: white; box-shadow: 0 1px 8px rgba(0,0,0,0.55); }}\n\
+         .doc-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}\n\
+         .doc-error {{ color: #e84d5b; }}\n\
          .fallback-card {{ padding: 28px; }}\n\
          .fallback-title {{ font-size: 15px; font-weight: bold; color: {fg}; }}\n\
          .fallback-meta {{ color: alpha({fg}, 0.55); }}\n\
@@ -226,7 +226,6 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .frame-thumb.selected {{ box-shadow: inset 0 0 0 2px {accent}; }}\n\
          .frame-text-entry {{ background-color: {bg}; color: {fg}; \
                                    box-shadow: inset 0 0 0 1px {accent}; }}\n\
-         .frame-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}\n\
          .clip-header {{ padding: 5px 8px 3px 10px; }}\n\
          .clip-header label {{ color: alpha({fg}, 0.45); font-size: 10px; \
                                font-weight: bold; letter-spacing: 1px; }}\n\
@@ -247,7 +246,6 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .clip-pin:hover, .clip-del:hover {{ color: alpha({fg}, 0.75); \
                                              background-color: alpha({fg}, 0.08); }}\n\
          .clip-card.pinned .clip-text, .clip-card.pinned .clip-pin {{ color: #ffb38a; }}\n\
-         .clip-empty {{ color: alpha({fg}, 0.4); padding: 8px; font-size: 12px; }}\n\
          .session-title {{ font-size: 32px; font-weight: bold; color: {fg}; }}\n\
          .session-subtitle {{ color: alpha({fg}, 0.45); font-size: 13px; }}\n\
          .session-card {{ background-color: {surface}; background-image: none; \
