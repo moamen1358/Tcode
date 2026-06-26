@@ -2,7 +2,6 @@
 //! Every field has a default, so a missing or partial file is fine.
 
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,47 +108,44 @@ impl Config {
 
     /// Persist to the standard config path (creating the dir as needed).
     pub fn save(&self) {
-        let Ok(text) = toml::to_string_pretty(self) else {
-            return;
-        };
-        let path = config_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if write_private(&path, text.as_bytes()).is_ok() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        let text = match toml::to_string_pretty(self) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("tcode: failed to serialize config: {e}");
+                return;
             }
+        };
+        // Atomic + owner-only (0o600): a torn write must never leave a half-file
+        // that parses back to defaults and silently loses the user's settings.
+        if let Err(e) = crate::fsutil::atomic_write(&config_path(), text.as_bytes(), 0o600) {
+            eprintln!("tcode: failed to write config: {e}");
         }
     }
-}
-
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(path)?;
-    file.write_all(bytes)
 }
 
 /// Tcode's base config directory: `$XDG_CONFIG_HOME/tcode` or
 /// `~/.config/tcode`. Shared by the config file and saved sessions.
 pub fn config_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            home.join(".config")
-        });
-    base.join("tcode")
+    config_dir_from(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// Resolve the config dir from explicit env values (kept separate so it's testable
+/// without mutating the process environment). Per the XDG spec a non-absolute
+/// (including empty) `XDG_CONFIG_HOME` is invalid and ignored; likewise a missing or
+/// relative `HOME` must never yield a CWD-relative path — that would read and write
+/// config + sessions wherever tcode happened to be launched, silently hiding the
+/// real ones. Only in that pathological case do we fall back to an absolute temp base.
+fn config_dir_from(xdg: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(xdg) = xdg.map(PathBuf::from).filter(|p| p.is_absolute()) {
+        return xdg.join("tcode");
+    }
+    if let Some(home) = home.map(PathBuf::from).filter(|p| p.is_absolute()) {
+        return home.join(".config").join("tcode");
+    }
+    std::env::temp_dir().join("tcode")
 }
 
 fn config_path() -> PathBuf {
@@ -188,5 +184,28 @@ mod tests {
         let c = Config::from_str_or_default("[theme]\naccent = \"#ff0000\"");
         assert_eq!(c.theme.accent, "#ff0000");
         assert_eq!(c.theme.background, "#1a1b26");
+    }
+
+    #[test]
+    fn config_dir_honors_absolute_xdg() {
+        let d = config_dir_from(Some("/xdg".into()), Some("/home/u".into()));
+        assert_eq!(d, PathBuf::from("/xdg/tcode"));
+    }
+
+    #[test]
+    fn config_dir_ignores_empty_or_relative_xdg() {
+        // Empty XDG_CONFIG_HOME → fall back to HOME/.config (NOT "tcode" under CWD).
+        let d = config_dir_from(Some("".into()), Some("/home/u".into()));
+        assert_eq!(d, PathBuf::from("/home/u/.config/tcode"));
+        // A relative XDG value is likewise invalid and ignored.
+        let d = config_dir_from(Some("rel/path".into()), Some("/home/u".into()));
+        assert_eq!(d, PathBuf::from("/home/u/.config/tcode"));
+    }
+
+    #[test]
+    fn config_dir_never_relative_without_home() {
+        // No usable HOME/XDG: the result must still be absolute, never CWD-relative.
+        assert!(config_dir_from(Some("".into()), None).is_absolute());
+        assert!(config_dir_from(None, Some("relative-home".into())).is_absolute());
     }
 }

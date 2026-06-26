@@ -7,8 +7,7 @@
 //! This is pure data + disk I/O (no GTK); the UI lives in the `tcode` crate
 //! (`session_picker` for the startup screen, the titlebar switcher in `app`).
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -83,19 +82,20 @@ impl Session {
     /// Persist this session to disk (creating the sessions dir as needed).
     /// Writing also bumps the file's mtime, which `list` uses as "last used".
     pub fn save(&self) {
-        let Ok(text) = toml::to_string_pretty(self) else {
-            return;
-        };
-        let dir = sessions_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        let path = self.path();
-        if write_private(&path, text.as_bytes()).is_ok() {
-            // Session files record the open-file paths; keep them owner-only.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        let text = match toml::to_string_pretty(self) {
+            Ok(t) => t,
+            Err(e) => {
+                // serde's PathBuf serializer fails on a non-UTF-8 root/file path.
+                // Surface it instead of silently dropping the save — a silent drop
+                // would make every later layout change vanish on disk, too.
+                eprintln!("tcode: failed to serialize session {}: {e}", self.id);
+                return;
             }
+        };
+        // Atomic + owner-only (0o600): session files record open-file paths, and a
+        // torn write must not leave a half-file that `list()` later drops as corrupt.
+        if let Err(e) = crate::fsutil::atomic_write(&self.path(), text.as_bytes(), 0o600) {
+            eprintln!("tcode: failed to write session {}: {e}", self.id);
         }
     }
 
@@ -103,18 +103,6 @@ impl Session {
     pub fn delete(&self) {
         let _ = std::fs::remove_file(self.path());
     }
-}
-
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(path)?;
-    file.write_all(bytes)
 }
 
 /// Directory holding session files: `~/.config/tcode/sessions/`.
