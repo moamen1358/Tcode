@@ -17,6 +17,7 @@ mod tools;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gtk4::cairo;
 use gtk4::gdk::Texture;
@@ -25,8 +26,9 @@ use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    ApplicationWindow, Box as GtkBox, Button, CenterBox, DrawingArea, EventControllerKey,
-    Orientation, Overlay, Separator, ToggleButton, Widget,
+    Align, ApplicationWindow, Box as GtkBox, Button, CenterBox, DrawingArea, EventControllerKey,
+    EventControllerMotion, GestureClick, Image, Label, Orientation, Overlay, Revealer, Separator,
+    ToggleButton, Widget,
 };
 
 use state::{add_doc, Shot, State};
@@ -42,12 +44,19 @@ pub struct Frame {
     pub panel_root: GtkBox,
     /// Start a capture (region-select → annotate). Wired to the titlebar camera.
     pub capture: Rc<dyn Fn()>,
+    /// Re-open a saved screenshot path in the annotator (clone of the gallery's
+    /// pick handler) — used by the floating capture-preview's "annotate" action.
+    pub reopen: Rc<dyn Fn(PathBuf)>,
 }
 
 /// Wrap `content` (Tcode's sidebar+center) with the Frame panel and a
 /// hidden annotation layer. `main` is the window — hidden during capture so it
 /// isn't in the shot, and the clipboard owner on export.
-pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame {
+pub fn integrate(
+    main: &ApplicationWindow,
+    content: &impl IsA<Widget>,
+    on_saved: Rc<dyn Fn(PathBuf)>,
+) -> Frame {
     let shot: Shot = Rc::new(RefCell::new(State::new()));
     let canvas_ui = canvas::build(&shot);
     let area = canvas_ui.area.clone();
@@ -113,21 +122,24 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame 
         })
     };
 
-    let panel = gallery::build(on_pick);
+    let panel = gallery::build(on_pick.clone());
 
-    // Save: export PNG → add to panel → copy image to clipboard → close.
+    // Save: export PNG → add to panel → copy image to clipboard → float a
+    // preview toast → close.
     {
-        let (shot, panel, main, close_annot) = (
+        let (shot, panel, main, close_annot, on_saved) = (
             shot.clone(),
             panel.clone(),
             main.clone(),
             close_annot.clone(),
+            on_saved.clone(),
         );
         toolbar.save_btn.connect_clicked(move |_| {
             match export::export_png(&shot) {
                 Ok((path, pb)) => {
                     main.clipboard().set_texture(&Texture::for_pixbuf(&pb));
-                    panel.add_saved(path);
+                    panel.add_saved(path.clone());
+                    on_saved(path);
                     close_annot();
                 }
                 // Keep the annotation canvas open on failure so the user's work
@@ -165,7 +177,170 @@ pub fn integrate(main: &ApplicationWindow, content: &impl IsA<Widget>) -> Frame 
         root: content_overlay,
         panel_root: panel.root.clone(),
         capture: on_capture,
+        reopen: on_pick,
     }
+}
+
+/// Float a small "saved" toast bottom-right over the work area after a capture:
+/// a clickable thumbnail plus actions (annotate / copy / reveal / dismiss) and a
+/// thin accent timer bar. It fades out after ~6s left alone; hovering cancels the
+/// fade, leaving restarts it. Shown as a passive overlay child — no scrim/dim.
+pub fn show_screenshot_preview(
+    host: &Rc<crate::overlay::OverlayHost>,
+    path: PathBuf,
+    reopen: Rc<dyn Fn(PathBuf)>,
+    clipboard: gtk4::gdk::Clipboard,
+) {
+    let card = GtkBox::new(Orientation::Vertical, 6);
+    card.add_css_class("shot-preview");
+
+    let body = GtkBox::new(Orientation::Horizontal, 9);
+
+    let thumb = Image::from_file(&path);
+    thumb.set_pixel_size(84);
+    thumb.add_css_class("shot-thumb");
+    thumb.set_tooltip_text(Some("Annotate"));
+    body.append(&thumb);
+
+    let col = GtkBox::new(Orientation::Vertical, 5);
+    col.set_valign(Align::Center);
+    let saved = Label::new(Some("Saved ✓"));
+    saved.set_xalign(0.0);
+    saved.add_css_class("shot-saved");
+    col.append(&saved);
+
+    let actions = GtkBox::new(Orientation::Horizontal, 2);
+    let annotate = Button::from_icon_name("document-edit-symbolic");
+    annotate.set_tooltip_text(Some("Annotate"));
+    let copy = Button::from_icon_name("edit-copy-symbolic");
+    copy.set_tooltip_text(Some("Copy image"));
+    let reveal = Button::from_icon_name("folder-open-symbolic");
+    reveal.set_tooltip_text(Some("Show in files"));
+    let dismiss = Button::from_icon_name("window-close-symbolic");
+    dismiss.set_tooltip_text(Some("Dismiss"));
+    actions.append(&annotate);
+    actions.append(&copy);
+    actions.append(&reveal);
+    actions.append(&dismiss);
+    col.append(&actions);
+    body.append(&col);
+    card.append(&body);
+
+    let timer_bar = GtkBox::new(Orientation::Horizontal, 0);
+    timer_bar.add_css_class("shot-timer");
+    card.append(&timer_bar);
+
+    let revealer = Revealer::builder()
+        .transition_type(gtk4::RevealerTransitionType::Crossfade)
+        .transition_duration(250)
+        .child(&card)
+        .build();
+    host.add_panel(&revealer, Align::End, Align::End, 14);
+
+    // Fade timer: a 6s countdown to hide. Hovering cancels it; leaving restarts.
+    // (Same `Cell<Option<SourceId>>` pattern as the grid's resize freeze timer.)
+    let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let arm: Rc<dyn Fn()> = {
+        let (timer, revealer) = (timer.clone(), revealer.downgrade());
+        Rc::new(move || {
+            if let Some(id) = timer.borrow_mut().take() {
+                id.remove();
+            }
+            let (timer2, revealer2) = (timer.clone(), revealer.clone());
+            let id = glib::timeout_add_local(Duration::from_secs(6), move || {
+                if let Some(r) = revealer2.upgrade() {
+                    r.set_reveal_child(false);
+                }
+                *timer2.borrow_mut() = None;
+                glib::ControlFlow::Break
+            });
+            *timer.borrow_mut() = Some(id);
+        })
+    };
+
+    // Drop the overlay child once it has fully faded out (host held weakly so the
+    // revealer ↔ host pair doesn't leak).
+    {
+        let host_weak = Rc::downgrade(host);
+        revealer.connect_child_revealed_notify(move |r| {
+            if !r.is_child_revealed() {
+                if let Some(h) = host_weak.upgrade() {
+                    h.root.remove_overlay(r);
+                }
+            }
+        });
+    }
+
+    // Hover cancels the pending fade; leaving restarts the countdown.
+    {
+        let motion = EventControllerMotion::new();
+        let (timer_e, arm_l) = (timer.clone(), arm.clone());
+        motion.connect_enter(move |_, _, _| {
+            if let Some(id) = timer_e.borrow_mut().take() {
+                id.remove();
+            }
+        });
+        motion.connect_leave(move |_| arm_l());
+        card.add_controller(motion);
+    }
+
+    let hide: Rc<dyn Fn()> = {
+        let revealer = revealer.downgrade();
+        Rc::new(move || {
+            if let Some(r) = revealer.upgrade() {
+                r.set_reveal_child(false);
+            }
+        })
+    };
+
+    // Thumbnail or ✏ → re-open in the annotator.
+    {
+        let (reopen, path, hide) = (reopen.clone(), path.clone(), hide.clone());
+        let click = GestureClick::new();
+        click.connect_pressed(move |_, _, _, _| {
+            reopen(path.clone());
+            hide();
+        });
+        thumb.add_controller(click);
+    }
+    {
+        let (reopen, path, hide) = (reopen.clone(), path.clone(), hide.clone());
+        annotate.connect_clicked(move |_| {
+            reopen(path.clone());
+            hide();
+        });
+    }
+    // ⧉ → re-copy the PNG to the clipboard.
+    {
+        let path = path.clone();
+        copy.connect_clicked(move |_| {
+            if let Ok(pb) = Pixbuf::from_file(&path) {
+                clipboard.set_texture(&Texture::for_pixbuf(&pb));
+            }
+        });
+    }
+    // ↗ → reveal the file in the system file manager.
+    {
+        let path = path.clone();
+        reveal.connect_clicked(move |_| {
+            let launcher = gtk4::FileLauncher::new(Some(&gtk4::gio::File::for_path(&path)));
+            launcher.open_containing_folder(
+                None::<&gtk4::Window>,
+                None::<&gtk4::gio::Cancellable>,
+                |_| {},
+            );
+        });
+    }
+    // ✕ → dismiss now.
+    {
+        let hide = hide.clone();
+        dismiss.connect_clicked(move |_| hide());
+    }
+
+    // Reveal and start the fade countdown.
+    revealer.set_visible(true);
+    revealer.set_reveal_child(true);
+    arm();
 }
 
 struct Toolbar {

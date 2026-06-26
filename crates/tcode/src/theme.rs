@@ -126,6 +126,18 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .clip-pal-footer {{ color: alpha({fg}, 0.40); font-size: 11px; letter-spacing: 0.3px; \
                           padding: 9px 4px 2px 4px; margin-top: 6px; \
                           border-top: 1px solid alpha({fg}, 0.08); }}\n\
+         .shot-preview {{ background-color: {surface}; border-radius: 12px; padding: 8px; \
+                          box-shadow: 0 16px 40px rgba(0,0,0,0.66); \
+                          border: 1px solid alpha({accent}, 0.35); }}\n\
+         .shot-preview .shot-thumb {{ border-radius: 6px; box-shadow: 0 1px 6px rgba(0,0,0,0.5); }}\n\
+         .shot-preview .shot-saved {{ color: {fg}; font-weight: 600; font-size: 13px; \
+                          margin-bottom: 2px; }}\n\
+         .shot-preview button {{ min-height: 0; min-width: 0; padding: 3px 6px; \
+                          background: none; border: none; box-shadow: none; \
+                          color: alpha({fg}, 0.72); border-radius: 6px; }}\n\
+         .shot-preview button:hover {{ background-color: alpha({fg}, 0.10); color: {fg}; }}\n\
+         .shot-preview .shot-timer {{ background-color: {accent}; min-height: 3px; \
+                          border-radius: 2px; margin-top: 2px; }}\n\
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\

@@ -88,6 +88,9 @@ pub struct State {
 
 pub type Shared = Rc<RefCell<State>>;
 
+/// A callback taking a filesystem path — e.g. the capture-save → preview hook.
+type PathHook = Rc<dyn Fn(std::path::PathBuf)>;
+
 pub fn build(app: &Application, preset: Option<usize>) {
     let cfg = Config::load();
     theme::install_css(&cfg.theme, &cfg.font, cfg.font_size, cfg.scale);
@@ -1088,11 +1091,30 @@ pub fn show_grid(state: &Shared, n: usize) {
     // only while editing a capture), and embed the screenshots gallery at the
     // bottom of the file sidebar.
     let window = state.borrow().window.clone();
-    let bridge = crate::frame::integrate(&window, &content);
+    // A capture's "saved" toast needs the overlay host + the frame's reopen hook,
+    // both known only after integrate returns — so route on_saved through a slot
+    // filled in just below, once they exist.
+    let preview_hook: Rc<RefCell<Option<PathHook>>> = Rc::new(RefCell::new(None));
+    let on_saved: PathHook = {
+        let hook = preview_hook.clone();
+        Rc::new(move |path| {
+            if let Some(f) = hook.borrow().as_ref() {
+                f(path);
+            }
+        })
+    };
+    let bridge = crate::frame::integrate(&window, &content, on_saved);
     // Wrap the content in the floating-overlay layer (scrim + the clipboard
     // palette / screenshot preview / shots tray). Built per session and stored in
     // State + LiveContent below so its hotkeys act on the active session.
     let host = crate::overlay::OverlayHost::new(&bridge.root);
+    // Host + reopen now exist: a fresh capture floats a bottom-right preview toast.
+    {
+        let (host, reopen, window) = (host.clone(), bridge.reopen.clone(), window.clone());
+        *preview_hook.borrow_mut() = Some(Rc::new(move |path: std::path::PathBuf| {
+            crate::frame::show_screenshot_preview(&host, path, reopen.clone(), window.clipboard());
+        }));
+    }
 
     // Clipboard-history strip, above the screenshots strip. Built once and
     // re-parented across relayouts so its history + single clipboard watcher
