@@ -24,6 +24,22 @@ fn css_color(s: &str) -> String {
     )
 }
 
+/// Darken a `#rrggbb` color, keeping `factor` (0..1) of each RGB channel, and
+/// return a CSS-safe `rgba()` literal. Used to derive the grid backdrop from the
+/// theme background so the floating terminal cards sit on a darker canvas that
+/// tracks whatever theme is configured (rather than a hard-coded near-black).
+fn darken_css(s: &str, factor: f32) -> String {
+    let c = rgba(s);
+    let f = factor.clamp(0.0, 1.0);
+    format!(
+        "rgba({},{},{},{})",
+        (c.red() * f * 255.0).round() as u8,
+        (c.green() * f * 255.0).round() as u8,
+        (c.blue() * f * 255.0).round() as u8,
+        c.alpha()
+    )
+}
+
 /// Keep only characters legal in a CSS font-family name, so a config font can't
 /// break out of the quoted family or inject declarations.
 fn css_font(s: &str) -> String {
@@ -77,10 +93,14 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
     let accent = css_color(&theme.accent);
     let surface = css_color(&theme.surface);
     let border = css_color(&theme.border);
+    // Backdrop behind the floating terminal cards: a darker shade of the theme
+    // background, so the panes read as lighter cards hovering over a canvas.
+    let backdrop = darken_css(&theme.background, 0.45);
     let font = css_font(font);
     let css = format!(
-        ".grid-root {{ background-color: {bg}; }}\n\
-         .pane {{ background-color: {bg}; border: 1px solid {border}; }}\n\
+        ".grid-root {{ background-color: {backdrop}; padding: 6px; }}\n\
+         .pane {{ background-color: {bg}; margin: 6px; \
+                  box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .focus-ring {{ border: 1px solid transparent; }}\n\
          .pane.active-pane .focus-ring {{ border-color: #e0af68; }}\n\
          paned > separator {{ background-color: {border}; }}\n\
