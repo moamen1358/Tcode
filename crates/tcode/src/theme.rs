@@ -138,6 +138,11 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .shot-preview button:hover {{ background-color: alpha({fg}, 0.10); color: {fg}; }}\n\
          .shot-preview .shot-timer {{ background-color: {accent}; min-height: 3px; \
                           border-radius: 2px; margin-top: 2px; }}\n\
+         .shot-tray {{ background-color: {surface}; border-radius: 12px; padding: 7px; \
+                          box-shadow: 0 16px 40px rgba(0,0,0,0.62); \
+                          border: 1px solid alpha({accent}, 0.30); }}\n\
+         .shot-tray .frame-gallery {{ background-color: transparent; }}\n\
+         .shot-tray .frame-thumb {{ border-radius: 6px; }}\n\
          paned > separator {{ background-color: {border}; }}\n\
          .pick {{ font-size: 22px; font-weight: bold; border-radius: 12px; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\

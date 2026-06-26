@@ -136,8 +136,8 @@ pub fn build(app: &Application, preset: Option<usize>) {
     // lives in the sidebar it doesn't steal width from the editor/viewer.
     let shots_btn = ToggleButton::new();
     shots_btn.set_icon_name("image-x-generic-symbolic");
-    shots_btn.set_active(true);
-    shots_btn.set_tooltip_text(Some("Toggle screenshots strip (Alt+P)"));
+    shots_btn.set_active(false); // the tray floats over the work area, hidden until summoned
+    shots_btn.set_tooltip_text(Some("Toggle screenshots tray (Alt+P)"));
     shots_btn.add_css_class("flat");
 
     // Frame capture: region-select a screenshot, annotate, save to the panel.
@@ -269,26 +269,30 @@ pub fn build(app: &Application, preset: Option<usize>) {
         });
     }
 
-    // Show/hide the left screenshots panel.
+    // Toggle the floating screenshots tray on the active session's overlay host.
     {
         let st = state.clone();
         shots_btn.connect_toggled(move |btn| {
-            if let Some(p) = st.borrow().shots_panel.as_ref() {
-                p.set_visible(btn.is_active());
+            let (host, panel) = {
+                let s = st.borrow();
+                (s.host.clone(), s.shots_panel.clone())
+            };
+            if let (Some(host), Some(panel)) = (host, panel) {
+                if btn.is_active() {
+                    host.open(&panel);
+                } else {
+                    host.close();
+                }
             }
         });
     }
 
-    // Camera button: reveal the screenshots panel, then start a capture
-    // (region-select → annotate → save lands in the panel).
+    // Camera button: start a capture (region-select → annotate → save). The result
+    // surfaces as the floating preview toast, so no need to open the tray here.
     {
         let st = state.clone();
         capture_btn.connect_clicked(move |_| {
-            let cap = {
-                let s = st.borrow();
-                s.shots_btn.set_active(true); // reveal the panel so the result shows
-                s.shots_capture.clone()
-            };
+            let cap = st.borrow().shots_capture.clone();
             if let Some(cap) = cap {
                 cap();
             }
@@ -668,15 +672,7 @@ fn reveal_session(state: &Shared, session: Session) {
         return;
     }
     // Swap the active handles to this session's live content under a short borrow.
-    let (
-        stack,
-        sidebar_root,
-        sidebar_active,
-        editor_root,
-        editor_active,
-        shots_panel,
-        shots_active,
-    ) = {
+    let (stack, sidebar_root, sidebar_active, editor_root, editor_active) = {
         let mut s = state.borrow_mut();
         if let Some(lc) = s.live.get(&id).cloned() {
             s.grid = Some(lc.grid);
@@ -696,8 +692,6 @@ fn reveal_session(state: &Shared, session: Session) {
             s.sidebar_btn.is_active(),
             s.editor.as_ref().map(|ed| ed.root.clone()),
             s.editor_btn.is_active(),
-            s.shots_panel.clone(),
-            s.shots_btn.is_active(),
         )
     };
     // Flip the stack with no borrow held: mapping the revealed page can re-enter
@@ -712,9 +706,16 @@ fn reveal_session(state: &Shared, session: Session) {
     if let Some(r) = editor_root.as_ref() {
         r.set_visible(editor_active);
     }
-    if let Some(p) = shots_panel.as_ref() {
-        p.set_visible(shots_active);
+    // The screenshots tray is a floating modal on each session's overlay host, not
+    // a docked panel — start a switched-to session with it closed (and the toggle
+    // released) rather than carrying the previous page's open state.
+    {
+        let s = state.borrow();
+        if let Some(h) = s.host.as_ref() {
+            h.close();
+        }
     }
+    state.borrow().shots_btn.set_active(false);
     reparent_clipboard(state);
     // Re-apply the current font/scale straight to this grid's terminals. A reveal
     // changes neither theme, font nor scale, so the stylesheet is identical to the
@@ -1139,7 +1140,19 @@ pub fn show_grid(state: &Shared, n: usize) {
         clip.palette(on_paste, Rc::downgrade(&host))
     };
     host.add_panel(&palette, gtk4::Align::Center, gtk4::Align::Center, 0);
-    sidebar.root.append(&bridge.panel_root);
+    // Screenshots tray: a floating horizontal strip docked to the bottom of the
+    // work area, toggled (with dim + Esc/click-away) by Alt+P / the titlebar button.
+    host.add_panel(&bridge.panel_root, gtk4::Align::Fill, gtk4::Align::End, 12);
+    // Closing the host (Esc, click-away, or opening another panel) releases the
+    // shots toggle so the button never reads "on" with the tray gone.
+    {
+        let btn = state.borrow().shots_btn.clone();
+        host.set_on_close(Rc::new(move || {
+            if btn.is_active() {
+                btn.set_active(false);
+            }
+        }));
+    }
     // Add this session's content as a stack page and show it. Switching to a
     // different session later just flips the visible page, so these shells keep
     // running in the background. Done with no borrow held: mapping the page can
@@ -1168,10 +1181,6 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.host = Some(host);
         s.palette = Some(palette);
     }
-    // Respect the current toggle state for the freshly built panel.
-    bridge
-        .panel_root
-        .set_visible(state.borrow().shots_btn.is_active());
 
     // Optionally open a file at startup (TCODE_OPEN=path) — preview/testing aid.
     if let Some(path) = std::env::var_os("TCODE_OPEN") {

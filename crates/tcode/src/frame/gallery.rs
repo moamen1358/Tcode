@@ -1,7 +1,8 @@
-//! The persistent left-side screenshots panel in Tcode's main window: a
-//! scrollable strip of every saved screenshot (loaded from the cache dir on
-//! startup, so history survives restarts), showing ~3 at a time. Clicking a
-//! thumbnail re-opens it in the annotation canvas; capturing is from the titlebar.
+//! The screenshots tray in Tcode's main window: a horizontal, scrollable strip
+//! of every saved screenshot (loaded from the cache dir on startup, so history
+//! survives restarts), floated over the work area on Alt+P. Newest leftmost.
+//! Clicking a thumbnail re-opens it in the annotation canvas; capturing is from
+//! the titlebar.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use gtk4::gdk::{DragAction, Texture};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Button, DragSource, Orientation, Separator};
+use gtk4::{Box as GtkBox, Button, DragSource, Orientation};
 
 /// Directory where exported screenshots live.
 pub fn shots_dir() -> PathBuf {
@@ -38,24 +39,19 @@ pub struct Panel {
 /// Build the panel. `on_pick` runs when a thumbnail is clicked (with that
 /// shot's path). Capturing is started from the window titlebar, not here.
 pub fn build(on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
-    // A compact strip of recent screenshots at the bottom of the file sidebar,
-    // set off from the file tree above by a divider.
+    // A floating horizontal tray of recent screenshots, shown over the work area
+    // on Alt+P. Newest leftmost; scroll horizontally to reach older shots.
     let root = GtkBox::new(Orientation::Vertical, 0);
-    root.add_css_class("shots-section");
-    root.append(&Separator::new(Orientation::Horizontal));
+    root.add_css_class("shot-tray");
 
-    let list = GtkBox::new(Orientation::Vertical, 6);
+    let list = GtkBox::new(Orientation::Horizontal, 6);
     list.add_css_class("frame-gallery");
-    list.set_margin_top(6);
-    list.set_margin_bottom(6);
-    list.set_margin_start(6);
-    list.set_margin_end(6);
-    // Show ~3 thumbnails at a time; scroll the strip to reach the rest.
+    // Show a row of thumbnails; scroll horizontally to reach the rest.
     let scroll = gtk4::ScrolledWindow::builder()
         .child(&list)
-        .hscrollbar_policy(gtk4::PolicyType::Never)
-        .vscrollbar_policy(gtk4::PolicyType::Automatic)
-        .height_request(290)
+        .hscrollbar_policy(gtk4::PolicyType::Automatic)
+        .vscrollbar_policy(gtk4::PolicyType::Never)
+        .height_request(108)
         .build();
     root.append(&scroll);
 
@@ -99,10 +95,10 @@ impl Panel {
 
         let on_pick = self.on_pick.clone();
         btn.connect_clicked(move |_| on_pick(path.clone()));
-        // Newest at the top so a fresh capture is immediately visible; older
-        // captures remain below and are reachable by scrolling the strip.
+        // Newest leftmost so a fresh capture is immediately visible; older
+        // captures remain to the right and are reachable by scrolling the tray.
         self.list.prepend(&btn);
-        // Bound the live strip: drop the oldest (bottom) thumbnails past MAX_THUMBS
+        // Bound the live tray: drop the oldest (rightmost) thumbnails past MAX_THUMBS
         // so a long session of captures can't grow the retained textures unbounded.
         while self.list.observe_children().n_items() as usize > MAX_THUMBS {
             match self.list.last_child() {

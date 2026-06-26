@@ -20,6 +20,10 @@ pub struct OverlayHost {
     scrim: GtkBox,
     /// The currently-open modal panel, if any (preview toasts don't go here).
     open: RefCell<Option<Widget>>,
+    /// Fired whenever an open panel closes — lets a titlebar toggle (e.g. the
+    /// screenshots-tray button) release itself so it never reads "on" with the
+    /// panel gone.
+    on_close: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl OverlayHost {
@@ -41,6 +45,7 @@ impl OverlayHost {
             root: root.clone(),
             scrim: scrim.clone(),
             open: RefCell::new(None),
+            on_close: RefCell::new(None),
         });
 
         // Click the scrim (outside the open panel) → close.
@@ -95,6 +100,11 @@ impl OverlayHost {
         self.open.borrow().is_some()
     }
 
+    /// Register a callback fired when an open panel closes (see `on_close`).
+    pub fn set_on_close(&self, f: Rc<dyn Fn()>) {
+        *self.on_close.borrow_mut() = Some(f);
+    }
+
     /// Show `panel` as the modal overlay: reveal the scrim, show + focus it.
     pub fn open(&self, panel: &impl IsA<Widget>) {
         self.close(); // hide any currently-open panel first
@@ -105,12 +115,24 @@ impl OverlayHost {
         *self.open.borrow_mut() = Some(w);
     }
 
-    /// Hide the open panel + scrim (no-op if nothing is open).
+    /// Hide the open panel + scrim (no-op if nothing is open). Fires `on_close`
+    /// only when a panel was actually showing.
     pub fn close(&self) {
-        if let Some(w) = self.open.borrow_mut().take() {
-            w.set_visible(false);
-        }
+        let closed = self
+            .open
+            .borrow_mut()
+            .take()
+            .map(|w| w.set_visible(false))
+            .is_some();
         self.scrim.set_visible(false);
+        if closed {
+            // Clone the callback out first so no borrow is held while it runs (it
+            // may re-enter close() via a toggled titlebar button).
+            let cb = self.on_close.borrow().clone();
+            if let Some(cb) = cb {
+                cb();
+            }
+        }
     }
 
     /// Open `panel` if it isn't the open one; close if it is.
