@@ -132,11 +132,24 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
     // Read the file off the main thread; once decoded, detect the delimiter, fill
     // the buffer, and color the first screen — so a big CSV doesn't freeze the UI
     // on open. The view appears immediately and populates when the read finishes.
+    //
+    // Coloring holds the whole document in a GtkTextBuffer, so cap the table preview
+    // well under loader::MAX_TEXT_BYTES (64 MB): a tens-of-MB CSV would stall the main
+    // thread on set_text and balloon RAM. Larger files get a short notice instead.
+    const MAX_CSV_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
     {
         let (buffer, delim, recolor) = (buffer.clone(), delim.clone(), recolor.clone());
         let p = path.to_path_buf();
         crate::loader::load_text_async(path, move |text| {
             if let Some(text) = text {
+                if text.len() > MAX_CSV_PREVIEW_BYTES {
+                    buffer.set_text(&format!(
+                        "CSV too large to preview as a table ({} MB). Open it in a \
+                         terminal pane (e.g. `less` or `column -s, -t`) instead.",
+                        text.len() / (1024 * 1024)
+                    ));
+                    return;
+                }
                 delim.set(detect_delimiter(&text, &p) as char);
                 buffer.set_text(&text);
                 recolor();

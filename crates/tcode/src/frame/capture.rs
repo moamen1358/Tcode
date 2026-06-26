@@ -49,11 +49,27 @@ async fn request_portal_screenshot() -> Capture {
     match request.response() {
         // `uri()` Displays as a `file://` URI; glib decodes it (percent-encoding
         // and all) to a path, no `url` crate needed.
-        Ok(response) => glib::filename_from_uri(&response.uri().to_string())
-            .ok()
-            .and_then(|(path, _host)| Pixbuf::from_file(&path).ok())
-            .map(Capture::Image)
-            .unwrap_or(Capture::Abort),
+        Ok(response) => {
+            let uri = response.uri().to_string();
+            match glib::filename_from_uri(&uri) {
+                Ok((path, _host)) => match Pixbuf::from_file(&path) {
+                    Ok(pb) => Capture::Image(pb),
+                    Err(e) => {
+                        // A real capture we just couldn't decode — surface it rather
+                        // than silently behaving like a user cancel.
+                        eprintln!(
+                            "tcode: screenshot saved to {} but could not be loaded: {e}",
+                            path.display()
+                        );
+                        Capture::Abort
+                    }
+                },
+                Err(e) => {
+                    eprintln!("tcode: screenshot portal returned an unreadable uri {uri}: {e}");
+                    Capture::Abort
+                }
+            }
+        }
         Err(_) => Capture::Abort,
     }
 }
@@ -81,9 +97,15 @@ pub fn capture_window_async<F: Fn(Option<Pixbuf>) + 'static>(window: &Applicatio
 
     let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
     let ticks = std::cell::Cell::new(0u32);
+    // Hold the tick-callback id so the timeout backstop can remove it if the frame
+    // clock stays idle: otherwise the callback never returns Break and leaks the
+    // paintable/renderer/done it captures.
+    let tick_id: std::rc::Rc<std::cell::RefCell<Option<gtk4::TickCallbackId>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
     {
         let done = done.clone();
-        target.add_tick_callback(move |w, _clock| {
+        let tick_id_inner = tick_id.clone();
+        let id = target.add_tick_callback(move |w, _clock| {
             let n = ticks.get() + 1;
             ticks.set(n);
             if n < 2 {
@@ -93,13 +115,22 @@ pub fn capture_window_async<F: Fn(Option<Pixbuf>) + 'static>(window: &Applicatio
             if let Some(cb) = done.borrow_mut().take() {
                 cb(pb);
             }
+            // We're about to be auto-removed (Break); forget the id so the timeout
+            // backstop won't try to remove it a second time.
+            tick_id_inner.borrow_mut().take();
             glib::ControlFlow::Break
         });
+        *tick_id.borrow_mut() = Some(id);
     }
 
     let done2 = done;
     glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || {
         if let Some(cb) = done2.borrow_mut().take() {
+            // Two ticks never arrived (idle frame clock) — remove the still-installed
+            // tick callback so it and its captures don't linger, then report failure.
+            if let Some(id) = tick_id.borrow_mut().take() {
+                id.remove();
+            }
             cb(None);
         }
     });

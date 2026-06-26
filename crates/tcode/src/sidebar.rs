@@ -21,7 +21,9 @@ pub struct Sidebar {
 
 fn directory_list_for(dir: &gio::File) -> DirectoryList {
     DirectoryList::new(
-        Some("standard::name,standard::display-name,standard::type,standard::icon,standard::file"),
+        Some(
+            "standard::name,standard::display-name,standard::type,standard::icon,standard::file,standard::is-symlink",
+        ),
         Some(dir),
     )
 }
@@ -117,7 +119,10 @@ impl Sidebar {
         let autoexpand = std::env::var_os("TCODE_AUTOEXPAND").is_some();
         let tree = TreeListModel::new(root_store, false, autoexpand, |obj| {
             let info = obj.downcast_ref::<gio::FileInfo>()?;
-            if info.file_type() == gio::FileType::Directory {
+            // Only descend into real directories — never follow a symlinked dir,
+            // which could traverse outside the workspace root or, under
+            // TCODE_AUTOEXPAND, loop forever on a symlink cycle.
+            if info.file_type() == gio::FileType::Directory && !info.is_symlink() {
                 let dir = file_of(info)?;
                 Some(sorted_dir(&dir))
             } else {

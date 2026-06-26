@@ -24,6 +24,11 @@ fn is_shot_name(name: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Cap on thumbnails kept in the strip. Bounds the decoded textures retained in
+/// RAM — both the startup history load and a long session of new captures; older
+/// shots stay on disk in the cache dir, just out of the strip.
+const MAX_THUMBS: usize = 60;
+
 pub struct Panel {
     pub root: GtkBox,
     list: GtkBox,
@@ -97,6 +102,14 @@ impl Panel {
         // Newest at the top so a fresh capture is immediately visible; older
         // captures remain below and are reachable by scrolling the strip.
         self.list.prepend(&btn);
+        // Bound the live strip: drop the oldest (bottom) thumbnails past MAX_THUMBS
+        // so a long session of captures can't grow the retained textures unbounded.
+        while self.list.observe_children().n_items() as usize > MAX_THUMBS {
+            match self.list.last_child() {
+                Some(oldest) => self.list.remove(&oldest),
+                None => break,
+            }
+        }
     }
 
     /// Scan the cache dir for saved shot-*.png paths, sorted oldest first.
@@ -138,7 +151,13 @@ impl Panel {
     /// tick so a large history doesn't block startup. `scan_shots` is oldest-first
     /// and `add_saved` prepends, so the newest ends up on top.
     fn load_existing_deferred(self: &Rc<Self>) {
-        let shots = Self::scan_shots();
+        let mut shots = Self::scan_shots();
+        // Only the newest MAX_THUMBS are loaded — decoding and retaining every shot
+        // ever taken would grow RAM without bound on each startup. scan_shots is
+        // oldest-first, so drop the oldest excess from the front.
+        if shots.len() > MAX_THUMBS {
+            shots.drain(0..shots.len() - MAX_THUMBS);
+        }
         if shots.is_empty() {
             return;
         }
