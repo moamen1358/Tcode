@@ -171,8 +171,12 @@ fn office_to_pdf(
     if !status.success() {
         return Err("document conversion failed".into());
     }
-    let stem = path.file_stem().map(PathBuf::from).unwrap_or_default();
-    let pdf = cache.join(stem.with_extension("pdf"));
+    // soffice writes <outdir>/<input-name-with-its-final-ext-swapped-for-pdf>. Swap
+    // only the LAST extension (file_name + with_extension), not file_stem, which would
+    // also drop a second dotted component: `Financials.2024.xlsx` must map to
+    // `Financials.2024.pdf`, not `Financials.pdf`.
+    let name = path.file_name().map(PathBuf::from).unwrap_or_default();
+    let pdf = cache.join(name.with_extension("pdf"));
     pdf.exists()
         .then_some(pdf)
         .map(Some)

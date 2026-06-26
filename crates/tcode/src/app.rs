@@ -635,7 +635,15 @@ fn reveal_session(state: &Shared, session: Session) {
         return;
     }
     // Swap the active handles to this session's live content under a short borrow.
-    let (stack, shots_panel, shots_active) = {
+    let (
+        stack,
+        sidebar_root,
+        sidebar_active,
+        editor_root,
+        editor_active,
+        shots_panel,
+        shots_active,
+    ) = {
         let mut s = state.borrow_mut();
         if let Some(lc) = s.live.get(&id).cloned() {
             s.grid = Some(lc.grid);
@@ -649,6 +657,10 @@ fn reveal_session(state: &Shared, session: Session) {
         s.current = Some(session);
         (
             s.stack.clone(),
+            s.sidebar.as_ref().map(|sb| sb.root.clone()),
+            s.sidebar_btn.is_active(),
+            s.editor.as_ref().map(|ed| ed.root.clone()),
+            s.editor_btn.is_active(),
             s.shots_panel.clone(),
             s.shots_btn.is_active(),
         )
@@ -656,6 +668,15 @@ fn reveal_session(state: &Shared, session: Session) {
     // Flip the stack with no borrow held: mapping the revealed page can re-enter
     // GTK signal handlers, and holding a borrow across that risks a RefCell panic.
     stack.set_visible_child_name(&id);
+    // Re-sync every panel to its global titlebar toggle. Each session keeps its own
+    // panel widgets, so a panel hidden/shown while another session was active would
+    // otherwise reveal here out of step with its toggle button (one stale click to fix).
+    if let Some(r) = sidebar_root.as_ref() {
+        r.set_visible(sidebar_active);
+    }
+    if let Some(r) = editor_root.as_ref() {
+        r.set_visible(editor_active);
+    }
     if let Some(p) = shots_panel.as_ref() {
         p.set_visible(shots_active);
     }

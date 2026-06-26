@@ -138,7 +138,8 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
     // thread on set_text and balloon RAM. Larger files get a short notice instead.
     const MAX_CSV_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
     {
-        let (buffer, delim, recolor) = (buffer.clone(), delim.clone(), recolor.clone());
+        let (buffer, delim, recolor, tagged) =
+            (buffer.clone(), delim.clone(), recolor.clone(), tagged.clone());
         let p = path.to_path_buf();
         crate::loader::load_text_async(path, move |text| {
             if let Some(text) = text {
@@ -152,6 +153,12 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
                 }
                 delim.set(detect_delimiter(&text, &p) as char);
                 buffer.set_text(&text);
+                // set_text replaced the buffer wholesale. Any "already colored" marks
+                // are now stale — in particular, a recolor() fired on the still-empty
+                // buffer during first size-allocation marks line 0 done before the real
+                // text arrives, which would otherwise leave the header row uncolored.
+                // Reset so every visible line, header included, is tinted from scratch.
+                tagged.borrow_mut().clear();
                 recolor();
             }
         });
