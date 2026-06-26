@@ -30,15 +30,15 @@ pub fn export_png(shot: &Shot) -> Result<(PathBuf, Pixbuf), String> {
 
     let dir = shots_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    make_private_dir(&dir);
-    // Number from the highest shot-N.png already on disk so we never overwrite
-    // a screenshot from a previous session (the panel persists across restarts).
-    // create_new (O_EXCL) so two instances saving at once can't truncate each
-    // other's shot; bump the index and retry on a collision.
+    // Number from the highest shot-N.png already on disk so we never overwrite a
+    // screenshot from a previous session — and, since this is now the shared
+    // Pictures/Screenshots folder, no foreign screenshot either (we only ever
+    // create new shot-N names). create_new (O_EXCL) so two instances saving at
+    // once can't truncate each other's shot; bump the index and retry on a collision.
     let mut n = next_shot_number(&dir);
     let (path, mut file) = loop {
         let path = dir.join(format!("shot-{n}.png"));
-        match private_create_new(&path) {
+        match create_new_file(&path) {
             Ok(f) => break (path, f),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
             Err(e) => return Err(e.to_string()),
@@ -54,23 +54,15 @@ pub fn export_png(shot: &Shot) -> Result<(PathBuf, Pixbuf), String> {
     Ok((path, out))
 }
 
-fn private_create_new(path: &Path) -> std::io::Result<std::fs::File> {
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    opts.open(path)
-}
-
-fn make_private_dir(dir: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
+/// Create the file only if it doesn't already exist (O_EXCL), so two instances
+/// saving at once can't truncate each other's shot. Written with the default umask
+/// (a normal, readable file) — these live in the user's shared Pictures/Screenshots
+/// alongside every other tool's screenshots, so no private 0o600 mode.
+fn create_new_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
 
 /// Next free `shot-N` index: one past the highest existing on disk (or 1).

@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use gtk4::gdk::prelude::GdkCairoContextExt; // cr.set_source_pixbuf
-use gtk4::gdk::{Key, ModifierType};
+use gtk4::gdk::{Key, ModifierType, RGBA};
 use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib::{self, Propagation};
 use gtk4::prelude::*;
@@ -100,12 +100,13 @@ pub struct Editor {
     pub root: Notebook,
     paned: Paned,
     open: OpenFiles,
-    /// Backdrop painted behind images, from the theme `surface` color.
+    /// Backdrop painted behind images — the deep app backdrop, so the viewer
+    /// reads as the same black as the canvas behind the cards (`.work-area`).
     backdrop: (f64, f64, f64),
 }
 
 impl Editor {
-    pub fn new(paned: &Paned, surface: &str) -> Editor {
+    pub fn new(paned: &Paned, backdrop: RGBA) -> Editor {
         let notebook = Notebook::new();
         notebook.set_scrollable(true);
         notebook.add_css_class("editor");
@@ -142,12 +143,15 @@ impl Editor {
             notebook.add_controller(kc);
         }
 
-        let c = crate::theme::rgba(surface);
         Editor {
             root: notebook,
             paned: paned.clone(),
             open,
-            backdrop: (c.red() as f64, c.green() as f64, c.blue() as f64),
+            backdrop: (
+                backdrop.red() as f64,
+                backdrop.green() as f64,
+                backdrop.blue() as f64,
+            ),
         }
     }
 
@@ -479,7 +483,7 @@ fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
     {
         let (state, pct, pb) = (state.clone(), pct.clone(), pixbuf.clone());
         area.set_draw_func(move |_a, cr, w, h| {
-            cr.set_source_rgb(backdrop.0, backdrop.1, backdrop.2); // theme surface
+            cr.set_source_rgb(backdrop.0, backdrop.1, backdrop.2); // deep app backdrop
             let _ = cr.paint();
             let Some(pb) = pb.as_ref() else {
                 cr.set_source_rgb(0.55, 0.6, 0.75);

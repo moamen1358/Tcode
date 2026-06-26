@@ -40,6 +40,24 @@ fn darken_css(s: &str, factor: f32) -> String {
     )
 }
 
+/// Fraction of each background RGB channel kept for the deep "blanket" backdrop
+/// behind the floating cards (`.work-area`, `.grid-root`, the Paned separators) —
+/// and, so it matches, the image/document viewer.
+const BACKDROP_FACTOR: f32 = 0.45;
+
+/// The deep backdrop as an RGBA, for code that paints it directly (the image
+/// viewer's Cairo draw). Mirrors the CSS `darken_css(background, BACKDROP_FACTOR)`
+/// so the viewer reads as the same black as the canvas behind the cards.
+pub fn viewer_backdrop(theme: &Theme) -> RGBA {
+    let c = rgba(&theme.background);
+    RGBA::new(
+        c.red() * BACKDROP_FACTOR,
+        c.green() * BACKDROP_FACTOR,
+        c.blue() * BACKDROP_FACTOR,
+        c.alpha(),
+    )
+}
+
 /// Keep only characters legal in a CSS font-family name, so a config font can't
 /// break out of the quoted family or inject declarations.
 fn css_font(s: &str) -> String {
@@ -95,7 +113,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
     let border = css_color(&theme.border);
     // Backdrop behind the floating terminal cards: a darker shade of the theme
     // background, so the panes read as lighter cards hovering over a canvas.
-    let backdrop = darken_css(&theme.background, 0.45);
+    let backdrop = darken_css(&theme.background, BACKDROP_FACTOR);
     let font = css_font(font);
     let css = format!(
         ".grid-root {{ background-color: {backdrop}; padding: 4.5px; }}\n\
@@ -130,15 +148,15 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                           box-shadow: 0 14px 36px rgba(0,0,0,0.66); \
                           border: 1px solid alpha({accent}, 0.40); }}\n\
          .shot-preview .shot-preview-img {{ border-radius: 6px; }}\n\
-         .shot-tray {{ background-color: {bg}; margin: 9px; padding: 4px; \
-                          box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
-         .shot-tray .frame-gallery {{ background-color: transparent; }}\n\
-         .shot-tray .frame-thumb {{ border-radius: 6px; padding: 2px; }}\n\
-         .shot-tray .frame-thumb:hover {{ box-shadow: 0 0 0 2px alpha({accent}, 0.65); }}\n\
+         .shot-tray {{ background-color: {backdrop}; margin: 0; padding: 0; }}\n\
+         .shot-tray .frame-gallery {{ background-color: {backdrop}; padding: 4.5px 4.5px 4.5px 0; }}\n\
+         .shot-tray .frame-thumb {{ border-radius: 0; padding: 0; margin: 4.5px 4.5px 4.5px 0; }}\n\
+         .shot-tray .frame-thumb:hover {{ box-shadow: inset 0 0 0 2px alpha({accent}, 0.75); }}\n\
+         .shot-tray .frame-thumb.selected {{ box-shadow: inset 0 0 0 2px {accent}; }}\n\
          .work-area {{ background-color: {backdrop}; }}\n\
          paned > separator {{ background-color: {backdrop}; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
-         .sidebar {{ background-color: {bg}; margin: 9px; \
+         .sidebar {{ background-color: {bg}; margin: 9px 0 9px 9px; \
                      box-shadow: 0 2px 8px rgba(0,0,0,0.55); \
                      font-family: \"Noto Sans\", sans-serif; font-size: {font_size}pt; }}\n\
          .sidebar label {{ color: {fg}; }}\n\
@@ -154,7 +172,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                               color: alpha({fg}, 0.4); }}\n\
          .tcode-titlebar .titlebar-toggle:hover {{ background-color: alpha({fg}, 0.06); color: {fg}; }}\n\
          .tcode-titlebar .titlebar-toggle:checked {{ background: none; color: {fg}; }}\n\
-         .editor {{ background-color: {bg}; margin: 9px; \
+         .editor {{ background-color: {bg}; margin: 9px 9px 9px 0; \
                     box-shadow: 0 2px 8px rgba(0,0,0,0.55); }}\n\
          .editor header {{ min-height: 0; background-color: {surface}; }}\n\
          .editor header tab {{ min-height: 0; padding: 1px 8px; }}\n\
@@ -162,7 +180,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .editor-view {{ font-family: \"{font}\", monospace; font-size: {font_size}pt; }}\n\
          .editor-view, .editor-view text {{ background-color: {bg}; color: {fg}; }}\n\
          .editor-view gutter {{ background-color: {bg}; }}\n\
-         .image-view {{ background-color: {surface}; }}\n\
+         .image-view {{ background-color: {backdrop}; }}\n\
          .media-view {{ background-color: #000; }}\n\
          .viewer-toolbar {{ background-color: {bg}; padding: 0 6px; \
                             border-bottom: 1px solid {border}; }}\n\
@@ -174,7 +192,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                              padding: 0 9px; min-width: 22px; }}\n\
          .viewer-zoom-pct {{ color: alpha({fg}, 0.7); min-width: 48px; \
                              padding: 0 4px; font-size: 12px; }}\n\
-         .doc-view {{ background-color: {surface}; }}\n\
+         .doc-view {{ background-color: {backdrop}; }}\n\
          .doc-page {{ background-color: white; box-shadow: 0 1px 8px rgba(0,0,0,0.55); }}\n\
          .doc-status {{ color: alpha({fg}, 0.7); padding: 6px 10px; }}\n\
          .doc-error {{ color: #e84d5b; }}\n\

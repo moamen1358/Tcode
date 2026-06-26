@@ -49,12 +49,6 @@ const VIEWER_MAX_WIDTH: i32 = 800;
 /// Maximum width (px) for the file sidebar. Same idea as `VIEWER_MAX_WIDTH`.
 const SIDEBAR_MAX_WIDTH: i32 = 400;
 
-/// Maximum width (px) for the right-side screenshots tray. Its thumbnail column is
-/// only ~120px wide (`frame/gallery.rs`), so it gets its own tighter cap rather than
-/// reusing the file-sidebar's 400px — otherwise the divider drags it ~3x past its
-/// content into empty space.
-const SHOTS_TRAY_MAX_WIDTH: i32 = 160;
-
 pub struct State {
     pub window: ApplicationWindow,
     pub cfg: Config,
@@ -1046,7 +1040,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     center.set_resize_end_child(true);
     center.set_shrink_end_child(false);
     center.add_css_class("work-area"); // deep-black canvas behind the floating cards
-    let editor = Editor::new(&center, &cfg.theme.surface);
+    let editor = Editor::new(&center, crate::theme::viewer_backdrop(&cfg.theme));
 
     // Clicking anywhere in the editor/viewer panel pulls keyboard focus off the
     // terminals, so the active-pane yellow ring clears when you click an image or
@@ -1071,16 +1065,13 @@ pub fn show_grid(state: &Shared, n: usize) {
         .root
         .set_visible(state.borrow().sidebar_btn.is_active());
 
-    // The screenshots tray is a column on the far right (a draggable split between
-    // the work area and the tray). The tray itself is attached after Frame builds
-    // it, below. middle = [work area | shots tray].
-    let middle = Paned::new(Orientation::Horizontal);
+    // The screenshots tray is a FIXED-width column on the far right — a plain Box
+    // (not a Paned), so it has no draggable divider and its width never changes. The
+    // work area expands to fill; the tray is appended after Frame builds it, below.
+    // middle = [work area | shots tray].
+    let middle = gtk4::Box::new(Orientation::Horizontal, 0);
     middle.add_css_class("work-area");
-    middle.set_start_child(Some(&center));
-    middle.set_resize_start_child(true);
-    middle.set_shrink_start_child(false);
-    middle.set_resize_end_child(false);
-    middle.set_shrink_end_child(false);
+    middle.append(&center); // hexpands to fill the row
 
     // Resizable split between the sidebar and the rest (drag to set its width).
     let content = Paned::new(Orientation::Horizontal);
@@ -1090,32 +1081,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_start_child(false);
     content.set_resize_end_child(true);
     content.set_shrink_end_child(false);
-    // Cap the right tray's width (= middle's width − position) with its own tight cap
-    // (its thumbnails are ~120px), AND freeze the terminals across the drag: this
-    // divider resizes the work area (center, which holds the terminal grid), so
-    // without the freeze the prompt reflows and garbles — same as the sidebar/viewer
-    // dividers below. Value-guarded so our own clamp (and no-op notifies) don't
-    // re-trigger it.
-    {
-        let weak = Rc::downgrade(state);
-        let last = Cell::new(-1);
-        middle.connect_position_notify(move |p| {
-            let mw = p.width();
-            let pos = p.position();
-            if mw > 0 && pos < mw - SHOTS_TRAY_MAX_WIDTH {
-                p.set_position(mw - SHOTS_TRAY_MAX_WIDTH); // re-fires; handled next pass
-                return;
-            }
-            if last.replace(pos) == pos {
-                return;
-            }
-            if let Some(st) = weak.upgrade() {
-                if let Some(g) = st.borrow().grid.as_ref() {
-                    g.freeze_for_resize();
-                }
-            }
-        });
-    }
+    // (No tray divider to clamp or freeze any more: the tray is a fixed-width Box.)
     content.add_css_class("work-area"); // same backdrop behind the files rail
     content.set_position(240);
 
@@ -1170,7 +1136,7 @@ pub fn show_grid(state: &Shared, n: usize) {
 
     // Wrap the content with Frame's annotation layer (shown over the content
     // only while editing a capture), and dock the screenshots gallery as the
-    // far-right column (Alt+P) via middle.set_end_child below.
+    // far-right column (Alt+P) via middle.append below.
     let window = state.borrow().window.clone();
     // On capture+save, float a single just-captured image in the bottom-left for
     // ~30 seconds (the full history lives in the right-side tray). Host + reopen exist
@@ -1243,7 +1209,7 @@ pub fn show_grid(state: &Shared, n: usize) {
     // Dock the screenshots tray as the far-right column (a resizable split off the
     // work area). Hidden by default; Alt+P reveals it to browse/scroll all shots and
     // drag any thumbnail onto a terminal.
-    middle.set_end_child(Some(&bridge.panel_root));
+    middle.append(&bridge.panel_root);
     // Add this session's content as a stack page and show it. Switching to a
     // different session later just flips the visible page, so these shells keep
     // running in the background. Done with no borrow held: mapping the page can
