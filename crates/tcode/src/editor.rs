@@ -427,14 +427,14 @@ impl Zoomer {
 /// zooms toward the cursor, left-drag pans it anywhere, double-click resets to
 /// Fit. A toolbar mirrors the zoom controls. Fit is recomputed on resize.
 fn image_viewer(path: &Path, backdrop: (f64, f64, f64)) -> Widget {
-    // Guard against decompression bombs before decoding on the UI thread:
-    // `file_info` reads only the header, so we can reject an absurd pixel count
-    // (a tiny file can declare e.g. 30000x30000 → gigabytes once decoded).
-    const MAX_PIXELS: i64 = 100_000_000; // ~100 MP
-    if let Some((_, w, h)) = Pixbuf::file_info(path) {
-        if w as i64 * h as i64 > MAX_PIXELS {
-            return fallback_viewer(path);
-        }
+    // Guard against decompression bombs before decoding on the UI thread. file_info
+    // reads only the header, so an absurd declared pixel count (a tiny file claiming
+    // e.g. 30000x30000 → gigabytes once decoded) is rejected here. If the header
+    // can't be read at all, refuse the inline preview rather than decoding unguarded.
+    const MAX_PIXELS: i64 = 50_000_000; // ~50 MP — a bounded transient even at RGBA
+    match Pixbuf::file_info(path) {
+        Some((_, w, h)) if (w as i64) * (h as i64) <= MAX_PIXELS => {}
+        _ => return fallback_viewer(path),
     }
     let pixbuf = Pixbuf::from_file(path).ok();
     let (iw, ih) = pixbuf
@@ -831,6 +831,22 @@ fn wrap_zoomable(content: &ScrolledWindow, apply: impl Fn(Option<f64>) + 'static
 /// A scrollable column of rendered pages for a PDF or office document. The actual
 /// rendering happens on a worker thread; pages stream in as they're produced.
 fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
+    // One page of the streamed preview. The PNG is on disk; `pic`'s texture is loaded
+    // only while the page is inside the scroll window (see `refresh_visible`), so a
+    // long document never holds every page resident at once.
+    struct DocPage {
+        pic: Picture,
+        path: PathBuf,
+        aspect: f64,        // page height / width — reserves layout height while unloaded
+        height: Cell<i32>,  // current estimated display height, updated on zoom
+        loaded: Cell<bool>, // whether its texture is currently decoded
+    }
+    // Must match the GtkBox spacing/margin set below; window = pages kept loaded each
+    // side of the viewport.
+    const DOC_COL_MARGIN_TOP: i32 = 12;
+    const DOC_PAGE_SPACING: i32 = 14;
+    const DOC_WINDOW_MARGIN: usize = 2;
+
     let column = GtkBox::new(Orientation::Vertical, 14);
     column.set_halign(Align::Fill);
     column.set_margin_top(12);
@@ -864,6 +880,83 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     // Streaming pages adopt the current mode as they arrive.
     let mode: Rc<Cell<Option<f64>>> = Rc::new(Cell::new(None));
 
+    // Page virtualization: keep only a window of pages decoded into GdkTextures.
+    // Without this a long document holds every page resident (~15 MB/page at 200 DPI)
+    // and exhausts memory. Each page's box is reserved from the PNG header up front so
+    // scrolling is stable before a page's texture loads.
+    let pages: Rc<RefCell<Vec<DocPage>>> = Rc::new(RefCell::new(Vec::new()));
+    let refresh_visible: Rc<dyn Fn()> = {
+        let pages = pages.clone();
+        let scroller = scroller.clone();
+        let busy = Rc::new(Cell::new(false));
+        Rc::new(move || {
+            // A texture (re)load can queue a resize that re-fires the adjustment
+            // signals; this guard stops that re-entering and double-borrowing `pages`.
+            if busy.replace(true) {
+                return;
+            }
+            {
+                let pages = pages.borrow();
+                let n = pages.len();
+                if n != 0 {
+                    let vadj = scroller.vadjustment();
+                    let scroll = vadj.value();
+                    let page_size = vadj.page_size().max(1.0);
+                    // First page whose bottom is past the scroll offset = top visible.
+                    let mut acc = DOC_COL_MARGIN_TOP as f64;
+                    let mut top = 0usize;
+                    for (i, p) in pages.iter().enumerate() {
+                        top = i;
+                        let h = p.height.get().max(1) as f64;
+                        if acc + h >= scroll {
+                            break;
+                        }
+                        acc += h + DOC_PAGE_SPACING as f64;
+                    }
+                    // Walk forward to the last page touching the viewport bottom.
+                    let mut bottom = top;
+                    let mut y = acc;
+                    for i in top..n {
+                        bottom = i;
+                        let h = pages[i].height.get().max(1) as f64;
+                        if y + h >= scroll + page_size {
+                            break;
+                        }
+                        y += h + DOC_PAGE_SPACING as f64;
+                    }
+                    let lo = top.saturating_sub(DOC_WINDOW_MARGIN);
+                    let hi = (bottom + DOC_WINDOW_MARGIN).min(n - 1);
+                    for (i, p) in pages.iter().enumerate() {
+                        let want = i >= lo && i <= hi;
+                        if want && !p.loaded.get() {
+                            p.pic.set_filename(Some(p.path.as_path()));
+                            // Texture now drives the height so a panel resize re-fits it.
+                            p.pic.set_size_request(p.pic.width_request(), -1);
+                            p.loaded.set(true);
+                        } else if !want && p.loaded.get() {
+                            p.pic.set_paintable(None::<&gtk4::gdk::Paintable>);
+                            // Re-reserve the estimated height the texture had provided.
+                            p.pic.set_size_request(p.pic.width_request(), p.height.get());
+                            p.loaded.set(false);
+                        }
+                    }
+                }
+            }
+            busy.set(false);
+        })
+    };
+    {
+        let vadj = scroller.vadjustment();
+        {
+            let r = refresh_visible.clone();
+            vadj.connect_value_changed(move |_| r());
+        }
+        {
+            let r = refresh_visible.clone();
+            vadj.connect_changed(move |_| r());
+        }
+    }
+
     // Bounded so a slow UI applies backpressure to the worker instead of letting
     // page messages queue without limit; the worker bails if the receiver is gone.
     let (tx, rx) = async_channel::bounded::<preview::Msg>(32);
@@ -876,6 +969,8 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     let p = path.to_path_buf();
     let mode_rx = mode.clone();
     let sc_rx = scroller.clone();
+    let pages_rx = pages.clone();
+    let refresh_rx = refresh_visible.clone();
     glib::spawn_future_local(async move {
         while let Ok(msg) = rx.recv().await {
             match msg {
@@ -890,13 +985,27 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                         eprintln!("tcode: preview page vanished: {}", page.display());
                         continue;
                     }
-                    let pic = Picture::for_filename(&page);
+                    // Reserve the page's box from the PNG header without decoding it;
+                    // refresh_visible loads the texture only once it scrolls near view.
+                    let (pw, ph) = Pixbuf::file_info(&page)
+                        .map(|(_, w, h)| (w.max(1) as f64, h.max(1) as f64))
+                        .unwrap_or((1.0, 1.0));
+                    let aspect = ph / pw;
+                    let pic = Picture::new();
                     pic.set_can_shrink(true);
                     pic.set_content_fit(ContentFit::Contain);
                     pic.set_halign(Align::Center);
                     pic.add_css_class("doc-page");
-                    size_doc_page(&pic, mode_rx.get(), sc_rx.width());
+                    let h = size_doc_page(&pic, aspect, mode_rx.get(), sc_rx.width());
                     col.append(&pic);
+                    pages_rx.borrow_mut().push(DocPage {
+                        pic,
+                        path: page,
+                        aspect,
+                        height: Cell::new(h),
+                        loaded: Cell::new(false),
+                    });
+                    refresh_rx();
                 }
                 preview::Msg::Done => {
                     sp.stop();
@@ -916,38 +1025,41 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
         }
     });
 
-    let col2 = column.clone();
     // Weak: the scroller owns the scroll controller that holds this closure, so a
     // strong ref here would form a cycle and leak the page subtree on tab close.
     let sc_weak = scroller.downgrade();
+    let pages_zoom = pages.clone();
+    let refresh_zoom = refresh_visible.clone();
     wrap_zoomable(&scroller, move |z| {
         mode.set(z);
         let panel = sc_weak.upgrade().map(|s| s.width()).unwrap_or(800);
-        let mut child = col2.first_child();
-        while let Some(c) = child {
-            let next = c.next_sibling();
-            if let Ok(pic) = c.downcast::<Picture>() {
-                size_doc_page(&pic, z, panel);
+        for p in pages_zoom.borrow().iter() {
+            let h = size_doc_page(&p.pic, p.aspect, z, panel);
+            p.height.set(h);
+            // A loaded page keeps texture-driven height so a later resize re-fits it.
+            if p.loaded.get() {
+                p.pic.set_size_request(p.pic.width_request(), -1);
             }
-            child = next;
         }
+        refresh_zoom();
     })
 }
 
-/// Size one document page: `None` fits the page to the panel width; `Some(z)`
-/// renders it at `panel_width * z` (overflowing → scrollable).
-fn size_doc_page(pic: &Picture, z: Option<f64>, panel: i32) {
-    match z {
-        None => {
-            pic.set_hexpand(true);
-            pic.set_size_request(-1, -1);
-        }
-        Some(z) => {
-            pic.set_hexpand(false);
-            let w = ((panel.max(200) as f64) * z).round() as i32;
-            pic.set_size_request(w.max(120), -1);
-        }
-    }
+/// Size one document page and return its estimated display height (px). `None`
+/// fits the page to the panel width; `Some(z)` renders it at `panel_width * z`
+/// (overflowing → scrollable). The height is derived from `aspect` (page h/w) so
+/// an unloaded page reserves correct layout space before its texture loads; once
+/// loaded, `refresh_visible` releases the height back to the texture (Contain).
+fn size_doc_page(pic: &Picture, aspect: f64, z: Option<f64>, panel: i32) -> i32 {
+    let panel = panel.max(200);
+    let (w, fit) = match z {
+        None => ((panel - 20).max(120), true), // fit width, minus the column's side margins
+        Some(z) => ((((panel as f64) * z).round() as i32).max(120), false),
+    };
+    let h = ((w as f64) * aspect).round().max(1.0) as i32;
+    pic.set_hexpand(fit);
+    pic.set_size_request(if fit { -1 } else { w }, h);
+    h
 }
 
 /// Display label for a file: its file name, or the full path if it has none.
@@ -1016,13 +1128,34 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+/// The file's current permission bits (so an atomic rewrite preserves them), or a
+/// sensible default for a new or unreadable file.
+fn file_mode(path: &Path) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o777)
+            .unwrap_or(0o644)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        0o644
+    }
+}
+
 fn save_current(nb: &Notebook, open: &OpenFiles) {
     let Some(cur) = nb.current_page() else { return };
     let files = open.borrow();
     if let Some(of) = files.iter().find(|of| nb.page_num(&of.child) == Some(cur)) {
         if let Some(b) = &of.buffer {
             let text = b.text(&b.start_iter(), &b.end_iter(), false);
-            if let Err(e) = std::fs::write(&of.path, text.as_str()) {
+            // Atomic write (temp + rename) preserving the file's mode, so a crash
+            // mid-save can't corrupt or truncate the user's source file.
+            if let Err(e) =
+                tcode_core::fsutil::atomic_write(&of.path, text.as_bytes(), file_mode(&of.path))
+            {
                 eprintln!("tcode: save failed for {}: {e}", of.path.display());
             }
         }
