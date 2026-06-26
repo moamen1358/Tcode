@@ -21,6 +21,9 @@ pub struct OverlayHost {
     /// The currently-open modal panel, if any. Passive panels (the screenshot
     /// preview toast, the shots tray) are shown directly and don't go here.
     open: RefCell<Option<Widget>>,
+    /// Widget that held keyboard focus before a panel opened, so close() can hand it
+    /// back (e.g. to the terminal) instead of stranding focus on the hidden panel.
+    prev_focus: RefCell<Option<gtk4::glib::WeakRef<Widget>>>,
 }
 
 impl OverlayHost {
@@ -42,6 +45,7 @@ impl OverlayHost {
             root: root.clone(),
             scrim: scrim.clone(),
             open: RefCell::new(None),
+            prev_focus: RefCell::new(None),
         });
 
         // Click the scrim (outside the open panel) → close.
@@ -99,6 +103,15 @@ impl OverlayHost {
     /// Show `panel` as the modal overlay: reveal the scrim, show + focus it.
     pub fn open(&self, panel: &impl IsA<Widget>) {
         self.close(); // hide any currently-open panel first
+        // Remember what held focus (e.g. the terminal) BEFORE we grab it into the
+        // panel, so close() can hand focus back instead of stranding it on the hidden
+        // panel and silently dropping the user's keystrokes.
+        *self.prev_focus.borrow_mut() = self
+            .root
+            .root()
+            .and_downcast::<gtk4::Window>()
+            .and_then(|win| GtkWindowExt::focus(&win))
+            .map(|w| w.downgrade());
         self.scrim.set_visible(true);
         let w: Widget = panel.clone().upcast();
         w.set_visible(true);
@@ -112,6 +125,14 @@ impl OverlayHost {
             w.set_visible(false);
         }
         self.scrim.set_visible(false);
+        // Hand focus back to whatever held it before we opened (e.g. the terminal),
+        // so dismissing the palette (Esc / scrim / second Alt+V) without pasting
+        // doesn't leave keystrokes going nowhere.
+        if let Some(prev) = self.prev_focus.borrow_mut().take() {
+            if let Some(w) = prev.upgrade() {
+                w.grab_focus();
+            }
+        }
     }
 
     /// Open `panel` if it isn't the open one; close if it is.

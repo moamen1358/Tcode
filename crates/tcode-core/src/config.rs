@@ -153,6 +153,18 @@ impl Config {
 
     /// Persist to the standard config path (creating the dir as needed).
     pub fn save(&self) {
+        let path = config_path();
+        // Don't silently clobber a config file that currently fails to parse: a single
+        // typo would otherwise be lost the moment the app — now running on defaults
+        // (see from_str_or_default) — next persists (e.g. a zoom/font change). Back the
+        // unparseable file up to <name>.bak first so the user can recover their values.
+        if let Ok(existing) = std::fs::read_to_string(&path) {
+            if toml::from_str::<Config>(&existing).is_err() {
+                let mut bak = path.clone().into_os_string();
+                bak.push(".bak");
+                let _ = std::fs::rename(&path, PathBuf::from(bak));
+            }
+        }
         let text = match toml::to_string_pretty(self) {
             Ok(t) => t,
             Err(e) => {
@@ -162,7 +174,7 @@ impl Config {
         };
         // Atomic + owner-only (0o600): a torn write must never leave a half-file
         // that parses back to defaults and silently loses the user's settings.
-        if let Err(e) = crate::fsutil::atomic_write(&config_path(), text.as_bytes(), 0o600) {
+        if let Err(e) = crate::fsutil::atomic_write(&path, text.as_bytes(), 0o600) {
             eprintln!("tcode: failed to write config: {e}");
         }
     }

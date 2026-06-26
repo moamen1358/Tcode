@@ -1033,14 +1033,31 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_start_child(false);
     content.set_resize_end_child(true);
     content.set_shrink_end_child(false);
-    // Cap the right tray's width (= middle's width − position) like the other panels.
-    middle.connect_position_notify(move |p| {
-        let mw = p.width();
-        let pos = p.position();
-        if mw > 0 && pos < mw - SIDEBAR_MAX_WIDTH {
-            p.set_position(mw - SIDEBAR_MAX_WIDTH); // re-fires; handled next pass
-        }
-    });
+    // Cap the right tray's width (= middle's width − position) like the other panels,
+    // AND freeze the terminals across the drag: this divider resizes the work area
+    // (center, which holds the terminal grid), so without the freeze the prompt
+    // reflows and garbles — same as the sidebar/viewer dividers below. Value-guarded
+    // so our own clamp (and no-op notifies) don't re-trigger it.
+    {
+        let weak = Rc::downgrade(state);
+        let last = Cell::new(-1);
+        middle.connect_position_notify(move |p| {
+            let mw = p.width();
+            let pos = p.position();
+            if mw > 0 && pos < mw - SIDEBAR_MAX_WIDTH {
+                p.set_position(mw - SIDEBAR_MAX_WIDTH); // re-fires; handled next pass
+                return;
+            }
+            if last.replace(pos) == pos {
+                return;
+            }
+            if let Some(st) = weak.upgrade() {
+                if let Some(g) = st.borrow().grid.as_ref() {
+                    g.freeze_for_resize();
+                }
+            }
+        });
+    }
     content.add_css_class("work-area"); // same backdrop behind the files rail
     content.set_position(240);
 
