@@ -339,6 +339,11 @@ impl Grid {
     }
 
     pub fn add_pane(&self) {
+        // Bound the pane count like Grid::new's clamp(1, 16), so holding Alt+n
+        // (key-repeat) can't spawn unbounded shells/PTYs.
+        if self.inner.borrow().panes.len() >= 16 {
+            return;
+        }
         let pane = self.make_pane();
         let id = pane.id;
         {

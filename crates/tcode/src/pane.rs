@@ -4,7 +4,6 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::rc::Rc;
 
 use gtk4::gdk::{ModifierType, BUTTON_PRIMARY, BUTTON_SECONDARY, RGBA};
@@ -326,9 +325,17 @@ fn open_link(matched: &str, terminal: &Terminal, on_open: &OpenFn) -> bool {
         // The scheme prefix rules out leading-dash flag injection; keep it bounded
         // and control-char-free before handing it to the browser.
         if s.len() <= 4096 && !s.contains(char::is_control) {
-            if let Err(e) = Command::new("xdg-open").arg(s).spawn() {
-                eprintln!("tcode: xdg-open failed for {s}: {e}");
-            }
+            // GtkUriLauncher manages the helper process (no leaked zombie like a bare
+            // `xdg-open` spawn whose Child is never reaped) and routes through the XDG
+            // portal, so it also works under the Flatpak/Docker distribution mode.
+            let win = terminal.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            let uri = s.to_string();
+            let launcher = gtk4::UriLauncher::new(&uri);
+            launcher.launch(win.as_ref(), gtk4::gio::Cancellable::NONE, move |res| {
+                if let Err(e) = res {
+                    eprintln!("tcode: failed to open {uri}: {e}");
+                }
+            });
         }
         return true;
     }
