@@ -19,6 +19,11 @@ pub(crate) fn shell_quote(p: &Path) -> String {
 /// Cap on paths accepted from a single drop, so one drop can't flood the shell.
 const MAX_DROP_PATHS: usize = 100;
 
+/// Cap on lines scanned from a dropped text blob, so a huge/hostile payload
+/// can't tie up the main thread. Comfortably above MAX_DROP_PATHS so real
+/// multi-line drops (with blank/comment lines) still resolve fully.
+const MAX_DROP_TEXT_LINES: usize = 1000;
+
 pub(crate) fn shell_join_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -91,8 +96,16 @@ fn paths_from_drop_value(value: &glib::Value) -> Option<Vec<PathBuf>> {
 
 fn paths_from_text(text: &str) -> Vec<PathBuf> {
     text.lines()
+        // Bound the lines scanned up front so the work below is O(cap), not
+        // O(payload), no matter how large the dropped text is.
+        .take(MAX_DROP_TEXT_LINES)
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#') && line.len() <= 4096)
+        // Cap candidate paths BEFORE probing the filesystem below: a take() after
+        // filter_map is lazy and would keep stat()ing non-existent lines until the
+        // cap of *successes* is hit. Capping here bounds stat() calls to the cap
+        // regardless of how many candidates miss.
+        .take(MAX_DROP_PATHS)
         .filter_map(|line| {
             let p = if line.starts_with("file://") {
                 gio::File::for_uri(line).path()?
@@ -103,6 +116,5 @@ fn paths_from_text(text: &str) -> Vec<PathBuf> {
             // dropped text into a bogus "path" fed to the shell.
             p.exists().then_some(p)
         })
-        .take(MAX_DROP_PATHS)
         .collect()
 }

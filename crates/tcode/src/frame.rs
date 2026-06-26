@@ -40,7 +40,7 @@ use tools::{Tool, PALETTE};
 pub struct Frame {
     /// The window's child: the content with the (hidden) annotation overlay.
     pub root: Overlay,
-    /// The screenshots gallery — the host embeds this at the sidebar's bottom.
+    /// The screenshots tray — the host docks this as the far-right column (Alt+P).
     pub panel_root: GtkBox,
     /// Start a capture (region-select → annotate). Wired to the titlebar camera.
     pub capture: Rc<dyn Fn()>,
@@ -82,9 +82,11 @@ pub fn integrate(
             (shot.clone(), annot.clone(), area.clone(), on_annot_open.clone());
         Rc::new(move |pb: Pixbuf| {
             // The annotator takes over the whole work area — hide the floating
-            // panels (the right-edge shots tray, the clipboard palette) so they
-            // don't overlap its toolbar (Save/Close sit at the toolbar's right).
+            // panels (the right-edge shots tray, the clipboard palette) and any
+            // lingering capture preview so none overlaps its toolbar/canvas
+            // (Save/Close sit at the toolbar's right).
             on_annot_open();
+            dismiss_current_preview();
             add_doc(&shot, pb);
             annot.set_visible(true);
             area.set_focusable(true);
@@ -187,6 +189,37 @@ pub fn integrate(
     }
 }
 
+/// A handle to the live capture preview so a later capture — or the annotator
+/// opening — can dismiss it early instead of letting cards stack or linger.
+struct PreviewHandle {
+    revealer: glib::WeakRef<Revealer>,
+    timer: Rc<RefCell<Option<glib::SourceId>>>,
+}
+
+thread_local! {
+    /// The single capture preview currently floating, if any. GTK runs on one
+    /// thread, so a thread-local is enough to track the one live card without
+    /// threading a slot through the overlay host.
+    static CURRENT_PREVIEW: RefCell<Option<PreviewHandle>> = const { RefCell::new(None) };
+}
+
+/// Dismiss the capture preview currently floating (if any): cancel its armed fade
+/// timer and fade it out — its child-revealed handler then drops it from the
+/// overlay. A no-op when nothing is showing.
+fn dismiss_current_preview() {
+    // Take the handle out (releasing the thread-local borrow) before touching the
+    // widget, so no borrow is held across the re-entrant GTK call.
+    let handle = CURRENT_PREVIEW.with(|cur| cur.borrow_mut().take());
+    if let Some(handle) = handle {
+        if let Some(id) = handle.timer.borrow_mut().take() {
+            id.remove();
+        }
+        if let Some(r) = handle.revealer.upgrade() {
+            r.set_reveal_child(false);
+        }
+    }
+}
+
 /// Float a single just-captured image in the bottom-left corner over the work
 /// area (no scrim). It fades out after ~30 seconds left alone; hovering cancels
 /// the fade. Drag it onto a terminal to insert its path, or click it to re-open
@@ -230,9 +263,12 @@ pub fn show_screenshot_preview(
         .transition_duration(250)
         .child(&card)
         .build();
+    // Replace any preview still floating from an earlier capture, so the cards
+    // don't stack at the corner.
+    dismiss_current_preview();
     host.add_panel(&revealer, Align::Start, Align::End, 14);
 
-    // Fade timer: a ~1-minute countdown to hide; hovering cancels, leaving restarts.
+    // Fade timer: a ~30-second countdown to hide; hovering cancels, leaving restarts.
     let timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     let arm: Rc<dyn Fn()> = {
         let (timer, revealer) = (timer.clone(), revealer.downgrade());
@@ -279,9 +315,15 @@ pub fn show_screenshot_preview(
 
     // Click the image → re-open it in the annotator and dismiss the preview.
     {
-        let (reopen, path, revealer) = (reopen.clone(), path.clone(), revealer.downgrade());
+        let (reopen, path, revealer, timer) =
+            (reopen.clone(), path.clone(), revealer.downgrade(), timer.clone());
         let click = GestureClick::new();
         click.connect_released(move |_, _, _, _| {
+            // Cancel the armed fade first, so the timeout can't fire after the
+            // click has already dismissed (and re-opened) the preview.
+            if let Some(id) = timer.borrow_mut().take() {
+                id.remove();
+            }
             reopen(path.clone());
             if let Some(r) = revealer.upgrade() {
                 r.set_reveal_child(false);
@@ -289,6 +331,16 @@ pub fn show_screenshot_preview(
         });
         img.add_controller(click);
     }
+
+    // Track this as the live preview so the next capture / annotator-open can
+    // dismiss it. Held weakly: a natural fade frees the revealer and leaves a
+    // harmless stale handle that the next capture overwrites.
+    CURRENT_PREVIEW.with(|cur| {
+        *cur.borrow_mut() = Some(PreviewHandle {
+            revealer: revealer.downgrade(),
+            timer: timer.clone(),
+        });
+    });
 
     revealer.set_visible(true);
     revealer.set_reveal_child(true);

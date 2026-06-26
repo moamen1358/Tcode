@@ -26,6 +26,10 @@ struct LiveContent {
     content: Paned,
     host: Rc<crate::overlay::OverlayHost>,
     palette: gtk4::Box,
+    /// The session this content belongs to, so an emptied *active* session can hand
+    /// off to another live session by value without reloading it from disk (an
+    /// ephemeral `tcode N` session isn't on disk to reload).
+    session: Session,
 }
 
 use crate::editor::Editor;
@@ -44,6 +48,12 @@ const VIEWER_MAX_WIDTH: i32 = 800;
 
 /// Maximum width (px) for the file sidebar. Same idea as `VIEWER_MAX_WIDTH`.
 const SIDEBAR_MAX_WIDTH: i32 = 400;
+
+/// Maximum width (px) for the right-side screenshots tray. Its thumbnail column is
+/// only ~120px wide (`frame/gallery.rs`), so it gets its own tighter cap rather than
+/// reusing the file-sidebar's 400px — otherwise the divider drags it ~3x past its
+/// content into empty space.
+const SHOTS_TRAY_MAX_WIDTH: i32 = 160;
 
 pub struct State {
     pub window: ApplicationWindow,
@@ -547,6 +557,19 @@ fn new_session(state: &Shared) {
             s.panes = panes;
             s.save();
             st_create.borrow_mut().save_sessions = true;
+            // If this folder is already live this run with a *different* pane count, a
+            // plain reveal would keep the old grid and silently ignore the count just
+            // chosen. Drop the kept-alive page first so open_session rebuilds it to the
+            // new count; an unchanged count still reveals (keeping its running shells).
+            let stale = {
+                let st = st_create.borrow();
+                st.live
+                    .get(&s.id)
+                    .is_some_and(|lc| lc.grid.pane_count() != s.panes.max(1))
+            };
+            if stale {
+                drop_live(&st_create, &s.id);
+            }
             open_session(&st_create, s);
         },
         move || match prev.clone() {
@@ -630,6 +653,7 @@ fn build_session(state: &Shared, session: Session) {
             Some(content),
             Some(host),
             Some(palette),
+            Some(session),
         ) = (
             s.grid.clone(),
             s.sidebar.clone(),
@@ -640,6 +664,7 @@ fn build_session(state: &Shared, session: Session) {
             s.content_paned.clone(),
             s.host.clone(),
             s.palette.clone(),
+            s.current.clone(), // == this session (set just above); kept for hand-off
         ) {
             s.live.insert(
                 id.clone(),
@@ -653,6 +678,7 @@ fn build_session(state: &Shared, session: Session) {
                     content,
                     host,
                     palette,
+                    session,
                 },
             );
         }
@@ -678,6 +704,7 @@ fn reveal_session(state: &Shared, session: Session) {
         editor_active,
         shots_panel,
         shots_active,
+        host,
     ) = {
         let mut s = state.borrow_mut();
         if let Some(lc) = s.live.get(&id).cloned() {
@@ -700,11 +727,19 @@ fn reveal_session(state: &Shared, session: Session) {
             s.editor_btn.is_active(),
             s.shots_panel.clone(),
             s.shots_btn.is_active(),
+            s.host.clone(),
         )
     };
     // Flip the stack with no borrow held: mapping the revealed page can re-enter
     // GTK signal handlers, and holding a borrow across that risks a RefCell panic.
     stack.set_visible_child_name(&id);
+    // Close this session's overlay before it shows: if its clipboard palette (Alt+V)
+    // was left open when we last switched away, the scrim + palette would otherwise
+    // re-appear unbidden over the revealed page. close() only flips widget visibility
+    // (and restores focus), so it's safe here with no borrow held.
+    if let Some(host) = host.as_ref() {
+        host.close();
+    }
     // Re-sync every panel to its global titlebar toggle. Each session keeps its own
     // panel widgets, so a panel hidden/shown while another session was active would
     // otherwise reveal here out of step with its toggle button (one stale click to fix).
@@ -952,17 +987,39 @@ pub fn show_grid(state: &Shared, n: usize) {
             let Some(st) = weak.upgrade() else {
                 return;
             };
-            let (active, window) = {
-                let s = st.borrow();
-                (
-                    s.current.as_ref().is_some_and(|s| s.id == session_id),
-                    s.window.clone(),
-                )
-            };
-            if active {
-                window.close();
-            } else {
+            // Is the session that just emptied the one currently on screen?
+            let active = st
+                .borrow()
+                .current
+                .as_ref()
+                .is_some_and(|s| s.id == session_id);
+            if !active {
+                // A backgrounded session's last pane exited: just drop that one.
                 drop_live(&st, &session_id);
+                return;
+            }
+            // The visible session emptied. If another session is still live, hand off
+            // to it and drop only the emptied one — closing the window here would also
+            // kill every *other* live session's background shells. Clone the next
+            // session out under a short borrow, then act with no borrow held (drop_live
+            // / reveal_session / window.close all re-enter GTK).
+            let next = {
+                let s = st.borrow();
+                s.live
+                    .iter()
+                    .find(|(id, _)| id.as_str() != session_id)
+                    .map(|(_, lc)| lc.session.clone())
+            };
+            match next {
+                Some(next) => {
+                    drop_live(&st, &session_id);
+                    reveal_session(&st, next);
+                }
+                // Last live session emptied → nothing left to show; close the window.
+                None => {
+                    let window = st.borrow().window.clone();
+                    window.close();
+                }
             }
         })
     };
@@ -1033,19 +1090,20 @@ pub fn show_grid(state: &Shared, n: usize) {
     content.set_shrink_start_child(false);
     content.set_resize_end_child(true);
     content.set_shrink_end_child(false);
-    // Cap the right tray's width (= middle's width − position) like the other panels,
-    // AND freeze the terminals across the drag: this divider resizes the work area
-    // (center, which holds the terminal grid), so without the freeze the prompt
-    // reflows and garbles — same as the sidebar/viewer dividers below. Value-guarded
-    // so our own clamp (and no-op notifies) don't re-trigger it.
+    // Cap the right tray's width (= middle's width − position) with its own tight cap
+    // (its thumbnails are ~120px), AND freeze the terminals across the drag: this
+    // divider resizes the work area (center, which holds the terminal grid), so
+    // without the freeze the prompt reflows and garbles — same as the sidebar/viewer
+    // dividers below. Value-guarded so our own clamp (and no-op notifies) don't
+    // re-trigger it.
     {
         let weak = Rc::downgrade(state);
         let last = Cell::new(-1);
         middle.connect_position_notify(move |p| {
             let mw = p.width();
             let pos = p.position();
-            if mw > 0 && pos < mw - SIDEBAR_MAX_WIDTH {
-                p.set_position(mw - SIDEBAR_MAX_WIDTH); // re-fires; handled next pass
+            if mw > 0 && pos < mw - SHOTS_TRAY_MAX_WIDTH {
+                p.set_position(mw - SHOTS_TRAY_MAX_WIDTH); // re-fires; handled next pass
                 return;
             }
             if last.replace(pos) == pos {
@@ -1111,11 +1169,11 @@ pub fn show_grid(state: &Shared, n: usize) {
     }
 
     // Wrap the content with Frame's annotation layer (shown over the content
-    // only while editing a capture), and embed the screenshots gallery at the
-    // bottom of the file sidebar.
+    // only while editing a capture), and dock the screenshots gallery as the
+    // far-right column (Alt+P) via middle.set_end_child below.
     let window = state.borrow().window.clone();
     // On capture+save, float a single just-captured image in the bottom-left for
-    // ~1 minute (the full history lives in the right-side tray). Host + reopen exist
+    // ~30 seconds (the full history lives in the right-side tray). Host + reopen exist
     // only after integrate, so route on_saved through a slot filled just below.
     let preview_hook: Rc<RefCell<Option<PathHook>>> = Rc::new(RefCell::new(None));
     let on_saved: PathHook = {

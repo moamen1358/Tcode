@@ -1,7 +1,7 @@
 //! Global Alt-based keyboard shortcuts, installed on the window in the CAPTURE
 //! phase so the focused VTE terminal doesn't swallow them first.
 
-use gtk4::gdk::{Key, ModifierType};
+use gtk4::gdk::{Display, Key, ModifierType};
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{ApplicationWindow, EventControllerKey, PropagationPhase};
@@ -14,7 +14,7 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
     controller.set_propagation_phase(PropagationPhase::Capture);
 
     let st = state.clone();
-    controller.connect_key_pressed(move |_c, keyval, _code, mods| {
+    controller.connect_key_pressed(move |_c, keyval, keycode, mods| {
         // Ctrl+Shift+C / Ctrl+Shift+V: copy / paste in the focused terminal
         // (plain Ctrl+C must stay SIGINT, so copy/paste take the Shift variant).
         if mods.contains(ModifierType::CONTROL_MASK) && mods.contains(ModifierType::SHIFT_MASK) {
@@ -50,6 +50,13 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                     reset_view(&st);
                     return Propagation::Stop;
                 }
+                // Reset zoom on Ctrl+0 from the number row on non-US layouts too
+                // (e.g. AZERTY, where the bare 0 key's keyval isn't Key::_0):
+                // resolve the digit layout-robustly from the hardware keycode.
+                _ if number_row_digit(keyval, keycode, mods) == Some(0) => {
+                    reset_view(&st);
+                    return Propagation::Stop;
+                }
                 _ => {}
             }
         }
@@ -58,21 +65,11 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
             return Propagation::Proceed;
         }
 
-        // Alt+digit -> rebuild the grid with that many panes.
-        let digit = match keyval {
-            Key::_1 => Some(1),
-            Key::_2 => Some(2),
-            Key::_3 => Some(3),
-            Key::_4 => Some(4),
-            Key::_5 => Some(5),
-            Key::_6 => Some(6),
-            Key::_7 => Some(7),
-            Key::_8 => Some(8),
-            Key::_9 => Some(9),
-            _ => None,
-        };
-        if let Some(n) = digit {
-            set_panes(&st, n);
+        // Alt+digit -> rebuild the grid with that many panes. Resolve the digit
+        // layout-robustly (see number_row_digit) so the physical number row
+        // drives this even on layouts that need Shift for digits (e.g. AZERTY).
+        if let Some(n) = number_row_digit(keyval, keycode, mods).filter(|&d| (1..=9).contains(&d)) {
+            set_panes(&st, n as usize);
             return Propagation::Stop;
         }
 
@@ -149,4 +146,27 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
     });
 
     window.add_controller(controller);
+}
+
+/// The decimal digit (0..=9) a number-row key produces, resolved by the physical
+/// key so the digit shortcuts survive non-US keyboard layouts.
+///
+/// `keyval` is already the digit on US/QWERTY (tried first, so that path stays
+/// exact). Otherwise, only when Shift is NOT held, a non-digit number-row keyval
+/// means a layout that needs Shift for its digits (e.g. AZERTY, where the bare
+/// `1` key yields `&`): we ask the keymap which keyvals that hardware `keycode`
+/// can produce and take the digit. With Shift held the non-digit keyval is a
+/// deliberate shifted symbol (e.g. US Alt+Shift+1 = `!`), so we do not fall back
+/// — keeping US-layout behavior identical.
+fn number_row_digit(keyval: Key, keycode: u32, mods: ModifierType) -> Option<u32> {
+    if let Some(d) = keyval.to_unicode().and_then(|c| c.to_digit(10)) {
+        return Some(d);
+    }
+    if mods.contains(ModifierType::SHIFT_MASK) {
+        return None;
+    }
+    let entries = Display::default()?.map_keycode(keycode)?;
+    entries
+        .into_iter()
+        .find_map(|(_, kv)| kv.to_unicode().and_then(|c| c.to_digit(10)))
 }

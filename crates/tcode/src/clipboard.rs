@@ -1,13 +1,15 @@
-//! Clipboard-history strip in the sidebar: a CLIPBOARD header with a Clear
-//! button (which asks for confirmation), then a scrollable stack of minimal
-//! cards — each just the copied text in a rectangle (two-line preview) with pin
-//! and delete (×) buttons. Click a card to copy it again; pin keeps an entry at
-//! the top, exempt from Clear and the entry cap. Records every text copied to the
-//! system clipboard (from any app) while Tcode runs, newest on top, and saves
-//! the history to disk so it survives restarts.
+//! Clipboard history, surfaced through the **Alt+V command palette** (`palette`):
+//! a search box over a scrollable list of every text copied to the system
+//! clipboard (from any app) while Tcode runs, newest first. Enter or a row click
+//! pastes the selected entry, Ctrl+Enter copies it back to the clipboard, and
+//! Delete removes it from history; ↑/↓ move the selection and the list filters
+//! live as you type. When `clipboard_persist` is on, the history is saved to disk
+//! so it survives restarts.
 //!
-//! The card widgets are a view over `entries` (the source of truth); any change
-//! updates that list, rebuilds the cards, and re-saves the history file.
+//! `entries` is the source of truth; the palette renders a filtered snapshot of it
+//! and every change re-saves the history file. (`build`/`rebuild`/`build_card`
+//! construct a legacy docked sidebar strip that is no longer parented — the
+//! palette is the only surfaced UI.)
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -347,7 +349,12 @@ impl Panel {
                 break;
             };
             let Ok(text) = std::str::from_utf8(&data[start..end]) else {
-                break;
+                // Recoverable: the length prefix was valid, so we know exactly where
+                // this record ends — skip just this bad-UTF-8 entry and resync at the
+                // next record rather than dropping the whole tail.
+                eprintln!("tcode: skipping malformed clipboard history record");
+                i = end.saturating_add(1);
+                continue;
             };
             let id = self.next_id.get();
             self.next_id.set(id + 1);
@@ -392,19 +399,16 @@ impl Panel {
 
     // --- Alt+V command palette (a search-filtered view over the same model) ---
 
-    /// Texts of all entries in display order (pinned-first), for the palette filter.
-    pub fn texts_in_order(&self) -> Vec<String> {
-        self.entries.borrow().iter().map(|e| e.text.clone()).collect()
-    }
-
-    /// Text of the entry at display index `idx`, if any.
-    pub fn entry_text(&self, idx: usize) -> Option<String> {
-        self.entries.borrow().get(idx).map(|e| e.text.clone())
-    }
-
-    /// Whether the entry at display index `idx` is pinned.
-    pub fn entry_is_pinned(&self, idx: usize) -> bool {
-        self.entries.borrow().get(idx).map(|e| e.pinned).unwrap_or(false)
+    /// `(id, text, pinned)` for every entry in display order (pinned-first) — a
+    /// stable snapshot the palette renders each row from, so Enter/Delete keep
+    /// acting on the entry the user sees even if the clipboard watcher records a
+    /// new copy (shifting the live model) while the palette is open.
+    fn snapshot(&self) -> Vec<(u64, String, bool)> {
+        self.entries
+            .borrow()
+            .iter()
+            .map(|e| (e.id, e.text.clone(), e.pinned))
+            .collect()
     }
 
     /// Copy `text` to the system clipboard (the palette's Ctrl-activate path).
@@ -447,25 +451,32 @@ impl Panel {
         root.append(&scroll);
 
         // Key-hints footer (discoverability).
-        let footer = Label::new(Some("↵  paste        ⌃↵  copy        esc  close"));
+        let footer = Label::new(Some("↵  paste     ⌃↵  copy     del  delete     esc  close"));
         footer.set_xalign(0.0);
         footer.add_css_class("clip-pal-footer");
         root.append(&footer);
 
         // Selection index into the *currently shown* (filtered) rows.
         let sel = Rc::new(Cell::new(0usize));
-        let shown: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+        // Per-shown-row snapshot: (id, text) for each visible row, captured at render
+        // time so Enter/Delete act on the entry the user sees even if the clipboard
+        // watcher reorders the live model while the palette is open.
+        let shown: Rc<RefCell<Vec<(u64, String)>>> = Rc::new(RefCell::new(Vec::new()));
+        // The visible row widgets (parallel to `shown`), so arrow-key navigation can
+        // restyle/scroll the active row without tearing down and rebuilding the list.
+        let rows: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
 
         // (Re)render the filtered rows for the current query. `search` is held
         // weakly so the entry's own signal handlers (which capture `render`) can't
         // form a reference cycle that leaks the palette.
         let render: Rc<dyn Fn()> = {
-            let (panel, list, search_w, sel, shown, on_paste, host) = (
+            let (panel, list, search_w, sel, shown, rows, on_paste, host) = (
                 self.clone(),
                 list.clone(),
                 search.downgrade(),
                 sel.clone(),
                 shown.clone(),
+                rows.clone(),
                 on_paste.clone(),
                 host.clone(),
             );
@@ -476,24 +487,36 @@ impl Panel {
                 while let Some(c) = list.first_child() {
                     list.remove(&c);
                 }
-                let texts = panel.texts_in_order();
+                // Snapshot the model once so every visible row carries the (id, text)
+                // it showed at render time (see `shown`/`snapshot`).
+                let snap = panel.snapshot();
+                let texts: Vec<String> = snap.iter().map(|(_, t, _)| t.clone()).collect();
                 let idxs = tcode_core::clipboard::matching_indices(&texts, &search.text());
                 if sel.get() >= idxs.len() {
                     sel.set(idxs.len().saturating_sub(1));
                 }
-                *shown.borrow_mut() = idxs.clone();
+                *shown.borrow_mut() = idxs
+                    .iter()
+                    .map(|&ei| {
+                        let (id, text, _) = &snap[ei];
+                        (*id, text.clone())
+                    })
+                    .collect();
+                let mut new_rows: Vec<Button> = Vec::with_capacity(idxs.len());
                 if idxs.is_empty() {
                     let hint = Label::new(Some("No matching clips"));
                     hint.set_xalign(0.0);
                     hint.add_css_class("clip-empty");
                     list.append(&hint);
+                    *rows.borrow_mut() = new_rows;
                     return;
                 }
                 for (row_i, &ei) in idxs.iter().enumerate() {
-                    let text = texts[ei].clone();
+                    let (_, text, pinned) = &snap[ei];
+                    let text = text.clone();
                     let row = Button::new();
                     row.add_css_class("clip-pal-row");
-                    if panel.entry_is_pinned(ei) {
+                    if *pinned {
                         row.add_css_class("pinned");
                     }
                     if row_i == sel.get() {
@@ -515,21 +538,51 @@ impl Panel {
                         }
                     });
                     list.append(&row);
+                    new_rows.push(row);
                 }
+                *rows.borrow_mut() = new_rows;
             })
         };
 
-        // Refilter as the user types (reset the selection to the top).
+        // Move the selection by restyling the active row in place (no list rebuild,
+        // so the scroll position is kept) and keep the new row inside the viewport.
+        let select: Rc<dyn Fn(usize)> = {
+            let (rows, sel, scroll, list) =
+                (rows.clone(), sel.clone(), scroll.clone(), list.clone());
+            Rc::new(move |target: usize| {
+                // Clone the affected row handles out, then drop the `rows` borrow
+                // before any GTK call (CSS/scroll) to avoid a re-entrant borrow.
+                let (old_row, new_row, new) = {
+                    let rows = rows.borrow();
+                    if rows.is_empty() {
+                        return;
+                    }
+                    let new = target.min(rows.len() - 1);
+                    let old_row = rows.get(sel.get()).cloned();
+                    (old_row, rows[new].clone(), new)
+                };
+                if let Some(old_row) = old_row {
+                    old_row.remove_css_class("active");
+                }
+                new_row.add_css_class("active");
+                sel.set(new);
+                scroll_into_view(&scroll, &list, &new_row);
+            })
+        };
+
+        // Refilter as the user types (reset the selection and scroll to the top).
         {
-            let (render, sel) = (render.clone(), sel.clone());
+            let (render, sel, scroll) = (render.clone(), sel.clone(), scroll.clone());
             search.connect_changed(move |_| {
                 sel.set(0);
                 render();
+                scroll.vadjustment().set_value(0.0);
             });
         }
-        // Each time the palette is shown: clear the query, re-render, focus search.
+        // Each time the palette is shown: clear the query, re-render, focus search,
+        // and reset the scroll to the top.
         {
-            let (render, sel) = (render.clone(), sel.clone());
+            let (render, sel, scroll) = (render.clone(), sel.clone(), scroll.clone());
             let search_w = search.downgrade();
             root.connect_map(move |_| {
                 sel.set(0);
@@ -538,51 +591,58 @@ impl Panel {
                     search.grab_focus();
                 }
                 render();
+                scroll.vadjustment().set_value(0.0);
             });
         }
-        // Keyboard: ↑/↓ move the selection; Enter pastes (Ctrl+Enter copies only).
-        // Capture phase on the palette *root* (a strict ancestor of the focused
-        // search box) so these keys are handled before GtkEntry's own activate
-        // swallows Return — otherwise Enter does nothing.
+        // Keyboard: ↑/↓ move the selection; Enter pastes (Ctrl+Enter copies only);
+        // Delete purges the selected clip from history. Capture phase on the palette
+        // *root* (a strict ancestor of the focused search box) so these keys are
+        // handled before GtkEntry's own activate swallows Return — else Enter is lost.
         {
             let key = EventControllerKey::new();
             key.set_propagation_phase(gtk4::PropagationPhase::Capture);
-            let (panel, sel, shown, render, on_paste, host) = (
+            let (panel, sel, shown, render, select, on_paste, host) = (
                 self.clone(),
                 sel.clone(),
                 shown.clone(),
                 render.clone(),
+                select.clone(),
                 on_paste.clone(),
                 host.clone(),
             );
             key.connect_key_pressed(move |_, kv, _, mods| {
-                let n = shown.borrow().len();
                 match kv {
                     Key::Down => {
-                        if n > 0 {
-                            sel.set((sel.get() + 1).min(n - 1));
-                            render();
-                        }
+                        select(sel.get() + 1);
                         Propagation::Stop
                     }
                     Key::Up => {
-                        sel.set(sel.get().saturating_sub(1));
-                        render();
+                        select(sel.get().saturating_sub(1));
                         Propagation::Stop
                     }
                     Key::Return | Key::KP_Enter => {
-                        let ei = shown.borrow().get(sel.get()).copied();
-                        if let Some(ei) = ei {
-                            if let Some(t) = panel.entry_text(ei) {
-                                if mods.contains(ModifierType::CONTROL_MASK) {
-                                    panel.copy_text(&t);
-                                } else {
-                                    on_paste(&t);
-                                }
+                        // Act on the text snapshotted for the visible row (mirrors the
+                        // row-click path) so an external copy can't redirect the paste.
+                        let chosen = shown.borrow().get(sel.get()).map(|(_, t)| t.clone());
+                        if let Some(t) = chosen {
+                            if mods.contains(ModifierType::CONTROL_MASK) {
+                                panel.copy_text(&t);
+                            } else {
+                                on_paste(&t);
                             }
                         }
                         if let Some(h) = host.upgrade() {
                             h.close();
+                        }
+                        Propagation::Stop
+                    }
+                    Key::Delete | Key::KP_Delete => {
+                        // Privacy: purge the selected clip (e.g. a copied password) from
+                        // history by its stable id, then re-render the filtered list.
+                        let target = shown.borrow().get(sel.get()).map(|(id, _)| *id);
+                        if let Some(id) = target {
+                            panel.delete(id);
+                            render();
                         }
                         Propagation::Stop
                     }
@@ -600,6 +660,24 @@ fn make_private_dir(dir: &std::path::Path) {
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+/// Scroll `scroll` the minimum needed to keep `row` (a child of `list`) fully
+/// inside the viewport. The rows are already laid out by an earlier render, so
+/// their bounds are valid here; before allocation `compute_bounds` is None and
+/// this is a harmless no-op.
+fn scroll_into_view(scroll: &ScrolledWindow, list: &GtkBox, row: &Button) {
+    let Some(bounds) = row.compute_bounds(list) else {
+        return;
+    };
+    let vadj = scroll.vadjustment();
+    let (y, h) = (bounds.y() as f64, bounds.height() as f64);
+    let (top, page) = (vadj.value(), vadj.page_size());
+    if y < top {
+        vadj.set_value(y);
+    } else if y + h > top + page {
+        vadj.set_value((y + h - page).max(0.0));
     }
 }
 

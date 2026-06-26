@@ -117,12 +117,14 @@ impl Sidebar {
         // Lazy tree: each directory yields a sorted child listing; files are leaves.
         // TCODE_AUTOEXPAND=1 expands every folder (visual-testing aid).
         let autoexpand = std::env::var_os("TCODE_AUTOEXPAND").is_some();
-        let tree = TreeListModel::new(root_store, false, autoexpand, |obj| {
+        let tree = TreeListModel::new(root_store, false, autoexpand, move |obj| {
             let info = obj.downcast_ref::<gio::FileInfo>()?;
-            // Only descend into real directories — never follow a symlinked dir,
-            // which could traverse outside the workspace root or, under
-            // TCODE_AUTOEXPAND, loop forever on a symlink cycle.
-            if info.file_type() == gio::FileType::Directory && !info.is_symlink() {
+            // Descend into directories, symlinked ones included, so they're
+            // navigable like real folders. Exception: under TCODE_AUTOEXPAND (a
+            // test aid that expands every row) don't follow a symlinked dir — a
+            // symlink cycle would auto-expand without end. Manual expansion is
+            // one level per click, so a cycle can't run away there.
+            if info.file_type() == gio::FileType::Directory && !(autoexpand && info.is_symlink()) {
                 let dir = file_of(info)?;
                 Some(sorted_dir(&dir))
             } else {
@@ -263,7 +265,11 @@ impl Sidebar {
             let Some(info) = row.item().and_downcast::<gio::FileInfo>() else {
                 return;
             };
-            if info.file_type() == gio::FileType::Directory {
+            // A directory row expands only when it actually has a child model
+            // (now true for symlinked dirs too). One that doesn't — e.g. a
+            // symlinked dir left unfollowed under TCODE_AUTOEXPAND — falls
+            // through and is opened instead of toggling a childless row.
+            if info.file_type() == gio::FileType::Directory && row.is_expandable() {
                 row.set_expanded(!row.is_expanded());
             } else if let Some(path) = file_of(&info).and_then(|f| f.path()) {
                 open_file(&st, &path);

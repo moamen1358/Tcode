@@ -4,7 +4,7 @@
 //! Newest on top. Click a thumbnail to re-open it in the annotation canvas, or
 //! drag it onto any terminal to insert its path. Capturing is from the titlebar.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gtk4::gdk::{DragAction, Texture};
@@ -66,16 +66,15 @@ pub fn build(on_pick: Rc<dyn Fn(PathBuf)>) -> Rc<Panel> {
 }
 
 impl Panel {
-    /// Append a thumbnail for a saved screenshot at `path` (newest at the bottom).
-    pub fn add_saved(&self, path: PathBuf) {
+    /// Build a thumbnail widget (drag + click wired) for the shot at `path`, or
+    /// `None` if it can't be decoded. Shared by live captures and the startup load.
+    fn make_thumb(&self, path: &Path) -> Option<gtk4::Image> {
         // Display through a GtkImage at a fixed pixel size. Unlike GtkPicture,
         // GtkImage does NOT do height-for-width, so every thumbnail is a bounded,
         // uniform square regardless of the capture's aspect — portrait shots no
         // longer balloon and squeeze out the file tree above. Decode larger than
         // shown so the downscale stays crisp.
-        let Ok(pb) = Pixbuf::from_file_at_scale(&path, 320, 320, true) else {
-            return;
-        };
+        let pb = Pixbuf::from_file_at_scale(path, 320, 320, true).ok()?;
         let texture = Texture::for_pixbuf(&pb);
         let img = gtk4::Image::from_paintable(Some(&texture));
         img.set_pixel_size(84);
@@ -90,7 +89,7 @@ impl Panel {
         // press and the drag never starts, so dragging a thumbnail did nothing.
         let drag = DragSource::new();
         drag.set_actions(DragAction::COPY);
-        drag.set_content(Some(&crate::dnd::file_drag_provider(&path)));
+        drag.set_content(Some(&crate::dnd::file_drag_provider(path)));
         {
             let texture = texture.clone();
             drag.connect_drag_begin(move |d, _| d.set_icon(Some(&texture), 0, 0));
@@ -103,22 +102,45 @@ impl Panel {
         let click = GestureClick::new();
         {
             let on_pick = self.on_pick.clone();
-            let path = path.clone();
+            let path = path.to_path_buf();
             click.connect_released(move |_g, _n, _x, _y| on_pick(path.clone()));
         }
         img.add_controller(click);
+        Some(img)
+    }
 
-        // Newest on top so a fresh capture is immediately visible; older captures
-        // remain below and are reachable by scrolling the tray.
-        self.list.prepend(&img);
-        // Bound the live tray: drop the oldest (bottom) thumbnails past MAX_THUMBS
-        // so a long session of captures can't grow the retained textures unbounded.
+    /// Bound the live tray: drop the oldest (bottom) thumbnails past MAX_THUMBS so
+    /// a long session of captures can't grow the retained textures unbounded.
+    fn trim_to_cap(&self) {
         while self.list.observe_children().n_items() as usize > MAX_THUMBS {
             match self.list.last_child() {
                 Some(oldest) => self.list.remove(&oldest),
                 None => break,
             }
         }
+    }
+
+    /// Add a thumbnail for a freshly captured screenshot at `path` (newest on top).
+    pub fn add_saved(&self, path: PathBuf) {
+        let Some(img) = self.make_thumb(&path) else {
+            return;
+        };
+        // Newest on top so a fresh capture is immediately visible; older captures
+        // remain below and are reachable by scrolling the tray.
+        self.list.prepend(&img);
+        self.trim_to_cap();
+    }
+
+    /// Add a historical thumbnail at the BOTTOM (used by the startup load, which
+    /// feeds newest-first). Appending — rather than prepending — keeps the column
+    /// newest-on-top while leaving the very top free for a live capture taken
+    /// mid-load: it prepends and so stays above all the back-filled history.
+    fn add_existing(&self, path: &Path) {
+        let Some(img) = self.make_thumb(path) else {
+            return;
+        };
+        self.list.append(&img);
+        self.trim_to_cap();
     }
 
     /// Scan the cache dir for saved shot-*.png paths, sorted oldest first.
@@ -157,8 +179,9 @@ impl Panel {
     }
 
     /// Populate the strip with every saved screenshot, decoding a few per idle
-    /// tick so a large history doesn't block startup. `scan_shots` is oldest-first
-    /// and `add_saved` prepends, so the newest ends up on top.
+    /// tick so a large history doesn't block startup. Loads newest-first and
+    /// appends (via `add_existing`), so the column stays newest-on-top AND a live
+    /// capture taken mid-load — which prepends — keeps the very top.
     fn load_existing_deferred(self: &Rc<Self>) {
         let mut shots = Self::scan_shots();
         // Only the newest MAX_THUMBS are loaded — decoding and retaining every shot
@@ -171,11 +194,14 @@ impl Panel {
             return;
         }
         let panel = self.clone();
-        let mut iter = shots.into_iter();
+        // Newest-first (scan_shots is oldest-first) so each append lands below the
+        // previous: the newest ends on top, older shots back-fill downward — and a
+        // concurrent live capture's prepend is never pushed below this history.
+        let mut iter = shots.into_iter().rev();
         glib::idle_add_local(move || {
             for _ in 0..4 {
                 match iter.next() {
-                    Some(p) => panel.add_saved(p),
+                    Some(p) => panel.add_existing(&p),
                     None => return glib::ControlFlow::Break,
                 }
             }

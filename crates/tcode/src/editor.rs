@@ -22,10 +22,10 @@ use gtk4::gdk_pixbuf::Pixbuf;
 use gtk4::glib::{self, Propagation};
 use gtk4::prelude::*;
 use gtk4::{
-    gio, Align, Box as GtkBox, Button, CenterBox, ContentFit, DrawingArea, EventControllerKey,
-    EventControllerMotion, EventControllerScroll, EventControllerScrollFlags, EventSequenceState,
-    GestureClick, GestureDrag, Label, Notebook, Orientation, Paned, Picture, PolicyType,
-    PropagationPhase, ScrolledWindow, Video, Widget,
+    gio, Align, Box as GtkBox, Button, CenterBox, ContentFit, DirectionType, DrawingArea,
+    EventControllerKey, EventControllerMotion, EventControllerScroll, EventControllerScrollFlags,
+    EventSequenceState, GestureClick, GestureDrag, Label, Notebook, Orientation, Paned, Picture,
+    PolicyType, PropagationPhase, ScrolledWindow, Video, Widget,
 };
 use sourceview5::prelude::*;
 use sourceview5::{Buffer, LanguageManager, StyleSchemeManager, View};
@@ -175,14 +175,14 @@ impl Editor {
             match kind_of(path) {
                 Kind::Text => match text_viewer(path) {
                     Some((w, b)) => (w, Some(b), None),
-                    None => (fallback_viewer(path), None, None),
+                    None => (text_fallback_viewer(path), None, None),
                 },
                 // Table view; if it doesn't parse as a grid, fall back to text.
                 Kind::Csv => match crate::csvview::csv_viewer(path) {
                     Some(w) => (w, None, None),
                     None => match text_viewer(path) {
                         Some((w, b)) => (w, Some(b), None),
-                        None => (fallback_viewer(path), None, None),
+                        None => (text_fallback_viewer(path), None, None),
                     },
                 },
                 Kind::Image => (image_viewer(path, self.backdrop), None, None),
@@ -221,7 +221,13 @@ impl Editor {
         }
 
         self.reveal();
-        child.grab_focus();
+        // grab_focus works for text tabs (the ScrolledWindow delegates to its inner
+        // editable View) but is a no-op for the viewer tabs whose root is a plain,
+        // non-focusable GtkBox; fall back to focusing the first focusable descendant
+        // so Esc-to-close and keyboard zoom work at once, without a click first.
+        if !child.grab_focus() {
+            let _ = child.child_focus(DirectionType::TabForward);
+        }
     }
 
     /// Paths of all open tabs, in tab order (used to persist the session).
@@ -266,13 +272,16 @@ impl Editor {
     }
 }
 
+/// Max bytes `text_viewer` will populate synchronously. GtkSourceView buffer
+/// population for large logs/text runs on the main thread, so above this it bails
+/// (returning `None`) and the caller shows an explicit "too large" card instead of
+/// freezing the terminals and the rest of the UI.
+const MAX_SYNC_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+
 /// Editable source view with line numbers + syntax highlighting. Returns `None`
-/// if the file isn't valid UTF-8 (binary) so the caller can show the info card.
+/// if the file isn't valid UTF-8 (binary) or is too large to load synchronously,
+/// so the caller can show the appropriate info card.
 fn text_viewer(path: &Path) -> Option<(Widget, Buffer)> {
-    // Keep the editable source view synchronous only for modest files. GTKSourceView
-    // buffer population for large logs/text still runs on the main thread, so avoid
-    // freezing terminals and the rest of the UI.
-    const MAX_SYNC_TEXT_BYTES: u64 = 2 * 1024 * 1024;
     if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_SYNC_TEXT_BYTES {
         return None;
     }
@@ -886,7 +895,11 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     let pages: Rc<RefCell<Vec<DocPage>>> = Rc::new(RefCell::new(Vec::new()));
     let refresh_visible: Rc<dyn Fn()> = {
         let pages = pages.clone();
-        let scroller = scroller.clone();
+        // Weak: this closure is installed below as a handler on the scroller's own
+        // vadjustment, so a strong capture would form a
+        // scroller→vadj→handler→refresh_visible→scroller cycle and leak the whole
+        // page subtree on tab close. Upgrade per call instead.
+        let scroller = scroller.downgrade();
         let busy = Rc::new(Cell::new(false));
         Rc::new(move || {
             // A texture (re)load can queue a resize that re-fires the adjustment
@@ -894,6 +907,10 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
             if busy.replace(true) {
                 return;
             }
+            let Some(scroller) = scroller.upgrade() else {
+                busy.set(false);
+                return;
+            };
             {
                 let pages = pages.borrow();
                 let n = pages.len();
@@ -1070,6 +1087,25 @@ fn file_label(path: &Path) -> String {
 
 /// Info card for files we can't preview inline (video, audio, archives, …).
 fn fallback_viewer(path: &Path) -> Widget {
+    fallback_card(path, "No inline preview for this file type")
+}
+
+/// Fallback for a text/source file we *could* show but skipped only because it
+/// exceeds the synchronous size budget — so the note names the real reason (size)
+/// instead of the misleading "wrong file type" message. Anything else (binary /
+/// not UTF-8) gets the generic card.
+fn text_fallback_viewer(path: &Path) -> Widget {
+    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if len > MAX_SYNC_TEXT_BYTES {
+        let note = format!("File too large to preview inline ({})", human_size(len));
+        fallback_card(path, &note)
+    } else {
+        fallback_viewer(path)
+    }
+}
+
+/// Build the info card with a given explanatory `note` line.
+fn fallback_card(path: &Path, note: &str) -> Widget {
     let name = file_label(path);
     let size = std::fs::metadata(path)
         .map(|m| human_size(m.len()))
@@ -1088,7 +1124,7 @@ fn fallback_viewer(path: &Path) -> Widget {
     title.add_css_class("fallback-title");
     let meta = Label::new(Some(&format!("{ext} · {size}")));
     meta.add_css_class("fallback-meta");
-    let no_preview = Label::new(Some("No inline preview for this file type"));
+    let no_preview = Label::new(Some(note));
     no_preview.add_css_class("fallback-meta");
 
     card.append(&title);

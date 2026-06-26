@@ -2,7 +2,7 @@
 //! into annotations according to the current tool. Text uses an Entry placed on
 //! a Fixed overlay above the DrawingArea.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::cairo;
@@ -27,6 +27,10 @@ const ARROW_HEAD_W: f64 = 14.0;
 const MIN_SCALE: f64 = 0.05;
 const MAX_SCALE: f64 = 20.0;
 
+/// The commit closure of the text Entry currently being edited, if any. Lets a
+/// press on the canvas close an open entry instead of the Fixed swallowing input.
+type ActiveText = Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>;
+
 pub struct CanvasUi {
     pub area: DrawingArea,
     pub overlay: Overlay,
@@ -39,11 +43,17 @@ pub fn build(shot: &Shot) -> CanvasUi {
     area.add_css_class("frame-canvas");
 
     let fixed = Fixed::new();
-    fixed.set_can_target(false); // transparent to input until a text entry exists
+    // Stay transparent to *pointer* input at all times: a text Entry is driven by
+    // the keyboard (grab_focus + Enter/Escape) and closed by a press on the canvas
+    // below, so the Fixed must never intercept presses meant for the DrawingArea.
+    fixed.set_can_target(false);
 
     let overlay = Overlay::new();
     overlay.set_child(Some(&area));
     overlay.add_overlay(&fixed);
+
+    // Tracks the open text entry so a canvas press can close it (see install_text_click).
+    let active_text: ActiveText = Rc::new(RefCell::new(None));
 
     // Draw function.
     {
@@ -58,7 +68,7 @@ pub fn build(shot: &Shot) -> CanvasUi {
     install_drag(&area, shot);
 
     // Text via click (only acts when the Text tool is active).
-    install_text_click(&area, &fixed, shot);
+    install_text_click(&area, &fixed, shot, &active_text);
 
     CanvasUi { area, overlay }
 }
@@ -205,7 +215,9 @@ fn paint_arrow(
     cr.move_to(x0, y0);
     cr.line_to(x1, y1);
     let _ = cr.stroke();
-    let [tip, l, r] = arrow_head(x0, y0, x1, y1, ARROW_HEAD_LEN, ARROW_HEAD_W);
+    // Divide by scale like the line width above so the head stays screen-constant
+    // (export passes scale = 1.0, so the baked PNG keeps the full image-space size).
+    let [tip, l, r] = arrow_head(x0, y0, x1, y1, ARROW_HEAD_LEN / scale, ARROW_HEAD_W / scale);
     cr.move_to(tip.0, tip.1);
     cr.line_to(l.0, l.1);
     cr.line_to(r.0, r.1);
@@ -270,7 +282,11 @@ fn install_scroll_zoom(area: &DrawingArea, shot: &Shot) {
             s.off_x = px - ix * new_scale;
             s.off_y = py - iy * new_scale;
             s.fit = false;
-            s.drag = None;
+            // Keep an in-progress shape (its points are in image space and survive a
+            // zoom); only a Pan's off_x/off_y baseline is invalidated, so drop just that.
+            if matches!(s.drag, Some(Drag::Pan { .. })) {
+                s.drag = None;
+            }
             drop(s);
             area.queue_draw();
             glib::Propagation::Stop
@@ -396,16 +412,28 @@ fn install_drag(area: &DrawingArea, shot: &Shot) {
     area.add_controller(drag);
 }
 
-fn install_text_click(area: &DrawingArea, fixed: &Fixed, shot: &Shot) {
+fn install_text_click(area: &DrawingArea, fixed: &Fixed, shot: &Shot, active: &ActiveText) {
     let click = GestureClick::new();
-    let (sb, fb, ab) = (shot.clone(), fixed.clone(), area.clone());
+    let (sb, fb, ab, act) = (shot.clone(), fixed.clone(), area.clone(), active.clone());
     click.connect_pressed(move |_g, n, x, y| {
+        // Take the open entry's commit out of the slot first: `commit` re-borrows the
+        // slot to clear it, so the borrow must be released before we call it.
+        let open = act.borrow_mut().take();
         if n == 2 {
+            // Double-click resets to Fit; drop the entry the first press just opened.
+            if let Some(commit) = open {
+                commit(false);
+            }
             let mut s = sb.borrow_mut();
             s.fit = true;
             s.drag = None;
             drop(s);
             ab.queue_draw();
+            return;
+        }
+        if let Some(commit) = open {
+            // A press outside the open entry places its text and is consumed here.
+            commit(true);
             return;
         }
         let s = sb.borrow();
@@ -414,7 +442,7 @@ fn install_text_click(area: &DrawingArea, fixed: &Fixed, shot: &Shot) {
         }
         let (ix, iy) = to_image(&s, x, y);
         drop(s);
-        spawn_text_entry(&sb, &fb, &ab, x, y, ix, iy);
+        spawn_text_entry(&sb, &fb, &ab, &act, (x, y), (ix, iy));
     });
     area.add_controller(click);
 }
@@ -425,33 +453,43 @@ fn spawn_text_entry(
     shot: &Shot,
     fixed: &Fixed,
     area: &DrawingArea,
-    wx: f64,
-    wy: f64,
-    ix: f64,
-    iy: f64,
+    active: &ActiveText,
+    widget_pt: (f64, f64),
+    image_pt: (f64, f64),
 ) {
+    let (wx, wy) = widget_pt;
+    let (ix, iy) = image_pt;
     let entry = Entry::new();
     entry.set_placeholder_text(Some("type, Enter to place"));
     entry.add_css_class("frame-text-entry");
     entry.set_width_request(160);
-    fixed.set_can_target(true);
     fixed.put(&entry, wx, wy);
     entry.grab_focus();
 
-    let committed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let committed = Rc::new(Cell::new(false));
 
-    let commit = {
-        let (shot, fixed, area, entry, committed) = (
-            shot.clone(),
-            fixed.clone(),
-            area.clone(),
-            entry.clone(),
-            committed.clone(),
-        );
-        move |save: bool| {
+    // `commit` is cloned into the Entry's own activate handler and its focus/key
+    // controllers. It therefore must hold the Entry (and the slot it lives in)
+    // *weakly* — a strong clone would form an Entry -> controller -> commit -> Entry
+    // cycle that keeps every placed/cancelled label alive for the whole session.
+    let commit: Rc<dyn Fn(bool)> = {
+        let shot = shot.clone();
+        let fixed = fixed.clone();
+        let area = area.clone();
+        let entry_weak = entry.downgrade();
+        let active_weak = Rc::downgrade(active);
+        let committed = committed.clone();
+        Rc::new(move |save: bool| {
             if committed.replace(true) {
                 return;
             }
+            // No longer the active entry (weak: avoids a slot <-> commit cycle).
+            if let Some(active) = active_weak.upgrade() {
+                *active.borrow_mut() = None;
+            }
+            let Some(entry) = entry_weak.upgrade() else {
+                return;
+            };
             let text = entry.text().to_string();
             if save && !text.trim().is_empty() {
                 let mut s = shot.borrow_mut();
@@ -466,11 +504,13 @@ fn spawn_text_entry(
                     color,
                 });
             }
-            fixed.remove(&entry);
-            fixed.set_can_target(false);
+            fixed.remove(&entry); // drops the last strong ref -> Entry can finalize
             area.queue_draw();
-        }
+        })
     };
+
+    // Register as the open entry so a press on the canvas can close it.
+    *active.borrow_mut() = Some(commit.clone());
 
     {
         let commit = commit.clone();
