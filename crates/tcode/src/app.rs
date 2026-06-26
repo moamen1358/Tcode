@@ -575,6 +575,10 @@ fn build_session(state: &Shared, session: Session) {
         show_session_picker(state);
         return;
     }
+    // Pre-accept Claude Code's per-folder workspace-trust dialog for this root, so
+    // the auto-launched Claude panes open ready instead of stopping on "Is this a
+    // project you trust?". Best-effort and idempotent (see tcode_core::claude_trust).
+    tcode_core::claude_trust::ensure_trusted(&root);
     state.borrow_mut().current = Some(session);
 
     show_grid(state, panes); // builds content, adds + shows the stack page `id`
