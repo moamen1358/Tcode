@@ -95,7 +95,17 @@ fn cli_update() -> glib::ExitCode {
     };
 
     println!("Updating {current} → {latest}…");
-    let deb = std::env::temp_dir().join("tcode-latest.deb");
+    // Download into a private 0700 dir we own — not a predictable name in the
+    // world-writable temp dir — so no other local user can swap in a malicious .deb
+    // before it is handed to the root `pkexec apt-get install`.
+    let tmpdir = match private_temp_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("tcode: could not create a private temp dir: {e}");
+            return glib::ExitCode::FAILURE;
+        }
+    };
+    let deb = tmpdir.join("tcode-latest.deb");
     let downloaded = std::process::Command::new("curl")
         .args(["-fsSL", "-o"])
         .arg(&deb)
@@ -105,6 +115,7 @@ fn cli_update() -> glib::ExitCode {
         .unwrap_or(false);
     if !downloaded {
         eprintln!("tcode: download failed.");
+        let _ = std::fs::remove_dir_all(&tmpdir);
         return glib::ExitCode::FAILURE;
     }
 
@@ -115,7 +126,7 @@ fn cli_update() -> glib::ExitCode {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    let _ = std::fs::remove_file(&deb);
+    let _ = std::fs::remove_dir_all(&tmpdir);
 
     if installed {
         println!("Updated to {latest}. Restart Tcode to use the new version.");
@@ -124,6 +135,41 @@ fn cli_update() -> glib::ExitCode {
         eprintln!("tcode: install failed. Download the .deb manually:\n  {url}");
         glib::ExitCode::FAILURE
     }
+}
+
+/// Create a freshly-made private (0700) temp directory we own, mkdtemp-style, and
+/// return its path. A unique 0700 dir — rather than a fixed name in the
+/// world-writable temp dir — stops another local user from planting or swapping the
+/// `.deb` that is then fed to the root `pkexec apt-get install`. `mkdir` is atomic
+/// and fails on a pre-existing name (incl. a planted symlink), so we retry on the
+/// vanishingly unlikely collision.
+fn private_temp_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let base = std::env::temp_dir();
+    let pid = std::process::id();
+    for attempt in 0..32u64 {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = base.join(format!("tcode-update.{pid:x}.{nanos:x}.{attempt:x}"));
+        let mut b = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            b.mode(0o700);
+        }
+        match b.create(&dir) {
+            Ok(()) => return Ok(dir),
+            // Name already taken (collision or attacker-planted) — try another.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique private temp dir",
+    ))
 }
 
 /// Extract a JSON string field's value (`"field": "value"` -> `value`). Minimal
@@ -204,6 +250,12 @@ fn ensure_bundled_font() {
         return;
     }
     if std::fs::create_dir_all(&dir).is_ok() {
-        let _ = std::fs::write(&file, include_bytes!("../assets/fonts/MartianMono.ttf"));
+        // Atomic write so a partial/interrupted copy never leaves a corrupt font, and
+        // concurrent NON_UNIQUE launches converge on a complete file.
+        let _ = tcode_core::fsutil::atomic_write(
+            &file,
+            include_bytes!("../assets/fonts/MartianMono.ttf"),
+            0o644,
+        );
     }
 }

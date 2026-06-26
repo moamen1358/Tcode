@@ -10,7 +10,6 @@
 //! updates that list, rebuilds the cards, and re-saves the history file.
 
 use std::cell::{Cell, RefCell};
-use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -376,28 +375,12 @@ impl Panel {
             let _ = std::fs::create_dir_all(dir);
             make_private_dir(dir);
         }
-        if write_private(&path, &out).is_ok() {
-            // History can hold secrets (e.g. a password copied from a manager);
-            // restrict it to the owner.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-            }
+        // Atomic + owner-only: history can hold secrets (e.g. a password copied from
+        // a manager); a torn write must not corrupt or truncate it.
+        if let Err(e) = tcode_core::fsutil::atomic_write(&path, &out, 0o600) {
+            eprintln!("tcode: failed to write clipboard history: {e}");
         }
     }
-}
-
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(path)?;
-    file.write_all(bytes)
 }
 
 fn make_private_dir(dir: &std::path::Path) {
