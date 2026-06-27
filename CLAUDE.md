@@ -7,7 +7,10 @@ a searchable **clipboard history** (Alt+V), saved sessions, and a built-in
 screenshot annotator (**Frame**). Built in Rust with GTK4 + VTE.
 
 ## Repo facts
-- GitHub `moamen1358/Tcode` — **PRIVATE** (source stays private by choice).
+- GitHub `moamen1358/Tcode` — **PUBLIC** (made public 2026-06-27 so `tcode update` works
+  for end users; was previously private). NOTE: pre-v1.3.0 screenshots in **git history**
+  still show the `apollo-accounts-export.csv` filename in the sidebar — only the filename, not
+  the data — so a history scrub is the remaining cleanup if that matters.
 - Default branch `main`. Version lives in root `Cargo.toml` (`[workspace.package]`).
 - Cargo workspace:
   - `crates/tcode-core` — pure logic (grid geometry, config, sessions), unit-tested, **no GTK**.
@@ -104,9 +107,10 @@ screenshots strip · `Alt+f` fullscreen · `Alt+q` quit · `Ctrl+Shift+C/V` copy
   `tcode.desktop`. On Wayland the compositor maps a window to its launcher
   entry by `app_id == desktop-basename`; a mismatch means the running window/dock
   shows **no icon**. Keep `StartupWMClass=dev.tcode.Tcode` for X11.
-- **Distribution**: the repo is private, so `tcode update` (unauthenticated
-  GitHub API) returns 404 for end users. Making updates work publicly without
-  exposing source needs a separate **public "releases" repo**. Deferred by the user.
+- **Distribution**: now that the repo is **public**, `tcode update` (unauthenticated
+  GitHub API) resolves the latest release for end users — no more 404, no separate
+  "releases" repo needed. The README's demo video is hosted as a **release asset**
+  (`Tcode-Demo.mp4` on the v1.3.0 release), not committed — keeps the repo lean.
 - **Multi-agent direction (built then fully removed)**: a "Conductor / Mission Control"
   experiment — auto-launching Claude/Codex/Hermes in panes, a per-session coordination
   bus, and an Alt+M activity board — lived on `feat/conductor`, then was **reverted in
