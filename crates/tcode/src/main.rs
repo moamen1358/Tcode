@@ -9,6 +9,7 @@ mod grid;
 mod icons;
 mod keys;
 mod loader;
+mod mission_control;
 mod overlay;
 mod pane;
 mod preview;

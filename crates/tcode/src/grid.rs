@@ -49,6 +49,10 @@ struct GridInner {
     /// Called when the final pane exits. App-level state decides whether that closes
     /// the visible window or just removes a hidden session.
     on_empty: EmptyFn,
+    /// The Conductor session-bus directory for this grid, when coordination is on and
+    /// the bus was created — Mission Control watches `<bus_dir>/events.jsonl`. `None`
+    /// when coordination is disabled or bus creation failed.
+    bus_dir: Option<std::path::PathBuf>,
 }
 
 /// Lay `items` out as one equal-split (homogeneous) box along `orient`. Returns
@@ -283,6 +287,7 @@ impl Grid {
             resize_focus: Cell::new(false),
             on_open,
             on_empty,
+            bus_dir: None,
         }));
 
         let grid = Grid {
@@ -303,6 +308,12 @@ impl Grid {
         let bus = coord_enabled
             .then(crate::conductor::SessionBus::create)
             .flatten();
+        // Remember the bus path so Mission Control (Alt+M) can watch this session's
+        // ledger; the `bus` handle itself is dropped at the end of `new`.
+        grid.inner.borrow_mut().bus_dir = bus
+            .as_ref()
+            .and_then(crate::conductor::SessionBus::dir_str)
+            .map(std::path::PathBuf::from);
         let specs: Vec<PaneSpec> = {
             let g = grid.inner.borrow();
             layout
@@ -461,6 +472,13 @@ impl Grid {
     /// Number of live terminal panes (used to persist the session layout).
     pub fn pane_count(&self) -> usize {
         self.inner.borrow().panes.len()
+    }
+
+    /// The Conductor session-bus directory for this grid (which holds `events.jsonl`),
+    /// if coordination is enabled and the bus was created. Mission Control (Alt+M)
+    /// watches it to render who's editing what.
+    pub fn bus_dir(&self) -> Option<std::path::PathBuf> {
+        self.inner.borrow().bus_dir.clone()
     }
 
     /// Apply the base font (point size) and the UI zoom to every terminal.

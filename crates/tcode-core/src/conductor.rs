@@ -8,6 +8,7 @@
 //! ever written into the user's real `~/.claude`/`~/.codex` or their repo.
 
 use crate::agents::Agent;
+use serde::Deserialize;
 
 /// Stable, human-readable ids for the agents in a session, numbered per kind in pane
 /// order — e.g. `[Claude, Claude, Codex, Hermes]` → `claude-1, claude-2, codex-1, hermes-1`.
@@ -146,6 +147,121 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+/// One recorded activity line from the session ledger (`events.jsonl`), matching the
+/// JSON written by `record_hook_script`. Every field defaults so a partial or
+/// future-extended record still parses instead of dropping the whole line.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Event {
+    /// ISO-8601 timestamp the edit was recorded.
+    #[serde(default)]
+    pub ts: String,
+    /// The acting agent's id (e.g. `claude-1`).
+    #[serde(default)]
+    pub agent: String,
+    /// The activity kind — `"edit"` for now (room for `"read"`, `"run"`, …).
+    #[serde(default)]
+    pub event: String,
+    /// Absolute path the agent touched.
+    #[serde(default)]
+    pub file: String,
+    /// The path's basename, as recorded by the hook (we re-derive it if absent).
+    #[serde(default)]
+    pub base: String,
+}
+
+/// What one agent is up to, aggregated from its events: the file it last touched,
+/// how many edits it has made, and when it was last active.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentStatus {
+    pub agent: String,
+    pub last_base: String,
+    pub last_file: String,
+    pub edits: usize,
+    pub last_ts: String,
+}
+
+/// A file touched by more than one agent — a coordination hot spot Mission Control
+/// flags so two agents don't unknowingly clobber each other's work. `agents` is in
+/// first-seen order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    pub base: String,
+    pub agents: Vec<String>,
+}
+
+/// The Mission Control board: per-agent status (sorted by id) plus any multi-agent
+/// file conflicts, derived purely from the event log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Board {
+    pub agents: Vec<AgentStatus>,
+    pub conflicts: Vec<Conflict>,
+}
+
+/// Parse the session ledger (one JSON object per line) into a board summary. Blank
+/// and malformed lines are skipped — the log is append-only and may be read while a
+/// hook is mid-write. Agents come out sorted by id; conflicts list every file more
+/// than one agent has touched, with the agents in first-seen order.
+pub fn parse_board(jsonl: &str) -> Board {
+    let events: Vec<Event> = jsonl
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Event>(l).ok())
+        .filter(|e| !e.agent.is_empty())
+        .collect();
+
+    // Per-agent status: edit count + the latest file/ts (events are in append order,
+    // so the last line seen for an agent is its most recent). A BTreeMap keys the
+    // output by agent id for a stable, sorted board.
+    let mut by_agent: std::collections::BTreeMap<String, AgentStatus> =
+        std::collections::BTreeMap::new();
+    for e in &events {
+        let status = by_agent.entry(e.agent.clone()).or_insert_with(|| AgentStatus {
+            agent: e.agent.clone(),
+            last_base: String::new(),
+            last_file: String::new(),
+            edits: 0,
+            last_ts: String::new(),
+        });
+        status.edits += 1;
+        status.last_base = display_base(e);
+        status.last_file = e.file.clone();
+        status.last_ts = e.ts.clone();
+    }
+    let agents: Vec<AgentStatus> = by_agent.into_values().collect();
+
+    // Conflicts: group edits by file basename, preserving file first-seen order and
+    // each file's distinct agents in first-seen order, then keep the multi-agent ones.
+    let mut files: Vec<(String, Vec<String>)> = Vec::new();
+    for e in &events {
+        let base = display_base(e);
+        if base.is_empty() {
+            continue;
+        }
+        match files.iter_mut().find(|(b, _)| *b == base) {
+            Some((_, agents)) if !agents.contains(&e.agent) => agents.push(e.agent.clone()),
+            Some(_) => {}
+            None => files.push((base, vec![e.agent.clone()])),
+        }
+    }
+    let conflicts: Vec<Conflict> = files
+        .into_iter()
+        .filter(|(_, agents)| agents.len() > 1)
+        .map(|(base, agents)| Conflict { base, agents })
+        .collect();
+
+    Board { agents, conflicts }
+}
+
+/// The file label to show for an event: prefer the basename the hook recorded, but
+/// derive it from the full path when absent (older or hand-written records).
+fn display_base(e: &Event) -> String {
+    if !e.base.is_empty() {
+        e.base.clone()
+    } else {
+        e.file.rsplit('/').next().unwrap_or(&e.file).to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +332,60 @@ mod tests {
     fn sh_quote_wraps_and_escapes() {
         assert_eq!(sh_quote("/a b/c"), "'/a b/c'");
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn parse_board_empty_is_empty() {
+        let b = parse_board("");
+        assert!(b.agents.is_empty());
+        assert!(b.conflicts.is_empty());
+    }
+
+    #[test]
+    fn parse_board_aggregates_per_agent_and_flags_conflicts() {
+        let log = concat!(
+            r#"{"ts":"2026-06-27T10:00:01+00:00","agent":"claude-1","event":"edit","file":"/p/a.rs","base":"a.rs"}"#,
+            "\n",
+            r#"{"ts":"2026-06-27T10:00:05+00:00","agent":"claude-1","event":"edit","file":"/p/b.rs","base":"b.rs"}"#,
+            "\n",
+            r#"{"ts":"2026-06-27T10:00:09+00:00","agent":"codex-1","event":"edit","file":"/p/a.rs","base":"a.rs"}"#,
+            "\n",
+        );
+        let b = parse_board(log);
+        // Two agents, sorted by id; edit counts and latest-file tracked per agent.
+        assert_eq!(b.agents.len(), 2);
+        assert_eq!(b.agents[0].agent, "claude-1");
+        assert_eq!(b.agents[0].edits, 2);
+        assert_eq!(b.agents[0].last_base, "b.rs"); // the later line wins
+        assert_eq!(b.agents[0].last_ts, "2026-06-27T10:00:05+00:00");
+        assert_eq!(b.agents[1].agent, "codex-1");
+        assert_eq!(b.agents[1].edits, 1);
+        // a.rs was touched by both agents -> a conflict, agents in first-seen order.
+        assert_eq!(b.conflicts.len(), 1);
+        assert_eq!(b.conflicts[0].base, "a.rs");
+        assert_eq!(b.conflicts[0].agents, vec!["claude-1", "codex-1"]);
+    }
+
+    #[test]
+    fn parse_board_skips_blank_and_malformed_lines() {
+        let log = concat!(
+            "\n",
+            "not json at all\n",
+            r#"{"ts":"t","agent":"claude-1","event":"edit","file":"/p/x.rs","base":"x.rs"}"#,
+            "\n",
+            "{ broken json\n",
+        );
+        let b = parse_board(log);
+        assert_eq!(b.agents.len(), 1);
+        assert_eq!(b.agents[0].agent, "claude-1");
+        assert_eq!(b.agents[0].edits, 1);
+        assert!(b.conflicts.is_empty());
+    }
+
+    #[test]
+    fn parse_board_derives_base_when_missing() {
+        let log = r#"{"ts":"t","agent":"claude-1","event":"edit","file":"/deep/path/z.rs"}"#;
+        let b = parse_board(log);
+        assert_eq!(b.agents[0].last_base, "z.rs");
     }
 }
