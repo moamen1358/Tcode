@@ -22,12 +22,12 @@ Linux&nbsp; •&nbsp; Open source&nbsp; •&nbsp; MIT License
 
 No Rust. No build. Three steps.
 
-**1.** Download **`tcode_1.3.0_amd64.deb`** from the [**latest release**](https://github.com/moamen1358/Tcode/releases/latest).
+**1.** Download **`tcode_1.4.0_amd64.deb`** from the [**latest release**](https://github.com/moamen1358/Tcode/releases/latest).
 
 **2.** Install it:
 
 ```bash
-sudo apt install ./tcode_1.3.0_amd64.deb
+sudo apt install ./tcode_1.4.0_amd64.deb
 ```
 
 **3.** Run it:
