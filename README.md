@@ -116,4 +116,4 @@ publishes it to Releases automatically (see `.github/workflows/release.yml`).
 ## License
 
 [MIT](LICENSE) © 2026 moamen. Bundled assets keep their own licenses: the
-**Martian Mono** font (SIL OFL) and the **Material Icon Theme** shapes (MIT).
+**Martian Mono** font (SIL OFL) and **Tabler Icons** outline shapes (MIT).

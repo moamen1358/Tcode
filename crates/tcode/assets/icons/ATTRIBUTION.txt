@@ -1,3 +1,6 @@
-File-type icons from the Material Icon Theme
-https://github.com/PKief/vscode-material-icon-theme
-Licensed under the MIT License. Copyright (c) Philipp Kief.
+Outline icons from Tabler Icons 3.44.0
+https://github.com/tabler/tabler-icons
+Licensed under the MIT License. Copyright (c) Paweł Kuna.
+
+The source icons are designed on a 24x24 grid with a 2px stroke. Tcode embeds,
+renames, and recolors the selected SVGs for its file-type mapping.

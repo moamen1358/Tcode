@@ -1,8 +1,8 @@
-//! Monochrome file-type icons from the Material Icon Theme (MIT) shapes — see
+//! Monochrome file-type icons from the Tabler Icons outline set (MIT) — see
 //! `assets/icons/ATTRIBUTION.txt`. The SVGs are embedded at build time, recolored
 //! to a single tone (the theme foreground) and written to a cache dir at startup,
-//! and chosen per file by name/extension, giving the sidebar clean Zed/VSCode-style
-//! icons independent of the system icon theme.
+//! and chosen per file by name/extension, giving the sidebar a consistent 24px-grid,
+//! 2px-stroke icon language independent of the system icon theme.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -68,14 +68,21 @@ const ICONS: &[(&str, &str)] = &[
     icon!("key"),
 ];
 
-fn cache_dir() -> PathBuf {
-    gtk4::glib::user_cache_dir().join("tcode").join("icons")
+fn cache_dir(color: &str) -> PathBuf {
+    let tag: String = color.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    gtk4::glib::user_cache_dir()
+        .join("tcode")
+        .join("icons")
+        .join(if tag.is_empty() { "default" } else { &tag })
 }
 
 /// Recolor every fill/stroke/stop color in an SVG to a single `color`, so the
 /// icon set renders as a clean monochrome (shapes kept, color unified). `url(#id)`
 /// references (gradient lookups) are left intact.
 fn recolor(svg: &str, color: &str) -> String {
+    // Tabler outlines use currentColor for their strokes. Resolve it before the
+    // hex scanner, which remains useful for any future literal-color icon.
+    let svg = svg.replace("currentColor", color);
     let s = svg.as_bytes();
     let mut out = String::with_capacity(svg.len() + 16);
     let mut last = 0; // start of the run not yet copied
@@ -105,7 +112,7 @@ fn recolor(svg: &str, color: &str) -> String {
 /// Write the embedded icons to the cache dir (idempotent), recolored to `color`
 /// for a clean monochrome sidebar. Returns that dir.
 pub fn ensure(color: &str) -> PathBuf {
-    let dir = cache_dir();
+    let dir = cache_dir(color);
     let _ = fs::create_dir_all(&dir);
     for (name, svg) in ICONS {
         let _ = fs::write(dir.join(format!("{name}.svg")), recolor(svg, color));
@@ -183,9 +190,9 @@ fn icon_name(name: &str, is_dir: bool) -> &'static str {
 }
 
 thread_local! {
-    /// Cache of rasterized icon textures, keyed by (icon name, device px). Only
-    /// ~43 icons at a couple of sizes ever land here, so it stays tiny.
-    static TEXTURES: RefCell<HashMap<(&'static str, i32), Texture>> =
+    /// Cache of rasterized icon textures, keyed by (icon name, device px, color
+    /// cache dir). The sidebar keeps a foreground and an active-orange variant.
+    static TEXTURES: RefCell<HashMap<(&'static str, i32, PathBuf), Texture>> =
         RefCell::new(HashMap::new());
 }
 
@@ -196,12 +203,13 @@ thread_local! {
 pub fn icon_texture(dir: &Path, name: &str, is_dir: bool, px: i32) -> Option<Texture> {
     let icon = icon_name(name, is_dir);
     let px = px.max(1);
-    if let Some(tex) = TEXTURES.with(|c| c.borrow().get(&(icon, px)).cloned()) {
+    let key = (icon, px, dir.to_path_buf());
+    if let Some(tex) = TEXTURES.with(|c| c.borrow().get(&key).cloned()) {
         return Some(tex);
     }
     let path = dir.join(format!("{icon}.svg"));
     let pb = Pixbuf::from_file_at_scale(&path, px, px, true).ok()?;
     let tex = Texture::for_pixbuf(&pb);
-    TEXTURES.with(|c| c.borrow_mut().insert((icon, px), tex.clone()));
+    TEXTURES.with(|c| c.borrow_mut().insert(key, tex.clone()));
     Some(tex)
 }

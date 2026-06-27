@@ -2,14 +2,20 @@
 //! directory. Single-click a folder to expand/collapse it in place; single-click
 //! a file to open it in the editor panel beside the terminals.
 
-use std::path::Path;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gtk4::gio;
+use gtk4::glib;
+use gtk4::pango::EllipsizeMode;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, CustomSorter, DirectoryList, EventControllerMotion, GestureClick, Image,
-    Label, ListItem, ListView, NoSelection, Ordering, Orientation, PolicyType, ScrolledWindow,
-    SignalListItemFactory, SortListModel, TreeExpander, TreeListModel, TreeListRow,
+    Align, Box as GtkBox, Button, CustomSorter, DirectoryList, EventControllerMotion, GestureClick,
+    Image, Label, ListItem, ListView, NoSelection, Ordering, Orientation, PolicyType,
+    ScrolledWindow, Separator, SignalListItemFactory, SortListModel, TreeExpander, TreeListModel,
+    TreeListRow,
 };
 
 use crate::app::{open_file, Shared};
@@ -46,6 +52,21 @@ fn clear_hovered(w: &impl IsA<gtk4::Widget>) {
             stack.push(child);
         }
     }
+}
+
+fn set_css_class(w: &impl IsA<gtk4::Widget>, class: &str, enabled: bool) {
+    if enabled {
+        w.add_css_class(class);
+    } else {
+        w.remove_css_class(class);
+    }
+}
+
+fn file_icon_for(expander: &TreeExpander) -> Option<Image> {
+    let row = expander.child().and_downcast::<GtkBox>()?;
+    let content = row.last_child().and_downcast::<GtkBox>()?;
+    let disclosure = content.first_child().and_downcast::<Image>()?;
+    disclosure.next_sibling().and_downcast::<Image>()
 }
 
 /// A directory listing sorted Zed-style: folders first, then alphabetical.
@@ -132,39 +153,119 @@ impl Sidebar {
             }
         });
         // Expand the workspace root by default so its children are visible.
-        if let Some(root_row) = tree.item(0).and_downcast::<TreeListRow>() {
+        let root_tree_row = tree.item(0).and_downcast::<TreeListRow>();
+        if let Some(root_row) = root_tree_row.as_ref() {
             root_row.set_expanded(true);
         }
+        let root_disclosure: Rc<RefCell<Option<glib::WeakRef<Image>>>> =
+            Rc::new(RefCell::new(None));
+
+        // Compact context label from the selected "Terminal Native" direction.
+        // The project root remains a real expandable row immediately below it;
+        // this header only improves hierarchy and never duplicates tree behavior.
+        let header = GtkBox::new(Orientation::Horizontal, 8);
+        header.add_css_class("sidebar-tree-header");
+        let files_label = Label::new(Some("FILES"));
+        let slash_label = Label::new(Some("/"));
+        slash_label.add_css_class("header-slash");
+        let project_label = Label::new(Some(&root_name.to_uppercase()));
+        project_label.set_ellipsize(EllipsizeMode::End);
+        project_label.set_hexpand(true);
+        project_label.set_xalign(0.0);
+        let header_toggle = Button::from_icon_name("pan-down-symbolic");
+        header_toggle.add_css_class("sidebar-header-toggle");
+        header_toggle.set_tooltip_text(Some("Collapse or expand project files"));
+        if let Some(root_row) = root_tree_row {
+            let root_disclosure = root_disclosure.clone();
+            header_toggle.connect_clicked(move |button| {
+                let expanded = !root_row.is_expanded();
+                root_row.set_expanded(expanded);
+                let icon = if expanded {
+                    "pan-down-symbolic"
+                } else {
+                    "pan-end-symbolic"
+                };
+                button.set_icon_name(icon);
+                if let Some(disclosure) = root_disclosure
+                    .borrow()
+                    .as_ref()
+                    .and_then(glib::WeakRef::upgrade)
+                {
+                    disclosure.set_icon_name(Some(icon));
+                }
+            });
+        }
+        header.append(&files_label);
+        header.append(&slash_label);
+        header.append(&project_label);
+        header.append(&header_toggle);
+        root.append(&header);
+
         // No-selection model: clicks still activate rows (open / expand), but no
-        // row is ever marked selected, so nothing stays highlighted.
+        // native list row is marked selected. The currently opened file receives
+        // the custom orange focus outline without folder clicks clearing it.
         let selection = NoSelection::new(Some(tree));
+
+        // Visible row handles let activation refresh the active-file outline and
+        // a folder's disclosure icon immediately. Weak refs keep recycled ListView
+        // rows from being retained after they leave the viewport.
+        // TCODE_ACTIVE_FILE is a visual-test aid mirroring TCODE_AUTOEXPAND; normal
+        // sessions start with no outlined row until the user opens a file here.
+        let initial_active = std::env::var_os("TCODE_ACTIVE_FILE")
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    start.join(path)
+                }
+            })
+            .filter(|path| path.is_file());
+        let active_file: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(initial_active));
+        let visible_rows: Rc<RefCell<HashMap<PathBuf, glib::WeakRef<TreeExpander>>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let visible_disclosures: Rc<RefCell<HashMap<u32, glib::WeakRef<Image>>>> =
+            Rc::new(RefCell::new(HashMap::new()));
 
         let factory = SignalListItemFactory::new();
         factory.connect_setup(|_f, obj| {
             let Some(item) = obj.downcast_ref::<ListItem>() else {
                 return;
             };
-            // Row layout: [indent guides] [icon + label]. We hide the disclosure
-            // triangle and draw our own indent guide lines, so set the expander to
-            // neither show an arrow nor indent (we handle indentation ourselves).
+            // Row layout: [indent guides] [branch] [disclosure] [icon] [label].
+            // A real separator draws the horizontal branch; the disclosure uses
+            // GTK's symbolic chevrons rather than text-glyph approximations.
             let indent = GtkBox::new(Orientation::Horizontal, 0);
-            let content = GtkBox::new(Orientation::Horizontal, 6);
-            // Gap between the indent guide line and the folder/file icon.
-            content.set_margin_start(8);
+            let branch = Separator::new(Orientation::Horizontal);
+            branch.add_css_class("tree-branch");
+            branch.set_size_request(8, -1);
+            branch.set_valign(Align::Center);
+            let content = GtkBox::new(Orientation::Horizontal, 5);
+            content.set_hexpand(true);
+            let disclosure = Image::new();
+            disclosure.set_pixel_size(14);
+            disclosure.set_size_request(14, 14);
+            disclosure.add_css_class("tree-disclosure");
             let image = Image::new();
             image.set_pixel_size(14);
             let label = Label::builder().halign(Align::Start).build();
+            label.set_ellipsize(EllipsizeMode::End);
+            label.set_hexpand(true);
+            label.set_xalign(0.0);
+            content.append(&disclosure);
             content.append(&image);
             content.append(&label);
             let row = GtkBox::new(Orientation::Horizontal, 0);
+            row.set_hexpand(true);
             row.append(&indent);
+            row.append(&branch);
             row.append(&content);
             let expander = TreeExpander::new();
             expander.set_hide_expander(true);
             expander.set_indent_for_depth(false);
-            // Don't reserve expander-arrow width (we hide the arrow and draw our
-            // own indent guides), so the root folder hugs the left edge.
             expander.set_indent_for_icon(false);
+            expander.set_hexpand(true);
+            expander.add_css_class("sidebar-tree-row");
             expander.set_child(Some(&row));
 
             // Custom hover highlight: a per-row motion controller toggles the
@@ -187,76 +288,145 @@ impl Sidebar {
 
             item.set_child(Some(&expander));
         });
-        // Monochrome icons, tinted to the theme's foreground color.
+
+        // Monochrome Tabler outline icons, tinted to the theme's foreground color.
         let icon_color = state.borrow().cfg.theme.foreground.clone();
         let icons_dir = crate::icons::ensure(&icon_color);
-        factory.connect_bind(move |_f, obj| {
-            let Some(item) = obj.downcast_ref::<ListItem>() else {
-                return;
-            };
-            let Some(treerow) = item.item().and_downcast::<TreeListRow>() else {
-                return;
-            };
-            let Some(expander) = item.child().and_downcast::<TreeExpander>() else {
-                return;
-            };
-            let Some(row) = expander.child().and_downcast::<GtkBox>() else {
-                return;
-            };
-            let Some(indent) = row.first_child().and_downcast::<GtkBox>() else {
-                return;
-            };
-            let Some(content) = row.last_child().and_downcast::<GtkBox>() else {
-                return;
-            };
-            let Some(image) = content.first_child().and_downcast::<Image>() else {
-                return;
-            };
-            let Some(label) = content.last_child().and_downcast::<Label>() else {
-                return;
-            };
-            expander.set_list_row(Some(&treerow));
+        {
+            let active_file = active_file.clone();
+            let visible_rows = visible_rows.clone();
+            let visible_disclosures = visible_disclosures.clone();
+            let root_disclosure = root_disclosure.clone();
+            let icons_dir = icons_dir.clone();
+            factory.connect_bind(move |_f, obj| {
+                let Some(item) = obj.downcast_ref::<ListItem>() else {
+                    return;
+                };
+                let Some(treerow) = item.item().and_downcast::<TreeListRow>() else {
+                    return;
+                };
+                let Some(expander) = item.child().and_downcast::<TreeExpander>() else {
+                    return;
+                };
+                let Some(row) = expander.child().and_downcast::<GtkBox>() else {
+                    return;
+                };
+                let Some(indent) = row.first_child().and_downcast::<GtkBox>() else {
+                    return;
+                };
+                let Some(branch) = indent.next_sibling().and_downcast::<Separator>() else {
+                    return;
+                };
+                let Some(content) = row.last_child().and_downcast::<GtkBox>() else {
+                    return;
+                };
+                let Some(disclosure) = content.first_child().and_downcast::<Image>() else {
+                    return;
+                };
+                let Some(image) = disclosure.next_sibling().and_downcast::<Image>() else {
+                    return;
+                };
+                let Some(label) = content.last_child().and_downcast::<Label>() else {
+                    return;
+                };
+                expander.set_list_row(Some(&treerow));
 
-            // One vertical guide line per ancestor level (drawn left of the row).
-            while let Some(child) = indent.first_child() {
-                indent.remove(&child);
-            }
-            for _ in 0..treerow.depth() {
-                // One indent level (22px). The guide line is the cell's left
-                // border, placed 15px in so it lands under the centre of the
-                // parent folder's icon (8px content margin + 7px half-icon); the
-                // 7px cell after it keeps the gap to this row's own icon.
-                let cell = GtkBox::new(Orientation::Horizontal, 0);
-                cell.set_size_request(7, -1);
-                cell.set_margin_start(15);
-                cell.add_css_class("indent-guide");
-                indent.append(&cell);
-            }
-
-            if let Some(info) = treerow.item().and_downcast::<gio::FileInfo>() {
-                label.set_label(&info.display_name());
-                // Per-type icon from the bundled Material set, rasterized by
-                // librsvg at the exact device-pixel size (display scale, floored
-                // at 2× so it stays crisp on HiDPI even before the row knows its
-                // monitor) instead of letting GtkImage scale a natural-size bitmap.
-                let is_dir = info.file_type() == gio::FileType::Directory;
-                let name = info.name();
-                let scale = image.scale_factor().max(2);
-                match crate::icons::icon_texture(
-                    &icons_dir,
-                    &name.to_string_lossy(),
-                    is_dir,
-                    14 * scale,
-                ) {
-                    Some(tex) => image.set_paintable(Some(&tex)),
-                    None => image.clear(),
+                // One vertical guide line per ancestor level (drawn left of the row).
+                while let Some(child) = indent.first_child() {
+                    indent.remove(&child);
                 }
-            }
-        });
+                for _ in 0..treerow.depth() {
+                    // One compact 16px level. The cell border forms a continuous
+                    // vertical guide while the adjacent Separator forms its branch.
+                    let cell = GtkBox::new(Orientation::Horizontal, 0);
+                    cell.set_size_request(10, -1);
+                    cell.set_margin_start(6);
+                    cell.add_css_class("indent-guide");
+                    indent.append(&cell);
+                }
+                branch.set_visible(treerow.depth() > 0);
+
+                if let Some(info) = treerow.item().and_downcast::<gio::FileInfo>() {
+                    label.set_label(&info.display_name());
+                    let is_dir = info.file_type() == gio::FileType::Directory;
+                    if is_dir {
+                        disclosure.set_icon_name(Some(if treerow.is_expanded() {
+                            "pan-down-symbolic"
+                        } else {
+                            "pan-end-symbolic"
+                        }));
+                    } else {
+                        disclosure.clear();
+                    }
+                    set_css_class(&expander, "workspace-root", treerow.depth() == 0);
+                    set_css_class(&expander, "directory-row", is_dir);
+                    set_css_class(&expander, "file-row", !is_dir);
+                    if treerow.depth() == 0 {
+                        *root_disclosure.borrow_mut() = Some(disclosure.downgrade());
+                    }
+
+                    // Per-type icon from the bundled Tabler outline set, rasterized by
+                    // librsvg at the exact device-pixel size (display scale, floored
+                    // at 2× so it stays crisp on HiDPI even before the row knows its
+                    // monitor) instead of letting GtkImage scale a natural-size bitmap.
+                    let name = info.name();
+                    let scale = image.scale_factor().max(2);
+                    let path = file_of(&info).and_then(|file| file.path());
+                    let is_active = path
+                        .as_ref()
+                        .is_some_and(|path| active_file.borrow().as_ref() == Some(path));
+                    match crate::icons::icon_texture(
+                        &icons_dir,
+                        &name.to_string_lossy(),
+                        is_dir,
+                        14 * scale,
+                    ) {
+                        Some(tex) => image.set_paintable(Some(&tex)),
+                        None => image.clear(),
+                    }
+
+                    if let Some(path) = path {
+                        set_css_class(&expander, "active-file", is_active);
+                        visible_rows.borrow_mut().insert(path, expander.downgrade());
+                    }
+                    visible_disclosures
+                        .borrow_mut()
+                        .insert(item.position(), disclosure.downgrade());
+                }
+            });
+        }
+
+        {
+            let visible_rows = visible_rows.clone();
+            let visible_disclosures = visible_disclosures.clone();
+            factory.connect_unbind(move |_f, obj| {
+                let Some(item) = obj.downcast_ref::<ListItem>() else {
+                    return;
+                };
+                if let Some(treerow) = item.item().and_downcast::<TreeListRow>() {
+                    if let Some(info) = treerow.item().and_downcast::<gio::FileInfo>() {
+                        if let Some(path) = file_of(&info).and_then(|file| file.path()) {
+                            visible_rows.borrow_mut().remove(&path);
+                        }
+                    }
+                }
+                visible_disclosures.borrow_mut().remove(&item.position());
+                if let Some(expander) = item.child().and_downcast::<TreeExpander>() {
+                    expander.remove_css_class("active-file");
+                    expander.remove_css_class("workspace-root");
+                    expander.remove_css_class("directory-row");
+                    expander.remove_css_class("file-row");
+                }
+            });
+        }
 
         let list = ListView::new(Some(selection), Some(factory));
         list.set_single_click_activate(true);
         let st = state.clone();
+        let active = active_file.clone();
+        let rows = visible_rows.clone();
+        let disclosures = visible_disclosures.clone();
+        let normal_icons = icons_dir.clone();
         list.connect_activate(move |lv, pos| {
             let Some(model) = lv.model() else { return };
             let Some(row) = model.item(pos).and_downcast::<TreeListRow>() else {
@@ -270,8 +440,44 @@ impl Sidebar {
             // symlinked dir left unfollowed under TCODE_AUTOEXPAND — falls
             // through and is opened instead of toggling a childless row.
             if info.file_type() == gio::FileType::Directory && row.is_expandable() {
-                row.set_expanded(!row.is_expanded());
+                let expanded = !row.is_expanded();
+                row.set_expanded(expanded);
+                if let Some(disclosure) = disclosures
+                    .borrow()
+                    .get(&pos)
+                    .and_then(glib::WeakRef::upgrade)
+                {
+                    disclosure.set_icon_name(Some(if expanded {
+                        "pan-down-symbolic"
+                    } else {
+                        "pan-end-symbolic"
+                    }));
+                }
             } else if let Some(path) = file_of(&info).and_then(|f| f.path()) {
+                *active.borrow_mut() = Some(path.clone());
+                rows.borrow_mut().retain(|row_path, weak| {
+                    let Some(widget) = weak.upgrade() else {
+                        return false;
+                    };
+                    let is_active = *row_path == path;
+                    set_css_class(&widget, "active-file", is_active);
+                    if let Some(image) = file_icon_for(&widget) {
+                        let scale = image.scale_factor().max(2);
+                        let name = row_path
+                            .file_name()
+                            .map(|name| name.to_string_lossy())
+                            .unwrap_or_default();
+                        if let Some(texture) = crate::icons::icon_texture(
+                            &normal_icons,
+                            &name,
+                            row_path.is_dir(),
+                            14 * scale,
+                        ) {
+                            image.set_paintable(Some(&texture));
+                        }
+                    }
+                    true
+                });
                 open_file(&st, &path);
             } else {
                 eprintln!("tcode: could not resolve path for sidebar item");

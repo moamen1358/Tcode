@@ -115,6 +115,7 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
     // background, so the panes read as lighter cards hovering over a canvas.
     let backdrop = darken_css(&theme.background, BACKDROP_FACTOR);
     let font = css_font(font);
+    let sidebar_font_size = (f64::from(font_size) * 0.8).max(7.0);
     let css = format!(
         ".grid-root {{ background-color: {backdrop}; padding: 4.5px; }}\n\
          .pane {{ background-color: {bg}; margin: 4.5px; \
@@ -156,15 +157,33 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .work-area {{ background-color: {backdrop}; }}\n\
          paned > separator {{ background-color: {backdrop}; }}\n\
          .picker-root {{ background-color: {bg}; }}\n\
-         .sidebar {{ background-color: {bg}; margin: 9px 0 9px 9px; \
+         .sidebar {{ background-color: {backdrop}; margin: 9px 0 9px 9px; \
                      box-shadow: 0 2px 8px rgba(0,0,0,0.55); \
-                     font-family: \"Noto Sans\", sans-serif; font-size: {font_size}pt; }}\n\
-         .sidebar label {{ color: {fg}; }}\n\
-         .sidebar row {{ padding: 0 4px; min-height: 22px; border-radius: 4px; }}\n\
-         .sidebar row:hover {{ background-color: transparent; }}\n\
-         .sidebar .hovered {{ background-color: alpha({fg}, 0.08); border-radius: 4px; }}\n\
-         .sidebar row:selected {{ background-color: alpha({accent}, 0.22); }}\n\
-         .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.3); }}\n\
+                     font-family: \"Martian Mono\", monospace; font-size: {sidebar_font_size:.1}pt; }}\n\
+         .sidebar label {{ color: alpha({fg}, 0.82); }}\n\
+         .sidebar listview {{ background-color: transparent; color: {fg}; }}\n\
+         .sidebar row {{ padding: 0; min-height: 25px; border-radius: 0; \
+                         background-color: transparent; }}\n\
+         .sidebar row:hover, .sidebar row:selected {{ background-color: transparent; }}\n\
+         .sidebar-tree-header {{ min-height: 36px; padding: 0 10px; \
+                                 border-bottom: 1px solid alpha({fg}, 0.06); }}\n\
+         .sidebar-tree-header label {{ color: alpha({fg}, 0.68); font-size: 8pt; \
+                                       font-weight: 600; letter-spacing: 1.2px; }}\n\
+         .sidebar-tree-header .header-slash {{ color: alpha({fg}, 0.34); }}\n\
+         .sidebar .sidebar-header-toggle {{ min-width: 20px; min-height: 20px; padding: 0; \
+                                            background: none; border: none; box-shadow: none; \
+                                            color: alpha({fg}, 0.62); }}\n\
+         .sidebar .sidebar-header-toggle:hover {{ background-color: alpha({fg}, 0.06); \
+                                                  color: {fg}; }}\n\
+         .sidebar .sidebar-tree-row {{ min-height: 25px; margin: 0 4px; padding: 0 4px; \
+                                       border: 1px solid transparent; border-radius: 2px; }}\n\
+         .sidebar .sidebar-tree-row.hovered {{ background-color: alpha({fg}, 0.055); }}\n\
+         .sidebar .workspace-root label {{ color: alpha({fg}, 0.96); font-weight: 600; }}\n\
+         .sidebar .tree-disclosure {{ color: alpha({fg}, 0.68); }}\n\
+         .sidebar .indent-guide {{ border-left: 1px solid alpha(#ff9e64, 0.78); }}\n\
+         .sidebar .tree-branch {{ min-height: 1px; background-color: alpha(#ff9e64, 0.78); }}\n\
+         .sidebar .file-row .indent-guide {{ border-left-color: alpha({fg}, 0.32); }}\n\
+         .sidebar .file-row .tree-branch {{ background-color: alpha({fg}, 0.32); }}\n\
          .tcode-titlebar {{ min-height: 18px; background-color: {bg}; \
                               box-shadow: none; border: none; color: {fg}; }}\n\
          .tcode-titlebar button {{ min-height: 0; min-width: 0; padding: 1px 6px; margin: 0; }}\n\
