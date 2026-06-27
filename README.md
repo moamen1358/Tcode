@@ -8,16 +8,7 @@
 
 Pick a number — get that many shells in a balanced grid.
 
-Borderless&nbsp; •&nbsp; Keyboard-driven&nbsp; •&nbsp; Open source
-
-[![Release](https://img.shields.io/badge/release-v1.3.0-F2660C)](https://github.com/moamen1358/Tcode/releases/latest)
-&nbsp;[![License](https://img.shields.io/badge/license-MIT-F2660C)](LICENSE)
-&nbsp;![Linux](https://img.shields.io/badge/platform-Linux-F2660C?logo=linux&logoColor=white)
-&nbsp;![Rust](https://img.shields.io/badge/built%20with-Rust-F2660C?logo=rust&logoColor=white)
-
-<br>
-
-<img src="docs/screenshot.png" width="840" alt="Tcode — a 2×2 terminal grid with the file sidebar">
+Linux&nbsp; •&nbsp; Open source&nbsp; •&nbsp; MIT License
 
 </div>
 
@@ -46,29 +37,50 @@ tcode 4      # straight to a 2×2 grid
 
 ## Features
 
-### #1 Tile: Many Shells, One Grid
-
+<table width="100%">
+<tr>
+<td width="50%" valign="middle">
+<h3>#1 Tile: Many Shells, One Grid</h3>
 Pick a number, get that many panes — equal-split, no dragging, nothing to configure. Every pane is a plain login shell. Move focus, zoom one full-screen, or rebuild the whole grid, all from the keyboard.
+</td>
+<td width="50%" valign="middle">
+<img src="docs/screenshot.png" width="100%" alt="A 2×2 terminal grid with the file sidebar">
+</td>
+</tr>
+</table>
+
+<div align="center">
 
 ### #2 View: Open Anything
 
-Code, images, PDFs, office documents, CSV — one viewer, in a tab beside your panes. Ctrl+click any path to open it. The panel is width-capped, so it never crowds your terminals.
+Code, images, PDFs, office documents, CSV — **one viewer**, in a tab beside your panes.<br>
+Ctrl+click any path to open it. The panel is width-capped, so it never crowds your terminals.
 
-### #3 Remember: Nothing You Copy Is Lost
+</div>
 
+<table width="100%">
+<tr>
+<td width="50%" valign="middle">
+<img src="docs/clipboard.png" width="100%" alt="The Alt+V clipboard palette: a searchable list of copied entries with capture times and pin / delete actions">
+</td>
+<td width="50%" valign="middle">
+<h3>#3 Remember: Nothing You Copy Is Lost</h3>
 Every clip is captured and searchable. Hit <kbd>Alt</kbd>+<kbd>V</kbd>, type to filter, <kbd>Enter</kbd> to paste it back. Pin the ones you reuse — each remembers when you copied it.
+</td>
+</tr>
+</table>
 
-<p align="center">
-  <img src="docs/clipboard.png" width="800" alt="The Alt+V clipboard palette: a searchable list of copied entries with capture times and pin / delete actions">
-</p>
-
-### #4 Capture: Shoot, Mark Up, Drop In
-
+<table width="100%">
+<tr>
+<td width="50%" valign="middle">
+<h3>#4 Capture: Shoot, Mark Up, Drop In</h3>
 A screenshot annotator, built in. Grab a window or region, draw boxes / arrows / text in any color, then save — and drag the PNG straight into a terminal.
-
-<p align="center">
-  <img src="docs/frame.png" width="800" alt="Frame annotating a screenshot — toolbar and colors on top, boxes and arrows on the image, screenshots strip on the right">
-</p>
+</td>
+<td width="50%" valign="middle">
+<img src="docs/frame.png" width="100%" alt="Frame annotating a screenshot — toolbar and colors on top, boxes and arrows on the image, screenshots strip on the right">
+</td>
+</tr>
+</table>
 
 <br>
 
