@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="packaging/tcode.png" width="104" alt="Tcode">
-
-# Tcode
+# <img src="docs/tcode-mark.png" height="46" align="middle" alt="T">code
 
 ### The terminal workspace that tiles itself
 

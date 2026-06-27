@@ -15,3 +15,11 @@ node_modules/
 /logos/
 /packaging/tcode_lbl.png
 generate_tcode_ai_logos.py
+
+# Working notes & scratch markdown at the repo root — keep only the real docs
+/*.md
+!/README.md
+!/CLAUDE.md
+
+# Subagent-driven-development scratch
+/.superpowers/
