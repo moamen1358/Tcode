@@ -136,32 +136,41 @@ pub fn csv_viewer(path: &Path) -> Option<Widget> {
     // Coloring holds the whole document in a GtkTextBuffer, so cap the table preview
     // well under loader::MAX_TEXT_BYTES (64 MB): a tens-of-MB CSV would stall the main
     // thread on set_text and balloon RAM. Larger files get a short notice instead.
-    const MAX_CSV_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+    const MAX_CSV_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
     {
         let (buffer, delim, recolor, tagged) =
             (buffer.clone(), delim.clone(), recolor.clone(), tagged.clone());
-        let p = path.to_path_buf();
-        crate::loader::load_text_async(path, move |text| {
-            if let Some(text) = text {
-                if text.len() > MAX_CSV_PREVIEW_BYTES {
-                    buffer.set_text(&format!(
-                        "CSV too large to preview as a table ({} MB). Open it in a \
-                         terminal pane (e.g. `less` or `column -s, -t`) instead.",
-                        text.len() / (1024 * 1024)
-                    ));
-                    return;
+        // Decide on the file's size BEFORE reading it: a file past the table-preview
+        // cap gets a short notice without pulling tens of MB through the decoder just
+        // to discard it. (`too_large`/64 MB was ruled out above; this is the smaller
+        // cap specific to holding the whole document in a GtkTextBuffer.)
+        let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if file_len > MAX_CSV_PREVIEW_BYTES {
+            buffer.set_text(&format!(
+                "CSV too large to preview as a table ({} MB). Open it in a \
+                 terminal pane (e.g. `less` or `column -s, -t`) instead.",
+                file_len / (1024 * 1024)
+            ));
+        } else {
+            let p = path.to_path_buf();
+            crate::loader::load_text_async(path, move |text| {
+                if let Some(text) = text {
+                    delim.set(detect_delimiter(&text, &p) as char);
+                    buffer.set_text(&text);
+                    // set_text replaced the buffer wholesale. Any "already colored" marks
+                    // are now stale — in particular, a recolor() fired on the still-empty
+                    // buffer during first size-allocation marks line 0 done before the real
+                    // text arrives, which would otherwise leave the header row uncolored.
+                    // Reset so every visible line, header included, is tinted from scratch.
+                    tagged.borrow_mut().clear();
+                    recolor();
+                } else {
+                    // Decoded to non-UTF-8 (slipped past the NUL sniff) or vanished
+                    // mid-read — show a notice instead of a silently blank pane.
+                    buffer.set_text("Couldn't read this file as text.");
                 }
-                delim.set(detect_delimiter(&text, &p) as char);
-                buffer.set_text(&text);
-                // set_text replaced the buffer wholesale. Any "already colored" marks
-                // are now stale — in particular, a recolor() fired on the still-empty
-                // buffer during first size-allocation marks line 0 done before the real
-                // text arrives, which would otherwise leave the header row uncolored.
-                // Reset so every visible line, header included, is tinted from scratch.
-                tagged.borrow_mut().clear();
-                recolor();
-            }
-        });
+            });
+        }
     }
 
     Some(scroller.upcast())

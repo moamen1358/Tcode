@@ -115,7 +115,10 @@ pub fn ensure(color: &str) -> PathBuf {
     let dir = cache_dir(color);
     let _ = fs::create_dir_all(&dir);
     for (name, svg) in ICONS {
-        let _ = fs::write(dir.join(format!("{name}.svg")), recolor(svg, color));
+        // Atomic: two NON_UNIQUE launches share this color's cache dir, so the icon
+        // loader must never read a half-written SVG (a torn write renders no icon).
+        let path = dir.join(format!("{name}.svg"));
+        let _ = tcode_core::fsutil::atomic_write(&path, recolor(svg, color).as_bytes(), 0o644);
     }
     dir
 }

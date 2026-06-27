@@ -61,6 +61,15 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     make_private_dir(&cache);
 
+    // Claim the dir as in-use the instant it exists — BEFORE the `.done` probe and
+    // the page scan below. A concurrent render's prune_cache reaps a `.done`-less dir
+    // only when it has no fresh `.lock`; stamping the lock here (rather than after the
+    // probe) closes the window in which that prune could delete this dir out from
+    // under our soffice/pdftoppm. Harmless on the cached path — prune ignores a
+    // `.done` dir's lock, and we remove it again below.
+    let lock = cache.join(".lock");
+    let _ = std::fs::write(&lock, b"");
+
     // Only trust the cache if a previous render finished completely. Without this
     // marker, a render killed part-way (OOM, tab closed, crash) would leave a few
     // page-*.png behind that look like a full cache, so the document would show
@@ -72,30 +81,27 @@ fn render(path: &Path, tx: &async_channel::Sender<Msg>, cancel: &AtomicBool) -> 
         Vec::new()
     };
     if pages.is_empty() {
-        // Mark this dir in-use before writing into it: a concurrent render's
-        // prune_cache treats a `.done`-less dir with a fresh `.lock` as in-flight
-        // and won't remove it out from under our soffice/pdftoppm — important
-        // when we've re-entered a stale partial dir whose mtime is otherwise old.
-        let lock = cache.join(".lock");
-        let _ = std::fs::write(&lock, b"");
         let pdf = if is_office(path) {
             match office_to_pdf(path, &cache, cancel)? {
                 Some(p) => p,
-                None => return Ok(()), // tab closed mid-conversion
+                None => return Ok(()), // tab closed mid-conversion (lock reaped when stale)
             }
         } else {
             path.to_path_buf()
         };
         if !rasterize(&pdf, &cache, cancel)? {
-            return Ok(()); // cancelled
+            return Ok(()); // cancelled (lock reaped when stale)
         }
         pages = collect_pages(&cache);
         if !pages.is_empty() {
             let _ = std::fs::write(&done, b""); // cache is now complete
-            let _ = std::fs::remove_file(&lock); // render finished — no longer in flight
             prune_cache(&cache); // keep the regenerable preview cache bounded
         }
     }
+    // Pages ready (freshly rendered or served from cache) — release the in-use lock.
+    // The early cancellation returns above deliberately leave it: prune_cache reaps
+    // that partial dir once the lock goes stale.
+    let _ = std::fs::remove_file(&lock);
     if pages.is_empty() {
         return Err("no pages were produced".into());
     }

@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -136,6 +136,11 @@ impl Panel {
         area.set_hexpand(true);
         area.add_css_class("frame-thumb");
         area.set_tooltip_text(path.file_name().and_then(|n| n.to_str()));
+        // Tag the widget with its file name so trim_to_cap can prune the matching
+        // `seen` entry when this tile is dropped (otherwise `seen` grows unbounded).
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            area.set_widget_name(name);
+        }
         // A pointer cursor hints the thumbnail is interactive (click or drag).
         area.set_cursor_from_name(Some("pointer"));
         {
@@ -185,7 +190,14 @@ impl Panel {
     fn trim_to_cap(&self) {
         while self.list.observe_children().n_items() as usize > MAX_THUMBS {
             match self.list.last_child() {
-                Some(oldest) => self.list.remove(&oldest),
+                Some(oldest) => {
+                    // Drop this tile's file name from `seen` too, so the set tracks only
+                    // what's shown. widget_name carries the name (set in make_thumb); an
+                    // untagged widget reports its type name, which is harmlessly absent.
+                    let name = oldest.widget_name();
+                    self.seen.borrow_mut().remove(OsStr::new(name.as_str()));
+                    self.list.remove(&oldest);
+                }
                 None => break,
             }
         }

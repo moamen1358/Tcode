@@ -21,9 +21,15 @@ use gtk4::{gio, glib, Application};
 const APP_ID: &str = "dev.tcode.Tcode";
 
 fn main() -> glib::ExitCode {
+    // Read argv[1] once, non-panicking. `std::env::args()` panics mid-iteration on a
+    // non-UTF-8 argument (e.g. tcode launched as a handler for a path that isn't valid
+    // UTF-8), crashing before GTK starts; `args_os` + `into_string` instead treats a
+    // non-UTF-8 arg as "unrecognized" and falls through to the session picker.
+    let arg1: Option<String> = std::env::args_os().nth(1).and_then(|s| s.into_string().ok());
+
     // CLI subcommands, handled before any GTK setup.
-    if let Some(arg) = std::env::args().nth(1) {
-        match arg.as_str() {
+    if let Some(arg) = arg1.as_deref() {
+        match arg {
             "update" => return cli_update(),
             "version" | "--version" | "-V" => {
                 println!("tcode {}", env!("CARGO_PKG_VERSION"));
@@ -44,8 +50,8 @@ fn main() -> glib::ExitCode {
 
     // Optional pane count from argv[1] (e.g. `tcode 4`). Read it ourselves so
     // GTK never sees it — we hand GTK a clean argv to avoid file-open parsing.
-    let preset: Option<usize> = std::env::args()
-        .nth(1)
+    let preset: Option<usize> = arg1
+        .as_deref()
         .and_then(|s| s.parse().ok())
         .filter(|n| (1..=16).contains(n));
 

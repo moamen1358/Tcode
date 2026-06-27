@@ -1206,17 +1206,26 @@ pub fn show_grid(state: &Shared, n: usize) {
     let host = crate::overlay::OverlayHost::new(&bridge.root);
     // Host + reopen now exist: a fresh capture floats the bottom-left preview image.
     {
-        let (host, reopen) = (host.clone(), bridge.reopen.clone());
+        // Weak, not strong: these hook slots live inside the Frame widget tree under
+        // `host.root`, so a strong capture would close a host → root → annot → save_btn
+        // → on_saved → preview_hook → host cycle that `drop_live` can't break, leaking
+        // the whole session subtree (its VTE terminals — and their live shells) on every
+        // pane-count change. Mirrors OverlayHost's own Weak-captured callbacks.
+        let (weak_host, reopen) = (Rc::downgrade(&host), bridge.reopen.clone());
         *preview_hook.borrow_mut() = Some(Rc::new(move |path: std::path::PathBuf| {
-            crate::frame::show_screenshot_preview(&host, path, reopen.clone());
+            if let Some(host) = weak_host.upgrade() {
+                crate::frame::show_screenshot_preview(&host, path, reopen.clone());
+            }
         }));
     }
     // Opening the annotator dismisses the clipboard palette (the docked right-side
     // tray is covered by the annotation layer automatically, so it needs no hiding).
     {
-        let host = host.clone();
+        let weak_host = Rc::downgrade(&host); // Weak — see the cycle note above.
         *annot_hook.borrow_mut() = Some(Rc::new(move || {
-            host.close(); // dismiss the clipboard palette if it's open
+            if let Some(host) = weak_host.upgrade() {
+                host.close(); // dismiss the clipboard palette if it's open
+            }
         }));
     }
 

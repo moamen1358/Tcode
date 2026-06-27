@@ -134,6 +134,12 @@ fn draw(cr: &cairo::Context, w: i32, h: i32, shot: &Shot) {
     cr.rectangle(0.0, 0.0, iw, ih);
     let _ = cr.stroke();
 
+    // Clip annotations (and the in-progress preview) to the image. The export
+    // surface is exactly image-sized, so anything dragged past the edge is cropped
+    // there; clipping here makes the on-screen preview match the saved PNG.
+    cr.rectangle(0.0, 0.0, iw, ih);
+    cr.clip();
+
     paint_annotations(cr, &doc.annos, scale);
 
     // In-progress preview in the current color.

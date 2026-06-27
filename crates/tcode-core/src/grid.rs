@@ -52,11 +52,12 @@ pub fn neighbor(widths: &[usize], row: usize, col: usize, dir: Dir) -> (usize, u
 /// Flat (row-major) index of the pane at `(row, col)`.
 ///
 /// # Panics
-/// In debug builds, asserts `row <= widths.len()`. Callers derive `(row, col)`
-/// from `layout`/`neighbor`, which keep them in range.
+/// In debug builds, asserts `row < widths.len()` — `row == len` is one past the
+/// last row, which would sum every width and return an out-of-range flat index.
+/// Callers derive `(row, col)` from `layout`/`neighbor`, which keep them in range.
 pub fn flat_index(widths: &[usize], row: usize, col: usize) -> usize {
     debug_assert!(
-        row <= widths.len(),
+        row < widths.len(),
         "row {row} out of range for {} rows",
         widths.len()
     );

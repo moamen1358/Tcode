@@ -992,6 +992,10 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
     let pages_rx = pages.clone();
     let refresh_rx = refresh_visible.clone();
     glib::spawn_future_local(async move {
+        // Tracks whether a terminal Done/Cancelled/Error arrived. If the channel
+        // closes without one — the worker thread panicked, dropping its sender — the
+        // post-loop fallback stops the spinner so the preview can't hang forever.
+        let mut finished = false;
         while let Ok(msg) = rx.recv().await {
             match msg {
                 preview::Msg::Pages(n) => {
@@ -1028,20 +1032,31 @@ fn build_pages(path: &Path, cancel: Arc<AtomicBool>) -> Widget {
                     refresh_rx();
                 }
                 preview::Msg::Done => {
+                    finished = true;
                     sp.stop();
                     sb.set_visible(false);
                 }
                 preview::Msg::Cancelled => {
+                    finished = true;
                     sp.stop();
                     sb.set_visible(false);
                 }
                 preview::Msg::Error(e) => {
+                    finished = true;
                     sp.stop();
                     st.set_text(&format!("Could not render preview:\n{e}"));
                     st.add_css_class("doc-error");
                     col.append(&open_externally(&p));
                 }
             }
+        }
+        if !finished {
+            // The worker thread ended without reporting (e.g. a panic dropped its
+            // sender). Don't leave the spinner spinning; surface a fallback instead.
+            sp.stop();
+            st.set_text("Could not render preview (the renderer stopped unexpectedly).");
+            st.add_css_class("doc-error");
+            col.append(&open_externally(&p));
         }
     });
 

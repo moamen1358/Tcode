@@ -224,7 +224,7 @@ impl Sidebar {
         let active_file: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(initial_active));
         let visible_rows: Rc<RefCell<HashMap<PathBuf, glib::WeakRef<TreeExpander>>>> =
             Rc::new(RefCell::new(HashMap::new()));
-        let visible_disclosures: Rc<RefCell<HashMap<u32, glib::WeakRef<Image>>>> =
+        let visible_disclosures: Rc<RefCell<HashMap<PathBuf, glib::WeakRef<Image>>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
         let factory = SignalListItemFactory::new();
@@ -387,11 +387,16 @@ impl Sidebar {
 
                     if let Some(path) = path {
                         set_css_class(&expander, "active-file", is_active);
-                        visible_rows.borrow_mut().insert(path, expander.downgrade());
+                        visible_rows
+                            .borrow_mut()
+                            .insert(path.clone(), expander.downgrade());
+                        // Key the chevron by the stable path, not item.position(): a
+                        // sibling expand/collapse shifts positions without re-binding,
+                        // so a position key would go stale and flip the wrong chevron.
+                        visible_disclosures
+                            .borrow_mut()
+                            .insert(path, disclosure.downgrade());
                     }
-                    visible_disclosures
-                        .borrow_mut()
-                        .insert(item.position(), disclosure.downgrade());
                 }
             });
         }
@@ -407,10 +412,10 @@ impl Sidebar {
                     if let Some(info) = treerow.item().and_downcast::<gio::FileInfo>() {
                         if let Some(path) = file_of(&info).and_then(|file| file.path()) {
                             visible_rows.borrow_mut().remove(&path);
+                            visible_disclosures.borrow_mut().remove(&path);
                         }
                     }
                 }
-                visible_disclosures.borrow_mut().remove(&item.position());
                 if let Some(expander) = item.child().and_downcast::<TreeExpander>() {
                     expander.remove_css_class("active-file");
                     expander.remove_css_class("workspace-root");
@@ -442,10 +447,9 @@ impl Sidebar {
             if info.file_type() == gio::FileType::Directory && row.is_expandable() {
                 let expanded = !row.is_expanded();
                 row.set_expanded(expanded);
-                if let Some(disclosure) = disclosures
-                    .borrow()
-                    .get(&pos)
-                    .and_then(glib::WeakRef::upgrade)
+                if let Some(disclosure) = file_of(&info)
+                    .and_then(|f| f.path())
+                    .and_then(|path| disclosures.borrow().get(&path).and_then(glib::WeakRef::upgrade))
                 {
                     disclosure.set_icon_name(Some(if expanded {
                         "pan-down-symbolic"

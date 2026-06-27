@@ -121,8 +121,13 @@ fn freeze_terminals(inner: &Rc<RefCell<GridInner>>) {
     for p in &g.panes {
         p.set_resizing(true); // no-op if already hidden
     }
-    let inner = inner.clone();
+    let weak = Rc::downgrade(inner);
     let id = glib::timeout_add_local_once(Duration::from_millis(220), move || {
+        // Weak: if the session is torn down mid-resize, let GridInner drop now rather
+        // than pinning every pane (and its live PTY) alive until this one-shot fires.
+        let Some(inner) = weak.upgrade() else {
+            return;
+        };
         let Ok(g) = inner.try_borrow() else {
             return;
         };
