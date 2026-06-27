@@ -93,9 +93,15 @@ impl Session {
                 return;
             }
         };
+        // Owner-only dir (0700): session files record open-file paths, so don't
+        // leave the sessions dir world-listable (matches the clipboard/preview caches).
+        let path = self.path();
+        if let Some(dir) = path.parent() {
+            crate::fsutil::make_private_dir(dir);
+        }
         // Atomic + owner-only (0o600): session files record open-file paths, and a
         // torn write must not leave a half-file that `list()` later drops as corrupt.
-        if let Err(e) = crate::fsutil::atomic_write(&self.path(), text.as_bytes(), 0o600) {
+        if let Err(e) = crate::fsutil::atomic_write(&path, text.as_bytes(), 0o600) {
             eprintln!("tcode: failed to write session {}: {e}", self.id);
         }
     }

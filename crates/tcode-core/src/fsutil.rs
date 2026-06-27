@@ -76,6 +76,20 @@ fn temp_sibling(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// Create `dir` (and any missing parents) and, on Unix, restrict it to the owner
+/// (mode 0700). Best-effort: a directory that holds only non-secret filenames
+/// still benefits from not being world-listable, so a write that depends on the
+/// dir existing should still proceed even if the chmod fails. Mirrors the
+/// owner-only intent already applied to the clipboard-history and preview caches.
+pub fn make_private_dir(dir: &Path) {
+    let _ = std::fs::create_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

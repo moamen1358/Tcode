@@ -124,6 +124,20 @@ pub fn integrate(
     let on_pick: Rc<dyn Fn(PathBuf)> = {
         let show_annot = show_annot.clone();
         Rc::new(move |path: PathBuf| {
+            // Guard against a decompression bomb before decoding on the UI thread.
+            // The Alt+P tray auto-thumbnails every file in ~/Pictures/Screenshots
+            // (a shared, in-scope dir) with a bounded decode, but opening one to
+            // annotate decodes it at full size — so an absurd declared pixel count
+            // (a tiny file claiming e.g. 40000×40000 → multi-GB as RGBA) must be
+            // rejected from the header first. Mirrors editor::image_viewer's guard.
+            const MAX_PIXELS: i64 = 50_000_000; // ~50 MP — bounded even at RGBA
+            match Pixbuf::file_info(&path) {
+                Some((_, w, h)) if (w as i64) * (h as i64) <= MAX_PIXELS => {}
+                _ => {
+                    eprintln!("tcode: refusing to open oversized image {}", path.display());
+                    return;
+                }
+            }
             if let Ok(pb) = Pixbuf::from_file(&path) {
                 show_annot(pb);
             }

@@ -127,6 +127,11 @@ impl Config {
                 return;
             }
         };
+        // Owner-only dir (0700) to match the clipboard/preview caches: config holds
+        // no secrets, but there's no reason to leave it world-listable.
+        if let Some(dir) = path.parent() {
+            crate::fsutil::make_private_dir(dir);
+        }
         // Atomic + owner-only (0o600): a torn write must never leave a half-file
         // that parses back to defaults and silently loses the user's settings.
         if let Err(e) = crate::fsutil::atomic_write(&path, text.as_bytes(), 0o600) {

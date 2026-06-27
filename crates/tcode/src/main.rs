@@ -116,6 +116,7 @@ fn cli_update() -> glib::ExitCode {
     let downloaded = std::process::Command::new("curl")
         .args(["-fsSL", "-o"])
         .arg(&deb)
+        .arg("--") // end of options: the URL comes from release JSON; never let it parse as a flag
         .arg(&url)
         .status()
         .map(|s| s.success())

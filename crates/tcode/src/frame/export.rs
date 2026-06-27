@@ -80,5 +80,8 @@ fn next_shot_number(dir: &Path) -> u32 {
         })
         .max()
         .unwrap_or(0);
-    max + 1
+    // saturating: a planted `shot-4294967295.png` in the shared screenshots dir
+    // would otherwise wrap to 0 in release (panic in debug). The O_EXCL create
+    // loop still recovers, but don't rely on the overflow.
+    max.saturating_add(1)
 }
