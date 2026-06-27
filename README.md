@@ -44,14 +44,26 @@ tcode 4      # straight to a 2×2 grid
 
 ## Features
 
-| | |
-|---|---|
-| **◧&nbsp; Tiling grid** | `tcode N` → **N** equal panes, no dragging. Move focus with the arrows, zoom one full-screen, rebuild instantly. |
-| **🗂&nbsp; Universal viewer** | Open **code · images · PDFs · office · CSV** in a tab beside your panes. Ctrl+click a path to jump to it. |
-| **📋&nbsp; Clipboard history** | Every copy is saved. <kbd>Alt</kbd>+<kbd>V</kbd> opens a searchable palette — re-copy, pin, or delete past clips. |
-| **📸&nbsp; Frame** | Capture a window or region, annotate with boxes / arrows / text, then save and drag it into a terminal. |
+<table width="100%">
+<tr>
+<td width="22%"><b>◧&nbsp; Tiling grid</b></td>
+<td><code>tcode N</code> → <b>N</b> equal panes, no dragging — move focus with the arrows, zoom one full-screen, rebuild instantly.</td>
+</tr>
+<tr>
+<td><b>🗂&nbsp; Universal viewer</b></td>
+<td>Open <b>code · images · PDFs · office · CSV</b> in a tab beside your panes. Ctrl+click a path to jump to it.</td>
+</tr>
+<tr>
+<td><b>📋&nbsp; Clipboard history</b></td>
+<td>Every copy is saved. <kbd>Alt</kbd>+<kbd>V</kbd> opens a searchable palette — re-copy, pin, or delete past clips.</td>
+</tr>
+<tr>
+<td><b>📸&nbsp; Frame</b></td>
+<td>Capture a window or region, annotate with boxes / arrows / text, then save and drag it into a terminal.</td>
+</tr>
+</table>
 
-<table>
+<table width="100%">
 <tr>
 <td width="50%" valign="top">
 <img src="docs/clipboard.png" alt="The Alt+V clipboard palette: a searchable list of copied entries with capture times and pin / delete actions">
@@ -68,19 +80,40 @@ tcode 4      # straight to a 2×2 grid
 
 ## Shortcuts
 
-| Keys | Action |
-|---|---|
-| <kbd>Alt</kbd> + arrows | Move focus between panes |
-| <kbd>Alt</kbd> + <kbd>1</kbd>…<kbd>9</kbd> | Rebuild the grid with N panes |
-| <kbd>Alt</kbd> + <kbd>N</kbd> | New terminal |
-| <kbd>Alt</kbd> + <kbd>Z</kbd> | Zoom the focused pane |
-| <kbd>Alt</kbd> + <kbd>F</kbd> | Fullscreen |
-| <kbd>Alt</kbd> + <kbd>B</kbd> | Toggle the file sidebar |
-| <kbd>Alt</kbd> + <kbd>V</kbd> | Clipboard history |
-| <kbd>Alt</kbd> + <kbd>P</kbd> | Screenshots strip |
-| <kbd>Alt</kbd> + <kbd>Q</kbd> | Quit |
-| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> / <kbd>V</kbd> | Copy / paste |
-| <kbd>Ctrl</kbd> + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd> | Zoom the UI |
+<table width="100%">
+<thead>
+<tr>
+<th colspan="2" align="left">Panes &amp; layout</th>
+<th colspan="2" align="left">Tools &amp; system</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td width="16%"><kbd>Alt</kbd> + arrows</td><td width="34%">Move focus between panes</td>
+<td width="16%"><kbd>Alt</kbd> + <kbd>V</kbd></td><td width="34%">Clipboard history</td>
+</tr>
+<tr>
+<td><kbd>Alt</kbd> + <kbd>1</kbd>…<kbd>9</kbd></td><td>Set the pane count</td>
+<td><kbd>Alt</kbd> + <kbd>P</kbd></td><td>Screenshots strip</td>
+</tr>
+<tr>
+<td><kbd>Alt</kbd> + <kbd>N</kbd></td><td>New terminal</td>
+<td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd></td><td>Copy / paste</td>
+</tr>
+<tr>
+<td><kbd>Alt</kbd> + <kbd>Z</kbd></td><td>Zoom the focused pane</td>
+<td><kbd>Ctrl</kbd> + <kbd>+</kbd> / <kbd>−</kbd> / <kbd>0</kbd></td><td>Zoom the UI</td>
+</tr>
+<tr>
+<td><kbd>Alt</kbd> + <kbd>F</kbd></td><td>Fullscreen</td>
+<td><kbd>Alt</kbd> + <kbd>Q</kbd></td><td>Quit</td>
+</tr>
+<tr>
+<td><kbd>Alt</kbd> + <kbd>B</kbd></td><td>Toggle the file sidebar</td>
+<td></td><td></td>
+</tr>
+</tbody>
+</table>
 
 <sub>All shortcuts are also in the app — open the gear (⚙) in the titlebar.</sub>
 
