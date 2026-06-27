@@ -23,3 +23,6 @@ generate_tcode_ai_logos.py
 
 # Subagent-driven-development scratch
 /.superpowers/
+
+# Local marketing-site experiment (kept on this machine only — never published)
+/website-demo/
