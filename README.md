@@ -12,16 +12,6 @@ Linux&nbsp; •&nbsp; Open source&nbsp; •&nbsp; MIT License
 
 <br>
 
-<div align="center">
-
-**▶&nbsp; [Watch the 47-second demo](https://github.com/moamen1358/Tcode/releases/download/v1.3.0/Tcode-Demo.mp4)**
-
-[<img src="docs/demo-poster.jpg" width="820" alt="Tcode in action — a balanced grid of terminal panes with the file sidebar, clipboard history, and screenshot annotator">](https://github.com/moamen1358/Tcode/releases/download/v1.3.0/Tcode-Demo.mp4)
-
-</div>
-
-<br>
-
 ## Install
 
 No Rust. No build. Three steps.

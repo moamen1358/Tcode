@@ -109,8 +109,8 @@ screenshots strip · `Alt+f` fullscreen · `Alt+q` quit · `Ctrl+Shift+C/V` copy
   shows **no icon**. Keep `StartupWMClass=dev.tcode.Tcode` for X11.
 - **Distribution**: now that the repo is **public**, `tcode update` (unauthenticated
   GitHub API) resolves the latest release for end users — no more 404, no separate
-  "releases" repo needed. The README's demo video is hosted as a **release asset**
-  (`Tcode-Demo.mp4` on the v1.3.0 release), not committed — keeps the repo lean.
+  "releases" repo needed. (The README no longer embeds a demo video — removed at the
+  user's request; `Tcode-Demo.mp4` may still be attached to the v1.3.0 release.)
 - **Multi-agent direction (built then fully removed)**: a "Conductor / Mission Control"
   experiment — auto-launching Claude/Codex/Hermes in panes, a per-session coordination
   bus, and an Alt+M activity board — lived on `feat/conductor`, then was **reverted in
