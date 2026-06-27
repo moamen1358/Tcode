@@ -95,8 +95,8 @@ A screenshot annotator, built in. Grab a window or region, draw boxes / arrows /
 </thead>
 <tbody>
 <tr>
-<td width="16%"><kbd>Alt</kbd> + arrows</td><td width="34%">Move focus between panes</td>
-<td width="16%"><kbd>Alt</kbd> + <kbd>V</kbd></td><td width="34%">Clipboard history</td>
+<td width="150"><kbd>Alt</kbd> + arrows</td><td width="280">Move focus between panes</td>
+<td width="180"><kbd>Alt</kbd> + <kbd>V</kbd></td><td width="220">Clipboard history</td>
 </tr>
 <tr>
 <td><kbd>Alt</kbd> + <kbd>1</kbd>…<kbd>9</kbd></td><td>Set the pane count</td>
