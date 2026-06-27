@@ -4,9 +4,11 @@
 
 # Tcode
 
-**A fast, borderless tiling-terminal workspace for Linux.**
+### The terminal workspace that tiles itself
 
-Pick a number → get that many terminal panes in a clean grid.
+Pick a number — get that many shells in a balanced grid.
+
+Borderless&nbsp; •&nbsp; Keyboard-driven&nbsp; •&nbsp; Open source
 
 [![Release](https://img.shields.io/badge/release-v1.3.0-F2660C)](https://github.com/moamen1358/Tcode/releases/latest)
 &nbsp;[![License](https://img.shields.io/badge/license-MIT-F2660C)](LICENSE)
@@ -23,7 +25,7 @@ Pick a number → get that many terminal panes in a clean grid.
 
 ## Install
 
-No source, no Rust, no setup — three steps.
+No Rust. No build. Three steps.
 
 **1.** Download **`tcode_1.3.0_amd64.deb`** from the [**latest release**](https://github.com/moamen1358/Tcode/releases/latest).
 
@@ -44,37 +46,29 @@ tcode 4      # straight to a 2×2 grid
 
 ## Features
 
-<table width="100%">
-<tr>
-<td width="22%"><b>◧&nbsp; Tiling grid</b></td>
-<td><code>tcode N</code> → <b>N</b> equal panes, no dragging — move focus with the arrows, zoom one full-screen, rebuild instantly.</td>
-</tr>
-<tr>
-<td><b>🗂&nbsp; Universal viewer</b></td>
-<td>Open <b>code · images · PDFs · office · CSV</b> in a tab beside your panes. Ctrl+click a path to jump to it.</td>
-</tr>
-<tr>
-<td><b>📋&nbsp; Clipboard history</b></td>
-<td>Every copy is saved. <kbd>Alt</kbd>+<kbd>V</kbd> opens a searchable palette — re-copy, pin, or delete past clips.</td>
-</tr>
-<tr>
-<td><b>📸&nbsp; Frame</b></td>
-<td>Capture a window or region, annotate with boxes / arrows / text, then save and drag it into a terminal.</td>
-</tr>
-</table>
+### #1 Tile: Many Shells, One Grid
 
-<table width="100%">
-<tr>
-<td width="50%" valign="top">
-<img src="docs/clipboard.png" alt="The Alt+V clipboard palette: a searchable list of copied entries with capture times and pin / delete actions">
-<p align="center"><sub><b>Clipboard history</b> — search and re-use anything you've copied</sub></p>
-</td>
-<td width="50%" valign="top">
-<img src="docs/frame.png" alt="Frame annotating a screenshot — toolbar and colors on top, boxes and arrows on the image, screenshots strip on the right">
-<p align="center"><sub><b>Frame</b> — capture, annotate, save</sub></p>
-</td>
-</tr>
-</table>
+Pick a number, get that many panes — equal-split, no dragging, nothing to configure. Every pane is a plain login shell. Move focus, zoom one full-screen, or rebuild the whole grid, all from the keyboard.
+
+### #2 View: Open Anything
+
+Code, images, PDFs, office documents, CSV — one viewer, in a tab beside your panes. Ctrl+click any path to open it. The panel is width-capped, so it never crowds your terminals.
+
+### #3 Remember: Nothing You Copy Is Lost
+
+Every clip is captured and searchable. Hit <kbd>Alt</kbd>+<kbd>V</kbd>, type to filter, <kbd>Enter</kbd> to paste it back. Pin the ones you reuse — each remembers when you copied it.
+
+<p align="center">
+  <img src="docs/clipboard.png" width="800" alt="The Alt+V clipboard palette: a searchable list of copied entries with capture times and pin / delete actions">
+</p>
+
+### #4 Capture: Shoot, Mark Up, Drop In
+
+A screenshot annotator, built in. Grab a window or region, draw boxes / arrows / text in any color, then save — and drag the PNG straight into a terminal.
+
+<p align="center">
+  <img src="docs/frame.png" width="800" alt="Frame annotating a screenshot — toolbar and colors on top, boxes and arrows on the image, screenshots strip on the right">
+</p>
 
 <br>
 
