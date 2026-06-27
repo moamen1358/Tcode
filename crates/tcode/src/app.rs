@@ -158,7 +158,7 @@ pub fn build(app: &Application, preset: Option<usize>) {
     let scale_readout = gtk4::Label::new(None);
     let view_btn = gtk4::MenuButton::new();
     view_btn.set_icon_name("preferences-system-symbolic");
-    view_btn.set_tooltip_text(Some("Font size & scale"));
+    view_btn.set_tooltip_text(Some("Settings & shortcuts"));
     view_btn.add_css_class("flat");
 
     // "+" new terminal (also Alt+n) — created here so it groups with the actions.
@@ -253,6 +253,30 @@ pub fn build(app: &Application, preset: Option<usize>) {
             reset.connect_clicked(move |_| reset_view(&st));
         }
         col.append(&reset);
+
+        // Keyboard-shortcuts cheatsheet, so every binding is discoverable from the
+        // app itself (mirrors the README table). Kept compact: combo on the left,
+        // what it does on the right.
+        let kbd_header = gtk4::Label::new(Some("KEYBOARD SHORTCUTS"));
+        kbd_header.set_xalign(0.0);
+        kbd_header.add_css_class("kbd-header");
+        col.append(&kbd_header);
+        for (keys, action) in [
+            ("Alt + arrows", "Move pane focus"),
+            ("Alt + 1 – 9", "Set pane count"),
+            ("Alt + N", "New terminal"),
+            ("Alt + Z", "Zoom pane"),
+            ("Alt + F", "Fullscreen"),
+            ("Alt + B", "Toggle sidebar"),
+            ("Alt + V", "Clipboard history"),
+            ("Alt + P", "Screenshots strip"),
+            ("Alt + Q", "Quit"),
+            ("Ctrl + Shift + C / V", "Copy / paste"),
+            ("Ctrl + +/− / 0", "Zoom UI / reset"),
+        ] {
+            col.append(&shortcut_row(keys, action));
+        }
+
         popover.set_child(Some(&col));
         view_btn.set_popover(Some(&popover));
     }
@@ -416,6 +440,23 @@ fn view_row(title: &str, readout: &gtk4::Label, on_step: impl Fn(i32) + 'static)
     row.append(&minus);
     row.append(readout);
     row.append(&plus);
+    row
+}
+
+/// One row in the settings popover's keyboard-shortcut cheatsheet: the key combo
+/// on the left, what it does on the right.
+fn shortcut_row(keys: &str, action: &str) -> gtk4::Box {
+    let row = gtk4::Box::new(Orientation::Horizontal, 12);
+    row.add_css_class("kbd-row");
+    let k = gtk4::Label::new(Some(keys));
+    k.set_xalign(0.0);
+    k.add_css_class("kbd-keys");
+    let a = gtk4::Label::new(Some(action));
+    a.set_xalign(1.0);
+    a.set_hexpand(true);
+    a.add_css_class("kbd-action");
+    row.append(&k);
+    row.append(&a);
     row
 }
 

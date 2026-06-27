@@ -341,7 +341,14 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
          .session-menu-new:hover {{ background-color: alpha(#ff9e64, 0.16); }}\n\
          .view-step {{ min-height: 0; min-width: 26px; padding: 2px 0; \
                        font-weight: bold; }}\n\
-         .view-readout {{ color: {fg}; font-size: 12px; }}"
+         .view-readout {{ color: {fg}; font-size: 12px; }}\n\
+         .kbd-header {{ color: alpha({fg}, 0.45); font-size: 10px; font-weight: 700; \
+                        letter-spacing: 0.8px; margin-top: 8px; padding-top: 8px; \
+                        border-top: 1px solid alpha({fg}, 0.10); }}\n\
+         .kbd-row {{ padding: 1px 2px; }}\n\
+         .kbd-keys {{ font-family: \"{font}\", monospace; font-size: 12px; \
+                      color: alpha({fg}, 0.85); }}\n\
+         .kbd-action {{ font-size: 12px; color: alpha({fg}, 0.50); }}"
     );
     let css = scale_css_fonts(&css, scale);
     // Reuse one provider so repeated calls (zoom / font changes) update the
