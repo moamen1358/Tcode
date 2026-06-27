@@ -1,9 +1,10 @@
 # Tcode — project memory
 
 Tcode is a fast, borderless **tiling-terminal workspace** for Linux: pick a
-number → get that many terminal panes in a balanced grid. It has a file sidebar,
-a universal file viewer (code / images / PDFs / office / CSV), saved sessions,
-and a built-in screenshot annotator (**Frame**). Built in Rust with GTK4 + VTE.
+number → get that many terminal panes (plain login shells) in a balanced grid. It
+has a file sidebar, a universal file viewer (code / images / PDFs / office / CSV),
+a searchable **clipboard history** (Alt+V), saved sessions, and a built-in
+screenshot annotator (**Frame**). Built in Rust with GTK4 + VTE.
 
 ## Repo facts
 - GitHub `moamen1358/Tcode` — **PRIVATE** (source stays private by choice).
@@ -45,28 +46,39 @@ cargo clippy --workspace --all-targets   # kept warning-free
 - The repo + local folder are named **`Tcode`** (capital T): GitHub `moamen1358/Tcode`,
   folder `~/Desktop/Tcode`. The binary/command/package/Docker-image stay lowercase `tcode`;
   app_id is `dev.tcode.Tcode`.
-- Environment is **COSMIC / Wayland**: automated screenshots don't work (grim's
-  protocol is unsupported; the portal needs interactive confirmation). Preview by
-  launching the build (`setsid ./target/release/tcode … &`); the user captures
-  screenshots when needed. The Bash shell here is **zsh** (no `mapfile`; unquoted
-  `$var` doesn't word-split; foreground `sleep` is blocked).
+- Environment is **COSMIC / Wayland**. Screenshot tooling that DOES work here:
+  **`cosmic-screenshot --interactive=false --save-dir DIR`** (grabs ALL monitors —
+  e.g. 7680×1600 for 3×2560 — so crop one with `ffmpeg -vf "crop=2560:H:X:0"`; no
+  ImageMagick). **`wtype`** injects keys (`wtype -M alt v -m alt`, `wtype -k Escape`);
+  **`wl-copy`** sets the clipboard; **Read the captured PNG to verify it**. `grim`
+  fails (no `wlr-screencopy`); the Frame/portal capture needs interactive confirm.
+  CAVEAT: multi-monitor → focus isn't guaranteed, so only blind-inject keys when the
+  worst case is harmless (a menu opening); no mouse synthesis (no ydotool). Preview a
+  build with `setsid ./target/release/tcode … &`. The Bash shell is **zsh** (no
+  `mapfile`; unquoted `$var` doesn't word-split; foreground `sleep` is blocked).
 
 ## Code map
-- `app.rs` — window, titlebar (logo + grouped controls), session open/reveal/build,
-  a `Stack` of live sessions. `keys.rs` — Alt shortcuts. `session_picker.rs` — launch screens.
+- `app.rs` — window, titlebar (logo + grouped controls + the gear "view settings"
+  popover: font/scale steppers **plus a keyboard-shortcuts cheatsheet**), session
+  open/reveal/build, a `Stack` of live sessions. `keys.rs` — Alt shortcuts.
+  `session_picker.rs` — launch screens.
 - `grid.rs` + `tcode-core/grid.rs` — **fixed** equal-split grid (nested homogeneous
   GTK `Box`es — every pane the same size, **not** draggable) + pure geometry.
 - `pane.rs` — a VTE terminal pane (shell spawned only once sized; Ctrl+click links).
   Each pane has a 1px border (theme `border` color) so you can see the grid cells.
 - `sidebar.rs` + `icons.rs` — file tree + file-type icons. `editor.rs` — tabbed viewer.
+- `clipboard.rs` + `tcode-core/clipboard.rs` — clipboard-history model + the floating
+  **Alt+V** command palette (search / copy / pin / delete; each entry keeps its capture
+  time, persisted across restarts when `clipboard_persist` is on).
 - `preview.rs` — PDF/office → page images on a worker thread.
 - `frame.rs` + `frame/*` — capture (XDG portal) → annotate → save.
 - `theme.rs` — global CSS (brand orange accent `#ff9e64`). `config.rs` — `~/.config/tcode/config.toml`.
 
 ## Keybindings
 `Alt+h/j/k/l` **or** `Alt+arrows` move pane focus · `Alt+z` zoom pane · `Alt+n` new
-pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+p` screenshots strip ·
-`Alt+f` fullscreen · `Alt+q` quit · `Ctrl+Shift+C/V` copy/paste · `Ctrl +/-/0` UI zoom.
+pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+v` clipboard palette · `Alt+p`
+screenshots strip · `Alt+f` fullscreen · `Alt+q` quit · `Ctrl+Shift+C/V` copy/paste ·
+`Ctrl +/-/0` UI zoom. (Also listed in-app via the titlebar gear popover.)
 
 ## Branding
 - Logo: a hand-brushed orange **T** on transparent (raster PNG, so the icon set is
@@ -95,6 +107,15 @@ pane · `Alt+1..9` rebuild grid · `Alt+b` sidebar · `Alt+p` screenshots strip 
 - **Distribution**: the repo is private, so `tcode update` (unauthenticated
   GitHub API) returns 404 for end users. Making updates work publicly without
   exposing source needs a separate **public "releases" repo**. Deferred by the user.
+- **Multi-agent direction (built then fully removed)**: a "Conductor / Mission Control"
+  experiment — auto-launching Claude/Codex/Hermes in panes, a per-session coordination
+  bus, and an Alt+M activity board — lived on `feat/conductor`, then was **reverted in
+  full** at the user's request (commit `90b7ded`). Panes are plain shells again. Those
+  commits stay in history; **don't resurrect them**. v1.3.0 is the clean terminal
+  workspace + the clipboard capture-time feature.
 - `apollo-accounts-export.csv` at the repo root is the user's private business
   data (gitignored) — never commit it, and keep it out of any public screenshot.
+  (The pre-v1.3.0 `docs/screenshot.png` + `docs/frame.png` leaked its name in the
+  sidebar; replaced with clean demo-folder shots — but the old ones remain in git
+  history, so scrub history before the repo ever goes public.)
 - `logos/` holds logo experiments (gitignored).
