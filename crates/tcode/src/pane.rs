@@ -55,14 +55,6 @@ const SCROLLBACK_LINES: i64 = 50_000;
 struct SpawnParams {
     argv: Vec<String>,
     cwd: String,
-    /// A command to run once the shell is up (the pane's coding agent), or `None`
-    /// for a plain shell. Fed into the shell after spawn so it inherits the shell's
-    /// full PATH/env (the agent CLIs live in `~/.local/bin`); when the agent exits
-    /// the shell remains, so the pane stays usable.
-    feed: Option<String>,
-    /// Extra environment for the agent process (the Conductor's identity + bus vars),
-    /// or empty for a plain pane. Applied on top of the inherited environment at spawn.
-    env: Vec<(String, String)>,
 }
 
 pub struct Pane {
@@ -82,13 +74,7 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn new(
-        cfg: &Config,
-        id: u64,
-        on_open: OpenFn,
-        agent_cmd: Option<String>,
-        env: Vec<(String, String)>,
-    ) -> Pane {
+    pub fn new(cfg: &Config, id: u64, on_open: OpenFn) -> Pane {
         let terminal = Terminal::new();
 
         // Cell colors come from the VTE API, not CSS.
@@ -149,7 +135,7 @@ impl Pane {
             root,
             terminal,
             ring,
-            spawn: RefCell::new(Some(Self::spawn_params(cfg, agent_cmd, env))),
+            spawn: RefCell::new(Some(Self::spawn_params(cfg))),
         };
         pane.install_file_drop();
         pane
@@ -171,11 +157,7 @@ impl Pane {
     /// Compute the shell argv + working dir for the deferred spawn. Captured at
     /// construction (the process cwd is the session root then) so the later spawn
     /// starts in the right place even if the cwd has since moved.
-    fn spawn_params(
-        cfg: &Config,
-        agent_cmd: Option<String>,
-        env: Vec<(String, String)>,
-    ) -> SpawnParams {
+    fn spawn_params(cfg: &Config) -> SpawnParams {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let cwd = std::env::current_dir()
             .ok()
@@ -196,15 +178,7 @@ impl Pane {
                 shell.clone(),
             ]
         };
-        let feed = agent_cmd
-            .map(|c| c.trim().to_string())
-            .filter(|c| !c.is_empty());
-        SpawnParams {
-            argv,
-            cwd,
-            feed,
-            env,
-        }
+        SpawnParams { argv, cwd }
     }
 
     /// Spawn the shell (+ optional startup command) over a PTY. Deferred from
@@ -215,25 +189,13 @@ impl Pane {
             return;
         };
         let argv_ref: Vec<&str> = params.argv.iter().map(String::as_str).collect();
-
-        // VTE's envv REPLACES the child environment when non-empty (g_spawn
-        // semantics), so to ADD the Conductor's identity vars we pass the full
-        // inherited environment plus the extras; an empty extra list keeps the
-        // original inherit-everything path (an empty envv slice).
-        let env_owned: Vec<String> = if params.env.is_empty() {
-            Vec::new()
-        } else {
-            let mut v: Vec<String> = std::env::vars().map(|(k, val)| format!("{k}={val}")).collect();
-            v.extend(params.env.iter().map(|(k, val)| format!("{k}={val}")));
-            v
-        };
-        let env_ref: Vec<&str> = env_owned.iter().map(String::as_str).collect();
+        // Empty envv = inherit the parent environment wholesale (g_spawn semantics).
+        let env_ref: Vec<&str> = Vec::new();
 
         // Weak so the one-shot spawn callback can't form a terminal->callback->
         // terminal cycle. On failure, write a visible message into the terminal
         // instead of leaving a silent black pane.
         let term = self.terminal.downgrade();
-        let feed = params.feed;
         self.terminal.spawn_async(
             PtyFlags::DEFAULT,
             Some(params.cwd.as_str()),
@@ -243,25 +205,14 @@ impl Pane {
             || {},
             -1,
             gio::Cancellable::NONE,
-            move |res| match res {
-                Err(err) => {
+            move |res| {
+                if let Err(err) = res {
                     eprintln!("tcode: spawn failed: {err}");
                     if let Some(term) = term.upgrade() {
                         term.feed(
                             format!("\r\n\x1b[1;31mtcode: failed to start shell: {err}\x1b[0m\r\n")
                                 .as_bytes(),
                         );
-                    }
-                }
-                Ok(_) => {
-                    // Type the pane's coding agent into the just-started shell. The
-                    // shell buffers it until it's reading input, so it runs once the
-                    // prompt is ready, at the pane's final size. A missing CLI just
-                    // prints "command not found" and leaves the shell — never fatal.
-                    if let Some(cmd) = &feed {
-                        if let Some(term) = term.upgrade() {
-                            term.feed_child(format!("{cmd}\n").as_bytes());
-                        }
                     }
                 }
             },

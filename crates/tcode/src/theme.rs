@@ -149,26 +149,6 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                           box-shadow: 0 14px 36px rgba(0,0,0,0.66); \
                           border: 1px solid alpha({accent}, 0.40); }}\n\
          .shot-preview .shot-preview-img {{ border-radius: 6px; }}\n\
-         .mission-control {{ background-color: {surface}; border-radius: 16px; \
-                          padding: 16px 18px; box-shadow: 0 28px 80px rgba(0,0,0,0.66); \
-                          border: 1px solid alpha({fg}, 0.10); }}\n\
-         .mission-control .mc-title {{ color: {fg}; font-size: 16px; font-weight: 700; \
-                          letter-spacing: 0.3px; }}\n\
-         .mission-control .mc-status {{ color: alpha({fg}, 0.50); font-size: 12px; \
-                          margin: 3px 0 12px 0; }}\n\
-         .mission-control .mc-agent {{ padding: 9px 11px; margin: 2px 0; border-radius: 11px; \
-                          background-color: alpha({fg}, 0.04); }}\n\
-         .mission-control .mc-dot {{ font-size: 11px; }}\n\
-         .mission-control .mc-dot.kind-claude {{ color: #ff9e64; }}\n\
-         .mission-control .mc-dot.kind-codex {{ color: #7dcfff; }}\n\
-         .mission-control .mc-dot.kind-hermes {{ color: #bb9af7; }}\n\
-         .mission-control .mc-agent-id {{ color: alpha({fg}, 0.92); font-size: 14px; \
-                          font-weight: 600; }}\n\
-         .mission-control .mc-agent-file {{ color: alpha({fg}, 0.50); font-size: 12px; }}\n\
-         .mission-control .mc-count {{ color: alpha({fg}, 0.42); font-size: 11px; }}\n\
-         .mission-control .mc-section {{ color: alpha({fg}, 0.45); font-size: 11px; \
-                          font-weight: 600; letter-spacing: 0.6px; margin: 12px 2px 4px 2px; }}\n\
-         .mission-control .mc-conflict {{ color: #e0af68; font-size: 12px; padding: 5px 10px; }}\n\
          .shot-tray {{ background-color: {backdrop}; margin: 0; padding: 0; }}\n\
          .shot-tray .frame-gallery {{ background-color: {backdrop}; padding: 4.5px 4.5px 4.5px 0; }}\n\
          .shot-tray .frame-thumb {{ border-radius: 0; padding: 0; margin: 4.5px 4.5px 4.5px 0; }}\n\

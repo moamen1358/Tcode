@@ -141,17 +141,6 @@ pub fn install(window: &ApplicationWindow, state: &Shared) {
                 }
                 Propagation::Stop
             }
-            // Alt+M -> toggle the Mission Control board (live agent-activity panel).
-            Key::m => {
-                let (host, panel) = {
-                    let s = st.borrow();
-                    (s.host.clone(), s.mission_control.clone())
-                };
-                if let (Some(host), Some(panel)) = (host, panel) {
-                    host.toggle(&panel.root);
-                }
-                Propagation::Stop
-            }
             _ => Propagation::Proceed,
         }
     });

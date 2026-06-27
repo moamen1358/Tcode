@@ -23,10 +23,6 @@ use crate::pane::{OpenFn, Pane};
 
 pub type EmptyFn = Rc<dyn Fn()>;
 
-/// A pane's launch spec: the agent command to run (if any), plus extra environment
-/// (the Conductor's identity + bus vars; empty when coordination is off/unwired).
-type PaneSpec = (Option<String>, Vec<(String, String)>);
-
 struct GridInner {
     container: GtkBox,
     panes: Vec<Pane>,
@@ -49,10 +45,6 @@ struct GridInner {
     /// Called when the final pane exits. App-level state decides whether that closes
     /// the visible window or just removes a hidden session.
     on_empty: EmptyFn,
-    /// The Conductor session-bus directory for this grid, when coordination is on and
-    /// the bus was created — Mission Control watches `<bus_dir>/events.jsonl`. `None`
-    /// when coordination is disabled or bus creation failed.
-    bus_dir: Option<std::path::PathBuf>,
 }
 
 /// Lay `items` out as one equal-split (homogeneous) box along `orient`. Returns
@@ -287,7 +279,6 @@ impl Grid {
             resize_focus: Cell::new(false),
             on_open,
             on_empty,
-            bus_dir: None,
         }));
 
         let grid = Grid {
@@ -295,58 +286,25 @@ impl Grid {
             inner,
         };
         let n = n.clamp(1, 16);
-        // Auto-launch a coding agent in each pane, assigned by pane count
-        // (tcode_core::agents::layout); each agent's base command comes from config.
-        // When coordination is enabled, stand up a per-session bus and wire every
-        // agent into it — identity env for all, plus Claude's awareness-hook and
-        // Codex-delegation flags — so the panes are aware of each other and a Claude
-        // pane can hand work to Codex. The bus dir/files persist after this handle
-        // drops; failure to create it just leaves the agents unwired (never fatal).
-        let layout = tcode_core::agents::layout(n);
-        let ids = tcode_core::conductor::agent_ids(&layout);
-        let coord_enabled = grid.inner.borrow().cfg.coordination.enabled;
-        let bus = coord_enabled
-            .then(|| crate::conductor::SessionBus::create(&layout))
-            .flatten();
-        // Remember the bus path so Mission Control (Alt+M) can watch this session's
-        // ledger; the `bus` handle itself is dropped at the end of `new`.
-        grid.inner.borrow_mut().bus_dir = bus
-            .as_ref()
-            .and_then(crate::conductor::SessionBus::dir_str)
-            .map(std::path::PathBuf::from);
-        let specs: Vec<PaneSpec> = {
-            let g = grid.inner.borrow();
-            layout
-                .iter()
-                .zip(ids.iter())
-                .map(|(agent, id)| {
-                    let base = g.cfg.agents.command_for(*agent).to_string();
-                    match bus.as_ref().and_then(crate::conductor::SessionBus::dir_str) {
-                        Some(bus_dir) => {
-                            let w = tcode_core::conductor::wiring_for(*agent, id, bus_dir);
-                            (Some(format!("{base}{}", w.extra_args)), w.env)
-                        }
-                        None => (Some(base), Vec::new()),
-                    }
-                })
-                .collect()
-        };
-        for (cmd, env) in specs {
-            let pane = grid.make_pane(cmd, env);
+        // Build `n` plain terminal panes. Each runs the user's login shell; an
+        // optional `startup_command` from config is fed into every pane once it's
+        // spawned at final size (see Pane::spawn_params).
+        for _ in 0..n {
+            let pane = grid.make_pane();
             grid.inner.borrow_mut().panes.push(pane);
         }
         grid.inner.borrow_mut().rebuild();
         grid
     }
 
-    fn make_pane(&self, agent_cmd: Option<String>, env: Vec<(String, String)>) -> Pane {
+    fn make_pane(&self) -> Pane {
         let (id, cfg, on_open) = {
             let mut g = self.inner.borrow_mut();
             let id = g.next_id;
             g.next_id += 1;
             (id, g.cfg.clone(), g.on_open.clone())
         };
-        let pane = Pane::new(&cfg, id, on_open, agent_cmd, env);
+        let pane = Pane::new(&cfg, id, on_open);
 
         let controller = EventControllerFocus::new();
         let weak = Rc::downgrade(&self.inner);
@@ -406,10 +364,7 @@ impl Grid {
         if self.inner.borrow().panes.len() >= 16 {
             return;
         }
-        // An ad-hoc Alt+n pane is a plain shell — it would break the count-based
-        // "exactly one Codex and one Hermes" mix, so it launches no agent (and isn't
-        // wired into the coordination bus).
-        let pane = self.make_pane(None, Vec::new());
+        let pane = self.make_pane();
         let id = pane.id;
         {
             let mut g = self.inner.borrow_mut();
@@ -472,13 +427,6 @@ impl Grid {
     /// Number of live terminal panes (used to persist the session layout).
     pub fn pane_count(&self) -> usize {
         self.inner.borrow().panes.len()
-    }
-
-    /// The Conductor session-bus directory for this grid (which holds `events.jsonl`),
-    /// if coordination is enabled and the bus was created. Mission Control (Alt+M)
-    /// watches it to render who's editing what.
-    pub fn bus_dir(&self) -> Option<std::path::PathBuf> {
-        self.inner.borrow().bus_dir.clone()
     }
 
     /// Apply the base font (point size) and the UI zoom to every terminal.

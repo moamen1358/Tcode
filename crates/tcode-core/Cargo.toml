@@ -9,10 +9,3 @@ description = "Pure layout, config and session logic for Tcode (no GTK)."
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-# Round-tripping Claude's ~/.claude.json to pre-accept folder trust (claude_trust.rs)
-# must disturb the user's config as little as possible:
-#   preserve_order      — keep the original key order (no alphabetical rewrite)
-#   arbitrary_precision — keep every number's exact original text, so re-serializing
-#                         doesn't re-spell floats (same IEEE-754 value, different
-#                         digits) and the write is byte-identical bar the new entry.
-serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }

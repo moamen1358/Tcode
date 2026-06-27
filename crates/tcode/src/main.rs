@@ -1,6 +1,5 @@
 mod app;
 mod clipboard;
-mod conductor;
 mod csvview;
 mod dnd;
 mod editor;
@@ -9,7 +8,6 @@ mod grid;
 mod icons;
 mod keys;
 mod loader;
-mod mission_control;
 mod overlay;
 mod pane;
 mod preview;

@@ -26,7 +26,6 @@ struct LiveContent {
     content: Paned,
     host: Rc<crate::overlay::OverlayHost>,
     palette: gtk4::Box,
-    mission_control: crate::mission_control::MissionControl,
     /// The session this content belongs to, so an emptied *active* session can hand
     /// off to another live session by value without reloading it from disk (an
     /// ephemeral `tcode N` session isn't on disk to reload).
@@ -85,9 +84,6 @@ pub struct State {
     pub host: Option<Rc<crate::overlay::OverlayHost>>,
     /// The active session's clipboard command palette (Alt+V).
     pub palette: Option<gtk4::Box>,
-    /// The active session's Mission Control board (Alt+M): the live agent-activity
-    /// panel, watching this session's Conductor ledger.
-    pub mission_control: Option<crate::mission_control::MissionControl>,
     /// Holds one page per open session; switching flips the visible page so each
     /// session's terminals keep running in the background.
     pub stack: Stack,
@@ -229,7 +225,6 @@ pub fn build(app: &Application, preset: Option<usize>) {
         content_paned: None,
         host: None,
         palette: None,
-        mission_control: None,
         stack: stack.clone(),
         live: HashMap::new(),
     }));
@@ -610,10 +605,6 @@ fn build_session(state: &Shared, session: Session) {
         show_session_picker(state);
         return;
     }
-    // Pre-accept Claude Code's per-folder workspace-trust dialog for this root, so
-    // the auto-launched Claude panes open ready instead of stopping on "Is this a
-    // project you trust?". Best-effort and idempotent (see tcode_core::claude_trust).
-    tcode_core::claude_trust::ensure_trusted(&root);
     state.borrow_mut().current = Some(session);
 
     show_grid(state, panes); // builds content, adds + shows the stack page `id`
@@ -652,7 +643,6 @@ fn build_session(state: &Shared, session: Session) {
             Some(content),
             Some(host),
             Some(palette),
-            Some(mission_control),
             Some(session),
         ) = (
             s.grid.clone(),
@@ -664,7 +654,6 @@ fn build_session(state: &Shared, session: Session) {
             s.content_paned.clone(),
             s.host.clone(),
             s.palette.clone(),
-            s.mission_control.clone(),
             s.current.clone(), // == this session (set just above); kept for hand-off
         ) {
             s.live.insert(
@@ -679,7 +668,6 @@ fn build_session(state: &Shared, session: Session) {
                     content,
                     host,
                     palette,
-                    mission_control,
                     session,
                 },
             );
@@ -719,7 +707,6 @@ fn reveal_session(state: &Shared, session: Session) {
             s.content_paned = Some(lc.content);
             s.host = Some(lc.host);
             s.palette = Some(lc.palette);
-            s.mission_control = Some(lc.mission_control);
         }
         s.current = Some(session);
         (
@@ -1215,17 +1202,6 @@ pub fn show_grid(state: &Shared, n: usize) {
         clip.palette(on_paste, Rc::downgrade(&host))
     };
     host.add_panel(&palette, gtk4::Align::Center, gtk4::Align::Center, 0);
-    // Mission Control (Alt+M): a floating board over this session showing what each
-    // agent is editing, read live from this session's Conductor ledger. Built per
-    // session and stored in State + LiveContent so its hotkey acts on the active one.
-    let mission_control = crate::mission_control::MissionControl::new();
-    host.add_panel(
-        &mission_control.root,
-        gtk4::Align::Center,
-        gtk4::Align::Center,
-        0,
-    );
-    mission_control.watch(grid.bus_dir());
     // Dock the screenshots tray as the far-right column (a resizable split off the
     // work area). Hidden by default; Alt+P reveals it to browse/scroll all shots and
     // drag any thumbnail onto a terminal.
@@ -1257,7 +1233,6 @@ pub fn show_grid(state: &Shared, n: usize) {
         s.content_paned = Some(content.clone());
         s.host = Some(host);
         s.palette = Some(palette);
-        s.mission_control = Some(mission_control);
     }
     // Respect the current toggle state for the freshly built tray (hidden by default).
     bridge
