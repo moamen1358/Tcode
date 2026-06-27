@@ -1,8 +1,9 @@
 //! Clipboard history, surfaced through the compact **Alt+V palette** (`palette`):
 //! a one-line list of text copied from any app while Tcode runs. Clicking a row
 //! copies it back to the system clipboard, the pin keeps it at the top, and the
-//! close icon removes it from history. ↑/↓ move the keyboard selection, Enter
-//! copies, P toggles pinning, Delete removes, and Esc closes the overlay. When
+//! close icon removes it from history. Type to filter; ↑/↓ move the keyboard
+//! selection, Enter copies, Ctrl+P toggles pinning, Ctrl+Delete removes, and Esc
+//! closes the overlay. When
 //! `clipboard_persist` is on, text, pin state, and capture time survive restarts.
 //!
 //! `entries` is the source of truth; the palette renders a filtered snapshot of it
@@ -15,13 +16,13 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gtk4::gdk::{Display, Key};
+use gtk4::gdk::{Display, Key, ModifierType};
 use gtk4::glib::Propagation;
 use gtk4::pango::{EllipsizeMode, WrapMode};
 use gtk4::prelude::*;
 use gtk4::{
     gio, AlertDialog, Align, Box as GtkBox, Button, EventControllerKey, Label, Orientation,
-    PolicyType, ScrolledWindow, Separator,
+    PolicyType, ScrolledWindow, SearchEntry, Separator,
 };
 
 /// Cap on remembered (unpinned) clipboard entries.
@@ -176,6 +177,16 @@ impl Panel {
         self.next_id.set(id + 1);
         {
             let mut entries = self.entries.borrow_mut();
+            // Re-copying something already in history shouldn't pile up duplicates.
+            // A matching pinned entry already sits at the top, so leave it be; a
+            // matching unpinned one is removed so the fresh copy floats back to the
+            // top of the unpinned block with an updated capture time.
+            if let Some(pos) = entries.iter().position(|e| e.text == text) {
+                if entries[pos].pinned {
+                    return;
+                }
+                entries.remove(pos);
+            }
             let pinned = entries.iter().filter(|e| e.pinned).count();
             entries.insert(
                 pinned,
@@ -227,8 +238,14 @@ impl Panel {
             if entry.pinned {
                 entries.insert(0, entry);
             } else {
+                // Unpinning returns the entry to its chronological spot among the
+                // unpinned (newest-first), not the top — it isn't freshly copied.
                 let pinned = entries.iter().filter(|e| e.pinned).count();
-                entries.insert(pinned, entry);
+                let mut at = pinned;
+                while at < entries.len() && entries[at].captured_at > entry.captured_at {
+                    at += 1;
+                }
+                entries.insert(at, entry);
             }
         }
         self.rebuild();
@@ -378,7 +395,9 @@ impl Panel {
         let mut out: Vec<u8> = Vec::new();
         for e in self.entries.borrow().iter() {
             let bytes = e.text.as_bytes();
-            if bytes.len() > MAX_PERSIST_BYTES {
+            // The size cap keeps one huge copy from bloating the file — but a pinned
+            // entry is an explicit "keep this", so it persists regardless of size.
+            if !e.pinned && bytes.len() > MAX_PERSIST_BYTES {
                 continue;
             }
             let flag = if e.pinned { 'P' } else { 'U' };
@@ -436,6 +455,13 @@ impl Panel {
         root.set_size_request(760, -1);
         root.set_focusable(true);
 
+        // Type-to-filter box (the README's "type to filter"); an empty query shows
+        // every row. Focused on open so you can start filtering immediately.
+        let search = SearchEntry::new();
+        search.add_css_class("clip-pal-search");
+        search.set_placeholder_text(Some("Search clipboard…"));
+        root.append(&search);
+
         let list = GtkBox::new(Orientation::Vertical, 0);
         list.add_css_class("clip-pal-list");
         let scroll = ScrolledWindow::builder()
@@ -459,8 +485,9 @@ impl Panel {
         let weak_render_slot = Rc::downgrade(&render_slot);
 
         let render: Rc<dyn Fn()> = {
-            let (panel, list, sel, shown, rows, copied_id, weak_render_slot) = (
+            let (panel, search, list, sel, shown, rows, copied_id, weak_render_slot) = (
                 self.clone(),
+                search.clone(),
                 list.clone(),
                 sel.clone(),
                 shown.clone(),
@@ -472,7 +499,17 @@ impl Panel {
                 while let Some(c) = list.first_child() {
                     list.remove(&c);
                 }
-                let snap = panel.snapshot();
+                // Filter the history by the search box via the pure tcode-core matcher
+                // (empty query → all rows). `shown` and the keyboard actions then work
+                // off the filtered view, so Enter/pin/delete always hit a visible row.
+                let all = panel.snapshot();
+                let texts: Vec<String> = all.iter().map(|(_, t, _, _)| t.clone()).collect();
+                let query = search.text();
+                let snap: Vec<(u64, String, bool, i64)> =
+                    tcode_core::clipboard::matching_indices(&texts, query.as_str())
+                        .into_iter()
+                        .map(|i| all[i].clone())
+                        .collect();
                 if sel.get() >= snap.len() {
                     sel.set(snap.len().saturating_sub(1));
                 }
@@ -482,7 +519,12 @@ impl Panel {
                     .collect();
                 let mut new_rows: Vec<GtkBox> = Vec::with_capacity(snap.len());
                 if snap.is_empty() {
-                    let hint = Label::new(Some("Clipboard is empty"));
+                    // Tell "nothing copied yet" apart from "query matched nothing".
+                    let hint = Label::new(Some(if all.is_empty() {
+                        "Clipboard is empty"
+                    } else {
+                        "No matches"
+                    }));
                     hint.set_xalign(0.0);
                     hint.add_css_class("clip-empty");
                     list.append(&hint);
@@ -601,16 +643,37 @@ impl Panel {
             })
         };
 
-        // Every opening starts at the newest/pinned row and focuses the row list.
+        // Every opening clears the filter, starts at the newest/pinned row, and
+        // focuses the search box so you can type to filter right away.
         {
-            let (render_slot, sel, scroll) = (render_slot.clone(), sel.clone(), scroll.clone());
-            root.connect_map(move |root| {
+            let (render_slot, sel, scroll, search) = (
+                render_slot.clone(),
+                sel.clone(),
+                scroll.clone(),
+                search.clone(),
+            );
+            root.connect_map(move |_root| {
                 sel.set(0);
-                root.grab_focus();
+                search.set_text("");
                 if let Some(render) = render_slot.borrow().as_ref().cloned() {
                     render();
                 }
                 scroll.vadjustment().set_value(0.0);
+                // OverlayHost::open() grabs focus onto the panel root the moment it
+                // maps; an idle tick lets us reclaim it for the search box afterwards.
+                let search = search.clone();
+                gtk4::glib::idle_add_local_once(move || {
+                    search.grab_focus();
+                });
+            });
+        }
+
+        // Re-filter as the query changes, snapping the selection back to the top.
+        {
+            let (weak_render_slot, sel) = (Rc::downgrade(&render_slot), sel.clone());
+            search.connect_search_changed(move |_| {
+                sel.set(0);
+                call_render(&weak_render_slot);
             });
         }
 
@@ -626,41 +689,45 @@ impl Panel {
                 select.clone(),
                 copied_id.clone(),
             );
-            key.connect_key_pressed(move |_, kv, _, _| match kv {
-                Key::Down => {
-                    select(sel.get() + 1);
-                    Propagation::Stop
-                }
-                Key::Up => {
-                    select(sel.get().saturating_sub(1));
-                    Propagation::Stop
-                }
-                Key::Return | Key::KP_Enter => {
-                    let chosen = shown.borrow().get(sel.get()).cloned();
-                    if let Some((id, text)) = chosen {
-                        panel.copy_text(&text);
-                        show_copied(&copied_id, id, &render_slot);
+            key.connect_key_pressed(move |_, kv, _, state| {
+                let ctrl = state.contains(ModifierType::CONTROL_MASK);
+                match kv {
+                    Key::Down => {
+                        select(sel.get() + 1);
+                        Propagation::Stop
                     }
-                    Propagation::Stop
-                }
-                Key::p => {
-                    let target = shown.borrow().get(sel.get()).map(|(id, _)| *id);
-                    if let Some(id) = target {
-                        panel.toggle_pin(id);
-                        sel.set(0);
-                        call_render(&render_slot);
+                    Key::Up => {
+                        select(sel.get().saturating_sub(1));
+                        Propagation::Stop
                     }
-                    Propagation::Stop
-                }
-                Key::Delete | Key::KP_Delete => {
-                    let target = shown.borrow().get(sel.get()).map(|(id, _)| *id);
-                    if let Some(id) = target {
-                        panel.delete(id);
-                        call_render(&render_slot);
+                    Key::Return | Key::KP_Enter => {
+                        let chosen = shown.borrow().get(sel.get()).cloned();
+                        if let Some((id, text)) = chosen {
+                            panel.copy_text(&text);
+                            show_copied(&copied_id, id, &render_slot);
+                        }
+                        Propagation::Stop
                     }
-                    Propagation::Stop
+                    // Ctrl-gated so bare p / Delete stay free to edit the search query.
+                    Key::p if ctrl => {
+                        let target = shown.borrow().get(sel.get()).map(|(id, _)| *id);
+                        if let Some(id) = target {
+                            panel.toggle_pin(id);
+                            sel.set(0);
+                            call_render(&render_slot);
+                        }
+                        Propagation::Stop
+                    }
+                    Key::Delete | Key::KP_Delete if ctrl => {
+                        let target = shown.borrow().get(sel.get()).map(|(id, _)| *id);
+                        if let Some(id) = target {
+                            panel.delete(id);
+                            call_render(&render_slot);
+                        }
+                        Propagation::Stop
+                    }
+                    _ => Propagation::Proceed,
                 }
-                _ => Propagation::Proceed,
             });
             root.add_controller(key);
         }

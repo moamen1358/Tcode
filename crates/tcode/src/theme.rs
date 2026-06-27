@@ -127,6 +127,12 @@ pub fn install_css(theme: &Theme, font: &str, font_size: u32, scale: f64) {
                           box-shadow: 0 18px 54px rgba(0,0,0,0.58); \
                           border: 1px solid alpha({fg}, 0.16); \
                           font-family: \"{font}\", monospace; }}\n\
+         .clip-pal-search {{ background: none; border: none; border-radius: 0; \
+                          box-shadow: none; outline: none; padding: 8px 12px; margin: 0; \
+                          border-bottom: 1px solid alpha({fg}, 0.12); \
+                          color: {fg}; font-family: \"{font}\", monospace; font-size: 13px; }}\n\
+         .clip-pal-search image {{ color: alpha({fg}, 0.42); }}\n\
+         .clip-pal-search text {{ color: {fg}; background: none; }}\n\
          .clip-pal-list {{ background-color: transparent; padding: 0; }}\n\
          .clip-pal-row {{ min-height: 44px; background-color: transparent; \
                           border-bottom: 1px solid alpha({fg}, 0.10); }}\n\
