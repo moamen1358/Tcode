@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use tcode_core::agents::Agent;
 use tcode_core::conductor as core;
 
 /// Distinguishes concurrent sessions in one process (the Stack of sessions) so each
@@ -24,7 +25,7 @@ impl SessionBus {
     /// config. Returns `None` on any I/O failure — coordination is then silently
     /// skipped (the agents still launch, just unwired), so a read-only state dir can
     /// never stop a session from opening.
-    pub fn create() -> Option<SessionBus> {
+    pub fn create(layout: &[Agent]) -> Option<SessionBus> {
         let key = format!(
             "{}-{}",
             std::process::id(),
@@ -34,9 +35,16 @@ impl SessionBus {
         std::fs::create_dir_all(&dir).ok()?;
         write_script(&dir.join("record.sh"), core::record_hook_script())?;
         write_script(&dir.join("inject.sh"), core::inject_hook_script())?;
+        write_script(&dir.join("hermes-inject.sh"), core::hermes_inject_hook_script())?;
         let bus = dir.to_str()?.to_string();
         std::fs::write(dir.join("claude-settings.json"), core::claude_settings_json(&bus)).ok()?;
         std::fs::write(dir.join("codex-mcp.json"), core::codex_mcp_json()).ok()?;
+        // Hermes takes hooks only via its config.yaml, so when a Hermes pane is present
+        // build it an isolated HERMES_HOME (the agent is pointed there via env). The
+        // user's real ~/.hermes is only read — never written.
+        if layout.contains(&Agent::Hermes) {
+            build_hermes_home(&dir, &bus);
+        }
         Some(SessionBus { dir })
     }
 
@@ -61,6 +69,48 @@ fn bus_root() -> PathBuf {
         })
         .unwrap_or_else(std::env::temp_dir);
     base.join("tcode").join("conductor")
+}
+
+/// Build `<bus>/hermes-home` for a Hermes pane: the user's `~/.hermes/config.yaml`
+/// (if any) with our record + awareness hooks merged in, plus symlinks to their
+/// credentials so the relocated home stays authenticated. Best-effort — the real
+/// `~/.hermes` is only read, never modified; any failure just leaves Hermes unwired.
+fn build_hermes_home(dir: &Path, bus: &str) {
+    let Some(home) = real_hermes_dir() else {
+        return;
+    };
+    let gen = dir.join("hermes-home");
+    if std::fs::create_dir_all(&gen).is_err() {
+        return;
+    }
+    let existing = std::fs::read_to_string(home.join("config.yaml")).unwrap_or_default();
+    let _ = std::fs::write(
+        gen.join("config.yaml"),
+        core::hermes_config_with_hooks(&existing, bus),
+    );
+    // Symlink credentials rather than copy: they're the user's secrets and a link keeps
+    // them in sync. A missing file just means that bit isn't linked (Hermes degrades).
+    #[cfg(unix)]
+    for name in ["auth.json", "auth.lock", ".env"] {
+        let src = home.join(name);
+        if src.exists() {
+            let _ = std::os::unix::fs::symlink(&src, gen.join(name));
+        }
+    }
+}
+
+/// The user's real Hermes home: `$HERMES_HOME` if they've set it, else `~/.hermes`.
+fn real_hermes_dir() -> Option<PathBuf> {
+    if let Some(h) = std::env::var_os("HERMES_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
+        return Some(h);
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .map(|h| h.join(".hermes"))
 }
 
 /// Write a hook script and mark it executable (the agents run it as a command).

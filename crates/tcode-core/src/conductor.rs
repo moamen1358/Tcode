@@ -51,7 +51,7 @@ pub struct Wiring {
 /// `--settings` (the awareness hooks) and `--mcp-config` (the `codex` delegation tool);
 /// Codex/Hermes awareness is wired separately (Phase 1b) since they don't take those flags.
 pub fn wiring_for(agent: Agent, agent_id: &str, bus_dir: &str) -> Wiring {
-    let env = vec![
+    let mut env = vec![
         ("TCODE_AGENT_ID".to_string(), agent_id.to_string()),
         ("TCODE_BUS_DIR".to_string(), bus_dir.to_string()),
     ];
@@ -61,24 +61,96 @@ pub fn wiring_for(agent: Agent, agent_id: &str, bus_dir: &str) -> Wiring {
             sh_quote(&format!("{bus_dir}/claude-settings.json")),
             sh_quote(&format!("{bus_dir}/codex-mcp.json")),
         ),
-        Agent::Codex | Agent::Hermes => String::new(),
+        // Codex shares Claude's hook engine but takes its config inline via `-c` (so
+        // the real ~/.codex stays untouched): a PostToolUse hook on apply_patch to
+        // record edits, a UserPromptSubmit hook to inject crew awareness. Hooks need
+        // trust; --dangerously-bypass-hook-trust grants it for this launch only.
+        Agent::Codex => format!(
+            " --dangerously-bypass-hook-trust -c {} -c {}",
+            sh_quote(&codex_record_hook_arg(bus_dir)),
+            sh_quote(&codex_inject_hook_arg(bus_dir)),
+        ),
+        // Hermes hooks only live in its config.yaml, so we relocate HERMES_HOME to a
+        // generated home (the tcode crate copies the real config + merges our hooks +
+        // symlinks auth there). HERMES_ACCEPT_HOOKS skips the first-use consent prompt.
+        Agent::Hermes => {
+            env.push(("HERMES_HOME".to_string(), format!("{bus_dir}/hermes-home")));
+            env.push(("HERMES_ACCEPT_HOOKS".to_string(), "1".to_string()));
+            String::new()
+        }
     };
     Wiring { env, extra_args }
 }
 
-/// PostToolUse hook (Claude/Codex share the contract): append this agent's file edits
-/// to the session ledger as one JSON line each. Reads identity + bus from the env.
+/// The inline `-c` value registering Codex's record hook (PostToolUse → apply_patch),
+/// pointing at the bus `record.sh`. Shell-quoted by the caller before it joins the
+/// launch command.
+fn codex_record_hook_arg(bus_dir: &str) -> String {
+    format!(
+        r#"hooks.PostToolUse=[{{matcher="apply_patch",hooks=[{{type="command",command="{bus_dir}/record.sh"}}]}}]"#
+    )
+}
+
+/// The inline `-c` value registering Codex's awareness hook (UserPromptSubmit), pointing
+/// at the bus `inject.sh` (Codex honours the same `additionalContext` output as Claude).
+fn codex_inject_hook_arg(bus_dir: &str) -> String {
+    format!(
+        r#"hooks.UserPromptSubmit=[{{hooks=[{{type="command",command="{bus_dir}/inject.sh"}}]}}]"#
+    )
+}
+
+/// The Hermes config for the relocated `HERMES_HOME`: the user's existing config
+/// (`existing`; empty if they have none) with our record + awareness hooks merged in.
+/// Hermes ships `hooks: {}` by default, which we replace in place; any other shape is
+/// appended (its loader takes the last `hooks:` key). The real config is never modified.
+pub fn hermes_config_with_hooks(existing: &str, bus_dir: &str) -> String {
+    let block = format!(
+        "hooks:\n  post_tool_call:\n    - matcher: \"write_file|patch\"\n      command: \"{bus_dir}/record.sh\"\n  pre_llm_call:\n    - command: \"{bus_dir}/hermes-inject.sh\"\n"
+    );
+    let mut out = String::new();
+    let mut replaced = false;
+    for line in existing.lines() {
+        if !replaced && line.trim() == "hooks: {}" {
+            out.push_str(&block);
+            replaced = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !replaced {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&block);
+    }
+    out
+}
+
+/// Record hook (all three agents share it): append this agent's file edits to the
+/// session ledger as one JSON line each. Reads identity + bus from the env, and copes
+/// with every agent's payload shape — Claude's `.tool_input.file_path`, Hermes's
+/// `.tool_input.path`, and Codex's apply_patch (paths embedded in the patch text under
+/// `.tool_input.command`). One apply_patch touching several files records each.
 pub fn record_hook_script() -> &'static str {
     r#"#!/usr/bin/env bash
-# Tcode Conductor — PostToolUse hook: record this agent's file edits to the session bus.
+# Tcode Conductor — record hook: append this agent's file edits to the session ledger.
 set -euo pipefail
 input="$(cat)"
 [ -n "${TCODE_BUS_DIR:-}" ] || exit 0
+agent="${TCODE_AGENT_ID:-unknown}"
+emit() { [ -n "$1" ] || return 0
+  jq -nc --arg ts "$(date -Iseconds)" --arg agent "$agent" --arg file "$1" \
+    '{ts:$ts, agent:$agent, event:"edit", file:$file, base:($file|gsub("^.*/";""))}' \
+    >> "$TCODE_BUS_DIR/events.jsonl"; }
+# Claude (Edit/Write) and Hermes (write_file) put the path directly in tool_input.
 file="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.path // empty')"
-[ -n "$file" ] || exit 0
-jq -nc --arg ts "$(date -Iseconds)" --arg agent "${TCODE_AGENT_ID:-unknown}" --arg file "$file" \
-  '{ts:$ts, agent:$agent, event:"edit", file:$file, base:($file|gsub("^.*/";""))}' \
-  >> "$TCODE_BUS_DIR/events.jsonl"
+if [ -n "$file" ]; then emit "$file"; exit 0; fi
+# Codex apply_patch: the path(s) live in the patch body inside tool_input.command.
+cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
+[ -n "$cmd" ] && printf '%s\n' "$cmd" | grep -oE '\*\*\* (Update|Add|Delete) File: .+' \
+  | sed -E 's/^\*\*\* [A-Za-z]+ File: //' | while IFS= read -r p; do emit "$p"; done
+exit 0
 "#
 }
 
@@ -102,6 +174,29 @@ $recent
 Coordinate: avoid editing a file another agent just touched without checking."
 jq -nc --arg c "$ctx" \
   '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$c}}'
+"#
+}
+
+/// Hermes `pre_llm_call` hook: the awareness injector for Hermes, which expects the
+/// context under a `{"context": ...}` key (Claude/Codex use `additionalContext`). Same
+/// ledger read + filter as `inject_hook_script`, just a different output envelope.
+pub fn hermes_inject_hook_script() -> &'static str {
+    r#"#!/usr/bin/env bash
+# Tcode Conductor — Hermes pre_llm_call hook: inject other agents' recent activity.
+set -euo pipefail
+cat - >/dev/null   # discard the payload; we only emit context
+[ -n "${TCODE_BUS_DIR:-}" ] || { printf '{}\n'; exit 0; }
+log="$TCODE_BUS_DIR/events.jsonl"
+[ -f "$log" ] || { printf '{}\n'; exit 0; }
+me="${TCODE_AGENT_ID:-unknown}"
+recent="$(jq -rc --arg me "$me" \
+  'select(.agent != $me) | "\(.ts[11:19])  [\(.agent)] \(.event) \(.base)"' \
+  "$log" 2>/dev/null | tail -8)"
+[ -n "$recent" ] || { printf '{}\n'; exit 0; }
+ctx="⚡ Crew activity — other agents in this workspace:
+$recent
+Coordinate: avoid editing a file another agent just touched without checking."
+jq -nc --arg c "$ctx" '{context:$c}'
 "#
 }
 
@@ -293,14 +388,66 @@ mod tests {
     }
 
     #[test]
-    fn codex_and_hermes_get_identity_but_no_flags() {
-        for (a, id) in [(Agent::Codex, "codex-1"), (Agent::Hermes, "hermes-1")] {
-            let w = wiring_for(a, id, "/bus/x");
-            assert!(w.extra_args.is_empty());
-            assert!(w
-                .env
-                .contains(&("TCODE_AGENT_ID".to_string(), id.to_string())));
-        }
+    fn codex_records_and_injects_via_inline_config() {
+        let w = wiring_for(Agent::Codex, "codex-1", "/bus/x");
+        assert!(w
+            .env
+            .contains(&("TCODE_AGENT_ID".to_string(), "codex-1".to_string())));
+        // Hooks injected inline (real ~/.codex untouched), trust bypassed for the launch.
+        assert!(w.extra_args.contains("--dangerously-bypass-hook-trust"));
+        assert!(w.extra_args.contains("hooks.PostToolUse"));
+        assert!(w.extra_args.contains("apply_patch"));
+        assert!(w.extra_args.contains("/bus/x/record.sh"));
+        assert!(w.extra_args.contains("hooks.UserPromptSubmit"));
+        assert!(w.extra_args.contains("/bus/x/inject.sh"));
+    }
+
+    #[test]
+    fn hermes_relocates_home_and_accepts_hooks() {
+        let w = wiring_for(Agent::Hermes, "hermes-1", "/bus/x");
+        assert!(w.extra_args.is_empty()); // hooks come from the relocated config, not flags
+        assert!(w
+            .env
+            .contains(&("TCODE_AGENT_ID".to_string(), "hermes-1".to_string())));
+        assert!(w
+            .env
+            .contains(&("HERMES_HOME".to_string(), "/bus/x/hermes-home".to_string())));
+        assert!(w
+            .env
+            .contains(&("HERMES_ACCEPT_HOOKS".to_string(), "1".to_string())));
+    }
+
+    #[test]
+    fn hermes_config_replaces_empty_hooks_and_preserves_user_config() {
+        // Default Hermes config ships `hooks: {}` — replaced in place, rest preserved.
+        let merged = hermes_config_with_hooks("model: x\nhooks: {}\nprovider: y\n", "/bus/x");
+        assert!(!merged.contains("hooks: {}"));
+        assert!(merged.contains("post_tool_call"));
+        assert!(merged.contains("/bus/x/record.sh"));
+        assert!(merged.contains("pre_llm_call"));
+        assert!(merged.contains("/bus/x/hermes-inject.sh"));
+        assert!(merged.contains("model: x"));
+        assert!(merged.contains("provider: y"));
+        // No existing hooks key -> our block is appended.
+        let appended = hermes_config_with_hooks("model: x\n", "/bus/x");
+        assert!(appended.contains("model: x"));
+        assert!(appended.contains("post_tool_call"));
+    }
+
+    #[test]
+    fn record_hook_handles_all_three_payload_shapes() {
+        let s = record_hook_script();
+        assert!(s.contains(".tool_input.file_path")); // Claude
+        assert!(s.contains(".tool_input.path")); // Hermes
+        assert!(s.contains(".tool_input.command")); // Codex apply_patch
+        assert!(s.contains("events.jsonl"));
+    }
+
+    #[test]
+    fn hermes_inject_uses_context_envelope() {
+        let s = hermes_inject_hook_script();
+        assert!(s.contains("{context:$c}"));
+        assert!(s.contains("TCODE_BUS_DIR"));
     }
 
     #[test]

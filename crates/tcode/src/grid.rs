@@ -306,7 +306,7 @@ impl Grid {
         let ids = tcode_core::conductor::agent_ids(&layout);
         let coord_enabled = grid.inner.borrow().cfg.coordination.enabled;
         let bus = coord_enabled
-            .then(crate::conductor::SessionBus::create)
+            .then(|| crate::conductor::SessionBus::create(&layout))
             .flatten();
         // Remember the bus path so Mission Control (Alt+M) can watch this session's
         // ledger; the `bus` handle itself is dropped at the end of `new`.
