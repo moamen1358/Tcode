@@ -60,6 +60,9 @@ struct SpawnParams {
     /// full PATH/env (the agent CLIs live in `~/.local/bin`); when the agent exits
     /// the shell remains, so the pane stays usable.
     feed: Option<String>,
+    /// Extra environment for the agent process (the Conductor's identity + bus vars),
+    /// or empty for a plain pane. Applied on top of the inherited environment at spawn.
+    env: Vec<(String, String)>,
 }
 
 pub struct Pane {
@@ -79,7 +82,13 @@ pub struct Pane {
 }
 
 impl Pane {
-    pub fn new(cfg: &Config, id: u64, on_open: OpenFn, agent_cmd: Option<String>) -> Pane {
+    pub fn new(
+        cfg: &Config,
+        id: u64,
+        on_open: OpenFn,
+        agent_cmd: Option<String>,
+        env: Vec<(String, String)>,
+    ) -> Pane {
         let terminal = Terminal::new();
 
         // Cell colors come from the VTE API, not CSS.
@@ -140,7 +149,7 @@ impl Pane {
             root,
             terminal,
             ring,
-            spawn: RefCell::new(Some(Self::spawn_params(cfg, agent_cmd))),
+            spawn: RefCell::new(Some(Self::spawn_params(cfg, agent_cmd, env))),
         };
         pane.install_file_drop();
         pane
@@ -162,7 +171,11 @@ impl Pane {
     /// Compute the shell argv + working dir for the deferred spawn. Captured at
     /// construction (the process cwd is the session root then) so the later spawn
     /// starts in the right place even if the cwd has since moved.
-    fn spawn_params(cfg: &Config, agent_cmd: Option<String>) -> SpawnParams {
+    fn spawn_params(
+        cfg: &Config,
+        agent_cmd: Option<String>,
+        env: Vec<(String, String)>,
+    ) -> SpawnParams {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let cwd = std::env::current_dir()
             .ok()
@@ -186,7 +199,12 @@ impl Pane {
         let feed = agent_cmd
             .map(|c| c.trim().to_string())
             .filter(|c| !c.is_empty());
-        SpawnParams { argv, cwd, feed }
+        SpawnParams {
+            argv,
+            cwd,
+            feed,
+            env,
+        }
     }
 
     /// Spawn the shell (+ optional startup command) over a PTY. Deferred from
@@ -198,6 +216,19 @@ impl Pane {
         };
         let argv_ref: Vec<&str> = params.argv.iter().map(String::as_str).collect();
 
+        // VTE's envv REPLACES the child environment when non-empty (g_spawn
+        // semantics), so to ADD the Conductor's identity vars we pass the full
+        // inherited environment plus the extras; an empty extra list keeps the
+        // original inherit-everything path (an empty envv slice).
+        let env_owned: Vec<String> = if params.env.is_empty() {
+            Vec::new()
+        } else {
+            let mut v: Vec<String> = std::env::vars().map(|(k, val)| format!("{k}={val}")).collect();
+            v.extend(params.env.iter().map(|(k, val)| format!("{k}={val}")));
+            v
+        };
+        let env_ref: Vec<&str> = env_owned.iter().map(String::as_str).collect();
+
         // Weak so the one-shot spawn callback can't form a terminal->callback->
         // terminal cycle. On failure, write a visible message into the terminal
         // instead of leaving a silent black pane.
@@ -207,7 +238,7 @@ impl Pane {
             PtyFlags::DEFAULT,
             Some(params.cwd.as_str()),
             &argv_ref,
-            &[],
+            &env_ref,
             SpawnFlags::DEFAULT,
             || {},
             -1,

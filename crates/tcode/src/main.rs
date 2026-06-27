@@ -1,5 +1,6 @@
 mod app;
 mod clipboard;
+mod conductor;
 mod csvview;
 mod dnd;
 mod editor;

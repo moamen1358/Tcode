@@ -23,6 +23,10 @@ use crate::pane::{OpenFn, Pane};
 
 pub type EmptyFn = Rc<dyn Fn()>;
 
+/// A pane's launch spec: the agent command to run (if any), plus extra environment
+/// (the Conductor's identity + bus vars; empty when coordination is off/unwired).
+type PaneSpec = (Option<String>, Vec<(String, String)>);
+
 struct GridInner {
     container: GtkBox,
     panes: Vec<Pane>,
@@ -287,30 +291,51 @@ impl Grid {
         };
         let n = n.clamp(1, 16);
         // Auto-launch a coding agent in each pane, assigned by pane count
-        // (tcode_core::agents::layout): the command for each agent comes from config.
-        let commands: Vec<Option<String>> = {
+        // (tcode_core::agents::layout); each agent's base command comes from config.
+        // When coordination is enabled, stand up a per-session bus and wire every
+        // agent into it — identity env for all, plus Claude's awareness-hook and
+        // Codex-delegation flags — so the panes are aware of each other and a Claude
+        // pane can hand work to Codex. The bus dir/files persist after this handle
+        // drops; failure to create it just leaves the agents unwired (never fatal).
+        let layout = tcode_core::agents::layout(n);
+        let ids = tcode_core::conductor::agent_ids(&layout);
+        let coord_enabled = grid.inner.borrow().cfg.coordination.enabled;
+        let bus = coord_enabled
+            .then(crate::conductor::SessionBus::create)
+            .flatten();
+        let specs: Vec<PaneSpec> = {
             let g = grid.inner.borrow();
-            tcode_core::agents::layout(n)
-                .into_iter()
-                .map(|a| Some(g.cfg.agents.command_for(a).to_string()))
+            layout
+                .iter()
+                .zip(ids.iter())
+                .map(|(agent, id)| {
+                    let base = g.cfg.agents.command_for(*agent).to_string();
+                    match bus.as_ref().and_then(crate::conductor::SessionBus::dir_str) {
+                        Some(bus_dir) => {
+                            let w = tcode_core::conductor::wiring_for(*agent, id, bus_dir);
+                            (Some(format!("{base}{}", w.extra_args)), w.env)
+                        }
+                        None => (Some(base), Vec::new()),
+                    }
+                })
                 .collect()
         };
-        for cmd in commands {
-            let pane = grid.make_pane(cmd);
+        for (cmd, env) in specs {
+            let pane = grid.make_pane(cmd, env);
             grid.inner.borrow_mut().panes.push(pane);
         }
         grid.inner.borrow_mut().rebuild();
         grid
     }
 
-    fn make_pane(&self, agent_cmd: Option<String>) -> Pane {
+    fn make_pane(&self, agent_cmd: Option<String>, env: Vec<(String, String)>) -> Pane {
         let (id, cfg, on_open) = {
             let mut g = self.inner.borrow_mut();
             let id = g.next_id;
             g.next_id += 1;
             (id, g.cfg.clone(), g.on_open.clone())
         };
-        let pane = Pane::new(&cfg, id, on_open, agent_cmd);
+        let pane = Pane::new(&cfg, id, on_open, agent_cmd, env);
 
         let controller = EventControllerFocus::new();
         let weak = Rc::downgrade(&self.inner);
@@ -371,8 +396,9 @@ impl Grid {
             return;
         }
         // An ad-hoc Alt+n pane is a plain shell — it would break the count-based
-        // "exactly one Codex and one Hermes" mix, so it launches no agent.
-        let pane = self.make_pane(None);
+        // "exactly one Codex and one Hermes" mix, so it launches no agent (and isn't
+        // wired into the coordination bus).
+        let pane = self.make_pane(None, Vec::new());
         let id = pane.id;
         {
             let mut g = self.inner.borrow_mut();

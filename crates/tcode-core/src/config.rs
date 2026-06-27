@@ -20,6 +20,24 @@ pub struct Config {
     pub theme: Theme,
     /// Commands run to auto-launch each coding agent in a session's panes.
     pub agents: Agents,
+    /// Multi-agent coordination (the "Conductor"): awareness + delegation wiring.
+    pub coordination: Coordination,
+}
+
+/// Multi-agent coordination. When Tcode launches agent panes, it wires them to a
+/// shared per-session bus so they're aware of each other's edits and a Claude pane
+/// can delegate to Codex — all via launch flags/env, never the user's real config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Coordination {
+    /// Auto-wire coordination when launching agent panes. On by default.
+    pub enabled: bool,
+}
+
+impl Default for Coordination {
+    fn default() -> Self {
+        Coordination { enabled: true }
+    }
 }
 
 /// The shell command run to launch each coding agent in a pane. Each is fed into
@@ -91,6 +109,7 @@ impl Default for Config {
             scale: 1.0,
             theme: Theme::default(),
             agents: Agents::default(),
+            coordination: Coordination::default(),
         }
     }
 }
