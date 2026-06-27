@@ -7,7 +7,8 @@
 **A fast, borderless tiling-terminal workspace for Linux.**
 
 Pick a number → get that many terminal panes in a balanced grid. Keyboard-driven,
-with a file sidebar and a built-in viewer for code, images, PDFs and office docs.
+with a file sidebar, a universal viewer for code · images · PDFs · office · CSV,
+a searchable clipboard history, and a built-in screenshot annotator.
 
 ![License](https://img.shields.io/badge/license-MIT-F2660C)
 ![Platform](https://img.shields.io/badge/platform-Linux-F2660C?logo=linux&logoColor=white)
@@ -16,7 +17,7 @@ with a file sidebar and a built-in viewer for code, images, PDFs and office docs
 </div>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="820" alt="Tcode: a 2x2 terminal grid with a file sidebar and a tabbed editor">
+  <img src="docs/screenshot.png" width="820" alt="Tcode: a 2×2 terminal grid with the file sidebar">
 </p>
 
 ## Download &amp; install
@@ -48,16 +49,43 @@ tcode 4        # open a 2x2 grid in the current folder
 tcode --help
 ```
 
+Each pane is a plain terminal running your login shell — no surprises, no agents
+started for you. Set a `startup_command` (see [Configuration](#configuration)) if
+you want one to run in every pane on open.
+
+## Universal viewer
+
+Ctrl+click any file path in a terminal — or pick a file in the sidebar — and it
+opens in a tabbed viewer beside your panes: syntax-highlighted **code**,
+**images**, **PDFs**, **office** documents (Word / PowerPoint / Excel, rendered
+through LibreOffice), and **CSV** as a real table. The panel is width-capped so
+it never squeezes the terminals.
+
+## Clipboard history
+
+Every clip you copy is captured into a searchable history. Press **`Alt+V`** for
+the command palette: type to filter, **Enter** to copy a past entry back to the
+clipboard, **pin** the ones you reuse to the top, and **delete** anything you
+don't want kept — each entry remembers when it was captured. History lives in
+memory by default; set `clipboard_persist = true` to keep it across restarts.
+
+<p align="center">
+  <img src="docs/clipboard.png" width="820" alt="Tcode's Alt+V clipboard palette: a searchable list of copied entries with capture times and pin / delete actions">
+</p>
+
 ## Frame — capture &amp; annotate
 
 The titlebar camera grabs any window or region (via the desktop screenshot
 portal), then hands it to **Frame** — a built-in annotation canvas where you draw
 boxes, arrows, freehand pen, highlighter, and text in any color. **Save** exports
-a PNG (also copied to your clipboard) and adds it to the strip at the bottom of
-the sidebar, ready to drag into a terminal.
+a PNG (also copied to your clipboard) and collects it in the screenshots strip
+(toggle with `Alt+P`), ready to drag into a terminal.
+
+A freshly captured shot also floats over the grid as a preview you can reposition
+or dismiss before annotating.
 
 <p align="center">
-  <img src="docs/frame.png" width="820" alt="Frame: a captured Tcode screenshot annotated with boxes, arrows, and text">
+  <img src="docs/frame.png" width="820" alt="Frame annotating a captured screenshot — toolbar and color palette on top, boxes and arrows drawn on the grid, and the screenshots strip down the right edge">
 </p>
 
 ## Keybindings
@@ -67,10 +95,14 @@ the sidebar, ready to drag into a terminal.
 | `Alt+h/j/k/l` or `Alt`+arrow keys | Move focus between panes |
 | `Alt+z` | Zoom the focused pane / restore |
 | `Alt+n` | New terminal (add a pane) |
-| `Alt+b` | Toggle the file sidebar |
-| `Alt+f` | Toggle fullscreen (no titlebar) |
 | `Alt+1` … `Alt+9` | Rebuild the grid with N panes |
+| `Alt+b` | Toggle the file sidebar |
+| `Alt+v` | Clipboard history palette |
+| `Alt+p` | Screenshots strip |
+| `Alt+f` | Toggle fullscreen (no titlebar) |
+| `Alt+q` | Quit |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste in the focused terminal |
+| `Ctrl +` / `Ctrl -` / `Ctrl 0` | Zoom the whole UI in / out / reset |
 
 Ctrl+click a path or URL in any terminal to open it; right-click for Copy / Paste.
 
@@ -80,10 +112,11 @@ Optional `~/.config/tcode/config.toml` — every field has a default, so it's on
 there if you want it:
 
 ```toml
-font            = "Martian Mono"   # bundled; or any installed font
-font_size       = 11
-startup_command = ""               # e.g. "claude" to auto-run in every pane
-scale           = 1.0              # whole-UI zoom (0.5–3.0)
+font              = "Martian Mono"   # bundled; or any installed font
+font_size         = 11
+startup_command   = ""               # a command to run in every pane on open, e.g. "tmux"
+clipboard_persist = false            # keep clipboard history across restarts
+scale             = 1.0              # whole-UI zoom (0.5–3.0)
 # [theme] background / foreground / accent / surface / border / palette (Tokyo Night by default)
 ```
 
