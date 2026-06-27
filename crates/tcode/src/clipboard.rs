@@ -240,6 +240,10 @@ impl Panel {
             } else {
                 // Unpinning returns the entry to its chronological spot among the
                 // unpinned (newest-first), not the top — it isn't freshly copied.
+                // Deliberately NOT trim_unpinned'd here: unpinning an entry older than
+                // the newest MAX_ENTRIES would otherwise surprise-delete it on the spot.
+                // The unpinned cap is enforced lazily instead — the next add_entry or
+                // load_from_disk trims — and the brief overage is otherwise harmless.
                 let pinned = entries.iter().filter(|e| e.pinned).count();
                 let mut at = pinned;
                 while at < entries.len() && entries[at].captured_at > entry.captured_at {
@@ -384,6 +388,12 @@ impl Panel {
             i = end.saturating_add(1); // skip the record's trailing newline
         }
         trim_unpinned(&mut entries);
+        // Restore the pinned-contiguous-prefix invariant that add_entry's insert
+        // position (`entries.insert(pinned_count, …)`) relies on. A normally-saved
+        // file is already pinned-first (save writes it that way), so this is a no-op;
+        // it only repairs a hand-edited/corrupt history with interleaved P/U records.
+        // Stable, so each group keeps its order (pinned as written, unpinned newest-first).
+        entries.sort_by_key(|e| !e.pinned);
     }
 
     /// Persist history as `{P|U} {unix_seconds} {byte_len}\n{text}\n`. The loader
