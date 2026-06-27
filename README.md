@@ -12,6 +12,12 @@ Linux&nbsp; •&nbsp; Open source&nbsp; •&nbsp; MIT License
 
 <br>
 
+<div align="center">
+  <img src="docs/hero.png" width="100%" alt="Tcode showing four terminal panes — cargo test, git status, file discovery, and a release preview — in one balanced grid with the file sidebar">
+</div>
+
+<br>
+
 ## Install
 
 No Rust. No build. Three steps.
